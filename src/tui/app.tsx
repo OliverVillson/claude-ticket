@@ -14,6 +14,7 @@ import { statSync } from 'node:fs';
 import { ancestorsOf, buildRows, pathNames, renderTreeRow, revealed, subtreeIds, treeKey, type TreeKey } from './tree.ts';
 import { tailLog, type LogLine } from './log-tail.ts';
 import { loadDetail, loadSnapshot, snapshotKey, type Snapshot, type TicketDetail } from './store.ts';
+import { PropsView } from './components/PropsView.tsx';
 import { DetailView } from './components/DetailView.tsx';
 import { FormView, type FormValues } from './components/FormView.tsx';
 import { HelpView } from './components/HelpView.tsx';
@@ -45,7 +46,7 @@ export interface AppProps {
 
 export type FormResult = { action: 'added' | 'saved'; ticket: TicketView } | { action: 'cancelled' } | null;
 
-type Mode = 'list' | 'detail' | 'form' | 'help' | 'result';
+type Mode = 'list' | 'detail' | 'props' | 'form' | 'help' | 'result';
 
 /** Lines around the panes: header, two border lines, the boxed command line (3), the hint bar, plus one spare. */
 const CHROME_LINES = 8;
@@ -68,8 +69,8 @@ export const COMMAND_HINTS: Array<[string, string]> = [
 
 export const TREE_HINTS: Array<[string, string]> = [
   ['↑↓', 'project'],
-  ['→', 'open'],
-  ['←', 'back'],
+  ['→', 'expand'],
+  ['←', 'collapse'],
   ['a', 'add project'],
   ['d', 'remove'],
   ['tab', 'switch pane'],
@@ -232,7 +233,7 @@ export function App(p: AppProps) {
   // Detail: reload the ticket, its latest run and the log tail every second while open.
   const selectedId = selected?.id ?? null;
   useEffect(() => {
-    if (mode !== 'detail' || selectedId == null) return;
+    if ((mode !== 'detail' && mode !== 'props') || selectedId == null) return;
     const load = () => {
       const t = getTicketById(db, selectedId);
       if (!t) {
@@ -273,7 +274,6 @@ export function App(p: AppProps) {
     const r = treeKey(snapshot.projects, { selected: scope, expanded }, key);
     if (r.expanded !== expanded) setExpanded(r.expanded);
     selectScope(r.selected);
-    if (r.focusTickets) setPane('tickets');
   };
 
   const removeProject = async (proj: { id: number; name: string }) => {
@@ -495,8 +495,14 @@ export function App(p: AppProps) {
         }
         if (input === 'e' || input === 'r' || input === 'g' || input === 'G' || key.pageUp || key.pageDown || key.home || key.end) return;
       }
-      if (mode === 'list' && (!twoPane || pane === 'tickets') && key.leftArrow) return twoPane ? setPane('tree') : cycleScope(-1);
-      if (mode === 'list' && !twoPane && key.rightArrow) return cycleScope(1);
+      // Only tab and shift-tab move between windows. Right on a ticket opens its properties;
+      // a narrow terminal (one pane) cycles projects with < and >.
+      if (mode === 'list' && !twoPane && (input === '<' || input === ',')) return cycleScope(-1);
+      if (mode === 'list' && !twoPane && (input === '>' || input === '.')) return cycleScope(1);
+      if (mode === 'list' && (!twoPane || pane === 'tickets') && key.rightArrow) {
+        if (selected) setMode('props');
+        return;
+      }
       if (mode === 'list' && showActivity && input === '[') return setActBack((b) => Math.min(b + 5, Math.max(0, actAll.length - actH)));
       if (mode === 'list' && showActivity && input === ']') return setActBack((b) => Math.max(0, b - 5));
       if (mode === 'list' && showActivity && input === 'f') {
@@ -548,7 +554,7 @@ export function App(p: AppProps) {
         else exit();
       }
     },
-    { isActive: mode !== 'form' },
+    { isActive: mode !== 'form' && mode !== 'props' },
   );
 
   // ----- render --------------------------------------------------------------------------
@@ -570,6 +576,17 @@ export function App(p: AppProps) {
   }
   if (mode === 'result' && result) {
     return <ResultView columns={columns} rows={textRows} scopeName={scopeName} command={result.command} lines={result.lines} ok={result.ok} offset={result.offset} />;
+  }
+  if (mode === 'props' && detail && selected && detail.ticket.id === selected.id) {
+    const save = async (flag: string, value: string): Promise<string | null> => {
+      const r = await runCommand(`change --id ${detail.ticket.id} --${flag} ${JSON.stringify(value)}`);
+      if (!r.ok) return (r.lines.join(' ').replace(/^[✓✗]\s*/, '') || 'could not save').slice(0, 200);
+      const t = getTicketById(db, detail.ticket.id);
+      if (t) setDetail(loadDetail(db, t));
+      refresh(true);
+      return null;
+    };
+    return <PropsView columns={columns} detail={detail} projects={snapshot.projects.map((pr) => pr.name)} now={now} onSave={save} onClose={() => setMode('list')} />;
   }
   if (mode === 'help') return <HelpView columns={columns} scopeName={scopeName} />;
   if (mode === 'detail' && detail) {

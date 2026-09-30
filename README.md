@@ -108,7 +108,10 @@ Any other token (`bug`, `docs`, `team=core`) is stored as a label or custom tag 
 | r | Run the selected ticket now, ahead of the queue |
 | p | Pause or resume the orchestrator |
 | / | Filter by name, label or status |
-| Tab | Switch project |
+| Tab / Shift-Tab | The only keys that move between windows (projects, tickets, command line) |
+| → on a ticket | Properties: every setting, changeable in place (← goes back) |
+| → on tags (new ticket) | Tag groups: Model / effort, Tools (`standard` = Claude Code's regular tools), Other |
+| < / > | Narrow terminals: switch project |
 | q / Esc | Quit, or close the open ticket |
 
 ## How the orchestrator works

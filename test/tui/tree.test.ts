@@ -49,13 +49,13 @@ describe('arrow keys', () => {
     expect(treeKey(projects, st(1), 'up').selected).toBeNull();
     expect(treeKey(projects, st(null), 'up').selected).toBeNull();
   });
-  test('right opens, then enters, then hands over to the tickets', () => {
+  test('right opens, then enters, and does nothing on a leaf', () => {
     let r = treeKey(projects, st(1), 'right');
     expect([r.selected, [...r.expanded]]).toEqual([1, [1]]);
     r = treeKey(projects, { selected: 1, expanded: r.expanded }, 'right');
     expect(r.selected).toBe(3);
     r = treeKey(projects, st(2), 'right');
-    expect(r.focusTickets).toBe(true);
+    expect([r.selected, r.expanded.size]).toEqual([2, 0]);
   });
   test('left collapses, then goes to the parent', () => {
     let r = treeKey(projects, st(1, [1]), 'left');

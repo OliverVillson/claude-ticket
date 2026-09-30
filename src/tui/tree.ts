@@ -96,13 +96,11 @@ export interface TreeState {
 }
 
 export interface TreeStep extends TreeState {
-  /** `right` on a leaf: hand the focus to the ticket pane */
-  focusTickets?: boolean;
 }
 
 /**
  * One arrow key in the tree. Up/down move through visible rows; right opens a collapsed project,
- * then steps into its first subproject, then (on a leaf) moves to the tickets; left collapses an
+ * then steps into its first subproject, then (on a leaf) does nothing (only tab moves between windows); left collapses an
  * open project, else jumps to the parent.
  */
 export function treeKey(projects: TreeProject[], state: TreeState, key: TreeKey): TreeStep {
@@ -113,10 +111,10 @@ export function treeKey(projects: TreeProject[], state: TreeState, key: TreeKey)
   if (key === 'up') return { ...keep, selected: rows[Math.max(0, i - 1)]!.id };
   if (key === 'down') return { ...keep, selected: rows[Math.min(rows.length - 1, i + 1)]!.id };
   if (key === 'right') {
-    if (row.id == null) return { ...keep, focusTickets: true };
+    if (row.id == null) return keep;
     if (row.hasChildren && !row.expanded) return { selected: row.id, expanded: new Set(state.expanded).add(row.id) };
     if (row.hasChildren && row.expanded) return { ...keep, selected: rows[i + 1]!.id };
-    return { ...keep, focusTickets: true };
+    return keep;
   }
   // left
   if (row.id == null) return keep;
