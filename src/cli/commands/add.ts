@@ -3,21 +3,23 @@ import { existsSync, mkdirSync } from 'node:fs';
 import type { Parsed } from '../args.ts';
 import { flagBool, flagNum, flagStr } from '../args.ts';
 import { openDb } from '../../db/db.ts';
-import { createProject, createTicket, getProjectByName } from '../../db/queries.ts';
+import { createProject, createTicket, getProjectByName, wakeOrchestrator } from '../../db/queries.ts';
 import { validateTools } from '../../core/tools.ts';
 import { DEFAULT_EFFORT, DEFAULT_MODEL, parseTags, validateEffort, validateModel, validatePriority } from '../../core/tags.ts';
 import { ensureProjectChain, folderSlug, projectForNewTicket, resolveProjectRef } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
 import { dim, green } from '../../core/ansi.ts';
+import { readStatus } from '../../orchestrator/status.ts';
 import { cloneRepo, repoNameFromUrl } from '../../core/clone.ts';
 import { helpIf } from './_shared.ts';
 
-const HELP = `salu add "name" ["query"] ["tags"] [--queue]
+const HELP = `salu add "name" ["query"] ["tags"] [--save]
 salu add project "name" [path|--path folder] [--clone git-url] [--in parent] [--model M] [--effort E] [--tools T] [--concurrency N] [--default]
 salu add "name" "query" ["tags"] [--project P] [--priority N] [--tags T]
 
-A new ticket is only saved (status backlog): it does not run until you start it with salu queue "name",
-salu run, or r in the TUI. --queue saves and queues it in one go.
+A new ticket is queued at once: a running orchestrator (salu run --detach, or the one on your server)
+picks it up, so you can write an idea and walk away. --save only saves it (status backlog); it then
+waits until you start it with salu queue "name", salu run, or u / r in the TUI.
 
 Adds a ticket. "query" is optional: when left out, the name is the instruction.
 The project is taken from the project=<name> tag or --project (created if it does not exist),
@@ -85,6 +87,8 @@ export async function add(p: Parsed): Promise<number> {
   const parsed = parseTags(tagInput);
   const priorityFlag = flagStr(p, 'priority');
   const priority = priorityFlag !== undefined ? validatePriority(priorityFlag) : (parsed.priority ?? 3);
+  // Queue by default; --save (or --no-queue) keeps it in the backlog. --queue is accepted and is the default.
+  const saveOnly = flagBool(p, 'save') || p.flags.queue === false;
   const { project, created } = projectForNewTicket(db, name, flagStr(p, 'project') ?? parsed.project);
   if (created) console.log(`${green('✓')} project ${project.name} ${dim(`→ ${project.path}`)}`);
   const t = createTicket(db, {
@@ -94,8 +98,10 @@ export async function add(p: Parsed): Promise<number> {
     tags: parsed.tags,
     labels: parsed.labels,
     priority,
-    status: flagBool(p, 'queue') ? 'todo' : 'backlog',
+    status: saveOnly ? 'backlog' : 'todo',
   });
+  if (!saveOnly) wakeOrchestrator();
   console.log(`${green('✓')} #${t.id} ${t.name} ${dim(`in ${project.name}, priority ${t.priority}, ${t.status === 'todo' ? 'queued' : 'saved: `salu queue` or `salu run` starts it'}`)}`);
+  if (!saveOnly) console.log(dim(readStatus(db).alive ? 'orchestrator running: it starts when a worker is free' : 'no orchestrator running: start it with `salu run --detach`'));
   return 0;
 }

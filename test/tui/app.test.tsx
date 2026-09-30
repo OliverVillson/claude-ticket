@@ -334,7 +334,7 @@ describe('add and edit form', () => {
     expect(JSON.parse(t.tags)).toEqual({ model: 'opus', effort: 'high' });
     expect(JSON.parse(t.labels)).toEqual(['docs']);
     expect(t.priority).toBe(1);
-    expect(t.status).toBe('backlog');
+    expect(t.status).toBe('todo');
   });
 
   test('priority "now" is accepted', async () => {
@@ -1224,17 +1224,17 @@ describe('backlog and queue', () => {
     await term.press(KEY.tab);
     await term.press('do it');
     for (let i = 0; i < 3; i++) await term.press(KEY.tab); // tags, priority, then
-    if (queue) await term.press(KEY.right);
+    if (!queue) await term.press(KEY.right); // a new ticket is queued by default; right switches to save only
     await term.press(KEY.enter);
   };
 
-  test('a new ticket is saved to the backlog by default and says how to queue it', async () => {
+  test('a new ticket is queued by default; save only keeps it in the backlog and says how to queue it', async () => {
     const { db } = seedDb(3);
     const { term } = mountApp({ db });
     await term.waitFor((s) => s.includes('1/3'));
     await term.press('a');
-    const f = await term.waitFor((s) => s.includes('save only'), 'queue row');
-    expect(f).toContain('backlog');
+    const f = await term.waitFor((s) => s.includes('save and queue'), 'queue row');
+    expect(f).toContain('runs as soon as');
     await term.press(KEY.esc);
     await addTicket(term, 'Saved only', false);
     const m = await term.waitFor((s) => s.includes('to the backlog'), 'added message');

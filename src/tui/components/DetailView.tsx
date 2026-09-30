@@ -63,7 +63,8 @@ export function DetailView(p: DetailViewProps) {
   const hasTags = tagBits.length > 0;
   const hasError = !!t.error;
   const hasRun = !!run;
-  const fixed = 1 + (hasTags ? 1 : 0) + 1 + (hasError ? 1 : 0) + (hasRun ? 2 : 0);
+  const hasDone = t.status === 'done' && (!!t.summary || !!t.branch);
+  const fixed = 1 + (hasTags ? 1 : 0) + 1 + (hasError ? 1 : 0) + (hasDone ? 2 : 0) + (hasRun ? 2 : 0);
   const logBudget = Math.min(p.log.length, Math.max(0, Math.min(8, p.rows - fixed - 3)));
   const queryBudget = Math.max(2, p.rows - fixed - logBudget);
   const queryLines = wrapText(t.query, inner);
@@ -95,6 +96,10 @@ export function DetailView(p: DetailViewProps) {
   lines.push('');
   for (const l of shownQuery) lines.push(l);
   if (hasError) lines.push(paint(st, 'red', '✗ ' + truncate(t.error!.replace(/\s+/g, ' '), inner - 2)));
+  if (hasDone) {
+    if (t.summary) lines.push(paint(st, 'green', GLYPHS.done + ' ' + truncate(t.summary.replace(/\s+/g, ' '), inner - 2)));
+    if (t.branch) lines.push(st.dim(`branch ${t.branch}`));
+  }
   if (hasRun) {
     lines.push('');
     lines.push(st.dim(`last run · ${runBits.join(' · ')}${run?.log_path ? ` · ${run.log_path}` : ''}`));
