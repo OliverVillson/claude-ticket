@@ -27,3 +27,27 @@ export function workerEnv(base: NodeJS.ProcessEnv = process.env): Record<string,
   }
   return out;
 }
+
+/**
+ * Which credential workers will use. Claude Code prefers ANTHROPIC_API_KEY (pay-per-token API
+ * credits) over a Pro/Max login when both exist, so an exported key silently bypasses the
+ * subscription. TICKET_AUTH=subscription removes the key variables for this process, so workers
+ * and the usage probe fall back to the login; TICKET_AUTH=api-key keeps them and silences the warning.
+ */
+export function applyAuthPolicy(env: NodeJS.ProcessEnv = process.env): { warning: string | null } {
+  const mode = env.TICKET_AUTH;
+  const hasKey = !!(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN);
+  if (mode === 'subscription') {
+    delete env.ANTHROPIC_API_KEY;
+    delete env.ANTHROPIC_AUTH_TOKEN;
+    return { warning: null };
+  }
+  if (hasKey && mode !== 'api-key') {
+    return {
+      warning:
+        'ANTHROPIC_API_KEY is set, so workers bill API credits instead of your Claude subscription. ' +
+        'Set TICKET_AUTH=subscription to use your login, or TICKET_AUTH=api-key to silence this.',
+    };
+  }
+  return { warning: null };
+}

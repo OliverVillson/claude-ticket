@@ -41,3 +41,19 @@ describe('workerEnv', () => {
     expect(isParentSessionVar('CLAUDE_CODE_SESSION_ID')).toBe(true);
   });
 });
+
+import { applyAuthPolicy } from '../src/core/env.ts';
+describe('applyAuthPolicy', () => {
+  test('warns when an API key would override the subscription', () => {
+    const env = { ANTHROPIC_API_KEY: 'sk' } as NodeJS.ProcessEnv;
+    expect(applyAuthPolicy(env).warning).toContain('API credits');
+    expect(env.ANTHROPIC_API_KEY).toBe('sk');
+  });
+  test('TICKET_AUTH=subscription removes the key, api-key silences the warning', () => {
+    const a = { ANTHROPIC_API_KEY: 'sk', ANTHROPIC_AUTH_TOKEN: 't', TICKET_AUTH: 'subscription' } as NodeJS.ProcessEnv;
+    expect(applyAuthPolicy(a).warning).toBeNull();
+    expect('ANTHROPIC_API_KEY' in a || 'ANTHROPIC_AUTH_TOKEN' in a).toBe(false);
+    expect(applyAuthPolicy({ ANTHROPIC_API_KEY: 'sk', TICKET_AUTH: 'api-key' } as NodeJS.ProcessEnv).warning).toBeNull();
+    expect(applyAuthPolicy({} as NodeJS.ProcessEnv).warning).toBeNull();
+  });
+});

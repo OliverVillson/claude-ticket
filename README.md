@@ -104,6 +104,8 @@ then ends the ticket `blocked`). Local git is allowed so workers can commit on a
 must run builds or tests need `permission=bypass`, which runs with no permission checks at all, so
 use it only on projects you trust.
 
+Workers use your Claude login unless `ANTHROPIC_API_KEY` is set: Claude Code prefers the key, so runs would bill API credits. `ticket run` warns when it sees one; `TICKET_AUTH=subscription` removes the key for the run, `TICKET_AUTH=api-key` keeps it and silences the warning.
+
 Workers do not inherit the session identity of the Claude Code session that started `ticket run`
 (session id, tokens, sockets): they would otherwise report the parent's session id and a resume
 would resume the wrong session. Set `TICKET_INHERIT_CLAUDE_ENV=1` to pass the whole environment.
