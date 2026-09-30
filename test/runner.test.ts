@@ -14,6 +14,7 @@ describe('runner files', () => {
     expect(unit).toContain('Environment=SALU_HOME=/var/lib/salu/%i');
     expect(unit).toContain('EnvironmentFile=-/etc/salu/%i.env');
     expect(unit).toContain('Restart=always');
+    expect(unit).toContain('RestartPreventExitStatus=78'); // a login that is dead at start fails visibly instead of looping
     expect(unit).toContain('KillMode=control-group');
     expect(unit).toContain('WantedBy=multi-user.target');
     expect(unit).toContain('User=salu');
@@ -114,8 +115,8 @@ describe('salu runner (fake systemctl)', () => {
   test('add registers the project in its own home, writes a private env file and enables the service', async () => {
     const b = box();
     const r = await b.run('add', 'web', '--no-sandbox');
-    expect(r.err).toBe('');
     expect(r.code).toBe(0);
+    expect(r.err).toContain('terms'); // --auth subscription (the default) warns about Anthropic's terms
     expect(existsSync(join(b.d, 'units', 'salu-runner@.service'))).toBe(true);
     expect(existsSync(join(b.d, 'var', 'web', 'tickets.db'))).toBe(true);
     expect(existsSync(join(b.d, 'caller-home', 'tickets.db'))).toBe(false); // the caller's own salu was not touched
@@ -146,7 +147,6 @@ describe('salu runner (fake systemctl)', () => {
     const bare = join(b.d, 'web.git');
     Bun.spawnSync(['git', 'init', '-q', '--bare', bare]);
     const r = await b.run('add', 'web', '--no-sandbox', '--remote', bare);
-    expect(r.err).toBe('');
     expect(r.code).toBe(0);
     // a bad explicit --remote is an error, not a silent skip
     const bad = await b.run('add', 'bad', '--no-sandbox', '--remote', join(b.d, 'nope.git'));
@@ -183,7 +183,9 @@ describe('salu runner (fake systemctl)', () => {
     const b = box();
     const keyFile = join(b.d, 'key');
     writeFileSync(keyFile, 'sk-ant-test123\n');
-    expect((await b.run('add', 'web', '--no-sandbox', '--api-key-file', keyFile)).code).toBe(0);
+    const added = await b.run('add', 'web', '--no-sandbox', '--api-key-file', keyFile);
+    expect(added.code).toBe(0);
+    expect(added.err).not.toContain('terms'); // the API key route does not warn
     const env = readFileSync(join(b.d, 'etc', 'web.env'), 'utf8');
     expect(env).toContain('SALU_AUTH=api-key');
     expect(env).toContain('ANTHROPIC_API_KEY=sk-ant-test123');
@@ -219,6 +221,26 @@ describe('salu run --no-queue', () => {
     const list = await sh('list', '--plain');
     expect(list.out).toContain('backlog');
     expect(list.out).not.toMatch(/done|running|todo/);
+  });
+});
+
+describe('a dead login on the runner', () => {
+  test('salu run --no-queue with Claude logged out exits 78 (systemd does not restart on it); a plain run exits 1', async () => {
+    const d = mkdtempSync(join(tmpdir(), 'salu-auth-'));
+    const claude = join(d, 'claude');
+    writeFileSync(claude, '#!/bin/sh\necho \'{"loggedIn": false}\'\nexit 1\n');
+    chmodSync(claude, 0o755);
+    const env = { ...process.env, SALU_HOME: join(d, 'home'), SALU_CLAUDE_PATH: claude, NO_COLOR: '1', SALU_NO_TUI: '1' };
+    delete (env as any).SALU_WORKER;
+    const go = async (...a: string[]) => {
+      const p = Bun.spawn([process.execPath, ENTRY, 'run', '--plain', ...a], { stdout: 'pipe', stderr: 'pipe', env, cwd: d });
+      const err = await new Response(p.stderr).text();
+      return { code: await p.exited, err };
+    };
+    const runner = await go('--no-queue');
+    expect(runner.code).toBe(78);
+    expect(runner.err).toContain('/login');
+    expect((await go()).code).toBe(1);
   });
 });
 

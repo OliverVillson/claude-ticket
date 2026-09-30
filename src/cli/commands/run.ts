@@ -21,12 +21,15 @@ without queueing anything (what the always-on runner uses, so a restart never qu
 export async function run(p: Parsed): Promise<number> {
   if (helpIf(p, HELP)) return 0;
   const db = openDb();
+  // Under the always-on runner (--no-queue) a machine that cannot work exits 78 (EX_CONFIG): the systemd unit
+  // does not restart on 78, so a dead login shows up as a failed service instead of a restart loop.
+  const envExit = flagBool(p, 'no-queue') ? 78 : 1;
   const missing = preflightClaude();
-  if (missing) throw new CliError(missing);
+  if (missing) throw new CliError(missing, envExit);
   if (process.env.SALU_WORKER !== 'fake') {
     const c = checkClaude();
     const logged = c.ok && c.path ? await loginProblem(c.path) : null;
-    if (logged) throw new CliError(logged);
+    if (logged) throw new CliError(logged, envExit);
   }
   const auth = applyAuthPolicy();
   if (auth.warning) console.error(`warning: ${auth.warning}`);

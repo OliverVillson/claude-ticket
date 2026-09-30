@@ -129,6 +129,10 @@ Environment=SALU_AUTH=subscription
 EnvironmentFile=-${o.etc}/%i.env
 ExecStart=${o.bin} run --plain --no-queue %i
 Restart=always
+# 78 = this machine cannot work (Claude logged out, login expired or key rejected). A crash or a login that
+# broke mid-run restarts (a fresh process re-reads the credentials); a login that is still dead at start
+# exits 78 and stays failed, visible in \`salu runner list\`, until \`salu runner restart <project>\`.
+RestartPreventExitStatus=78
 RestartSec=15
 KillMode=control-group
 TimeoutStopSec=45
@@ -170,6 +174,13 @@ ${hardening(o, 'sync')}
 WantedBy=multi-user.target
 `;
 }
+
+/** Shown by `salu runner add --auth subscription`. Sources are secondhand; the wording stays a question, not a verdict. */
+export const SUBSCRIPTION_WARNING =
+  'warning: --auth subscription runs Claude on this box with a Pro/Max login. Anthropic\'s terms may not allow a ' +
+  'subscription login in other tools or for automated, unattended use (an API key is the supported route for that), ' +
+  'and long headless sessions can lose their login until restarted. Check the current terms before relying on it; ' +
+  'to switch: --auth api-key --api-key-file <file>.';
 
 export type AuthMode = 'subscription' | 'api-key';
 

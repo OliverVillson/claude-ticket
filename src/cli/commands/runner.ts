@@ -10,7 +10,7 @@ import { checkClaude } from '../../core/claude-bin.ts';
 import { sandboxSupport } from '../../core/kernel.ts';
 import { selfCommand } from '../../orchestrator/index.ts';
 import {
-  SYNC_UNIT_NAME, UNIT_NAME, boxProblems, renderEnvFile, renderSyncUnit, renderUnit, requireRunnerName, runnerEnvFile, runnerEtc, runnerHome, runnerRoot, runnerWork, serviceName, syncServiceName, unitDir,
+  SUBSCRIPTION_WARNING, SYNC_UNIT_NAME, UNIT_NAME, boxProblems, renderEnvFile, renderSyncUnit, renderUnit, requireRunnerName, runnerEnvFile, runnerEtc, runnerHome, runnerRoot, runnerWork, serviceName, syncServiceName, unitDir,
   type AuthMode,
 } from '../../core/runner.ts';
 import { confirm, helpIf } from './_shared.ts';
@@ -146,6 +146,7 @@ function add(p: Parsed): number {
     else if (process.env.ANTHROPIC_API_KEY) apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey && !dry(p)) throw new CliError('--auth api-key needs the key: --api-key-file <file> (or ANTHROPIC_API_KEY in the environment)');
   }
+  if (auth === 'subscription') console.error(SUBSCRIPTION_WARNING);
   const sandbox = !flagBool(p, 'no-sandbox') && p.flags.sandbox !== false;
   if (sandbox) {
     const s = sandboxSupport();
