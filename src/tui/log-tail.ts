@@ -5,8 +5,8 @@ import { oneLine, truncate } from './format.ts';
  * Reads the end of a worker log (`~/.salu/logs/<project>/<ticket>-<run>.jsonl`, one Agent SDK
  * message per line) and turns it into short display lines in the claude transcript style:
  *
- *   ⏺ Read(src/auth.ts)
- *   ⏺ I fixed the null check in …
+ *   ● Read(src/auth.ts)
+ *   ● I fixed the null check in …
  *   ✓ done · 14 turns · $0.12
  *
  * Unknown shapes fall back to the raw line, so a log from `claude -p --output-format

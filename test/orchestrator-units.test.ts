@@ -312,7 +312,7 @@ describe('log rendering', () => {
   test('assistant text, tool calls, results', () => {
     expect(renderLine({ type: 'assistant', message: { content: [{ type: 'text', text: 'Working on it' }] } })).toContain('Working on it');
     const tool = renderLine({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'bun test' } }] } })!;
-    expect(tool).toContain('⏺ Bash(bun test)');
+    expect(tool).toContain('● Bash(bun test)');
     expect(renderLine({ type: 'user', message: { content: [{ type: 'tool_result', content: '3 pass\n0 fail' }] } })).toContain('3 pass');
     const done = renderLine({ type: 'result', subtype: 'success', is_error: false, result: 'ok\nTICKET: done', num_turns: 2, total_cost_usd: 0.05, duration_ms: 4000 })!;
     expect(done).toContain('TICKET: done');

@@ -7,7 +7,7 @@ import { sharedTicker, type Ticker } from './ticker.ts';
 export interface DogProps {
   /** true while agents are working: the dog runs. false: it sleeps (and no timer runs unless `sleepAnimation`). */
   running: boolean;
-  /** 'mini' is 2 rows by 10 columns for narrow layouts */
+  /** 'mini' is 2 rows by 12 columns (14 asleep) for narrow layouts */
   size?: DogSize;
   /** 0..1: when given the dog runs along a track `trackWidth` cells wide as a progress marker */
   progress?: number;

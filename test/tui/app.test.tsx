@@ -763,11 +763,11 @@ describe('two panes: project tree and tickets', () => {
     expect(listProjects(db).some((p) => p.name === 'newproj')).toBe(false);
   });
 
-  test('the pixel dog runs in the header while something is running', async () => {
+  test('the braille dog runs in the header while something is running', async () => {
     const { db } = seedDb(6); // ticket 001 is running
     const { term } = mountApp({ db }, [130, 30]);
-    const f = await term.waitFor((s) => /[▀▄█]/.test(s.split('\n')[0] ?? ''), 'dog in header');
-    expect(f.split('\n')[0]).toMatch(/[▀▄█]/);
+    const f = await term.waitFor((s) => /[\u2801-\u28ff]/.test(s.split('\n')[0] ?? ''), 'dog in header');
+    expect(f.split('\n')[0]).toMatch(/[\u2801-\u28ff]{4}/);
   });
 });
 

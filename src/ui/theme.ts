@@ -5,6 +5,8 @@
  * Roles, not colours, are the vocabulary. Each role has a truecolor RGB, a 256-colour index and
  * a 16-colour SGR code, picked by the terminal's colour level.
  */
+import { GLYPHS } from './glyphs.ts';
+
 export type ColorLevel = 0 | 1 | 2 | 3; // none | 16 | 256 | truecolor
 
 export type Role = 'accent' | 'text' | 'ok' | 'chrome' | 'warn' | 'error' | 'paused';
@@ -97,4 +99,4 @@ export function inkColor(role: Role, level: ColorLevel = detectColorLevel(proces
 
 export const WORDMARK = 'salu';
 /** Block cursor in front of the wordmark: the prompt you are about to type into. */
-export const MARK = '▌';
+export const MARK = GLYPHS.mark;

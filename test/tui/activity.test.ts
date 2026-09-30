@@ -24,7 +24,7 @@ describe('activity lines', () => {
     const out = activityLines([{ kind: 'text', text: 'word '.repeat(40).trim() }, { kind: 'tool', text: 'Read(src/a.ts)' }], 40, st);
     expect(out.length).toBeGreaterThan(3);
     expect(out.every((l) => displayWidth(l) <= 40)).toBe(true);
-    expect(out[0]!.startsWith('⏺ ')).toBe(true);
+    expect(out[0]!.startsWith('● ')).toBe(true);
     expect(out[1]!.startsWith('  ')).toBe(true);
     expect(out.at(-1)).toContain('Read(src/a.ts)');
   });
@@ -57,10 +57,10 @@ describe('idle state', () => {
   test('tall enough shows the whole sleeping dog; shorter shows a one-line sleeper, never a cropped sprite', () => {
     const st = makeStyle(true, 3);
     const tall = idleLines(80, 14, st, 0);
-    expect(tall.filter((l) => /[▀▄█]/.test(l)).length).toBeGreaterThanOrEqual(6);
-    expect(tall.length).toBeGreaterThanOrEqual(11);
+    expect(tall.filter((l) => /[▀▄█]/.test(l)).length).toBeGreaterThanOrEqual(5);
+    expect(tall.length).toBeGreaterThanOrEqual(9);
     const short = idleLines(80, 6, st, 0);
     expect(short.filter((l) => /[▀▄█]/.test(l)).length).toBe(0);
-    expect(short.join('')).toContain('=-.-=');
+    expect(short.join('')).toMatch(/[\u2800-\u28ff]/);
   });
 });

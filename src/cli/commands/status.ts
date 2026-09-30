@@ -7,6 +7,7 @@ import { bold, cyan, dim, green, magenta, red, yellow } from '../../core/ansi.ts
 import { formatClock, formatDuration, statusColor } from '../../core/format.ts';
 import { helpIf } from './_shared.ts';
 import { formatPause, getPause } from '../../usage/index.ts';
+import { GLYPHS } from '../../ui/glyphs.ts';
 
 const HELP = `salu status [--json]
 
@@ -25,9 +26,9 @@ export async function status(p: Parsed): Promise<number> {
   }
   const lines: string[] = [];
   if (st.alive) {
-    lines.push(`${green('●')} orchestrator ${bold('running')} ${dim(`pid ${st.pid}, up ${formatDuration(now - (st.startedAt ?? now))}, ${st.workers.length} worker${st.workers.length === 1 ? '' : 's'} active`)}`);
+    lines.push(`${green(GLYPHS.on)} orchestrator ${bold('running')} ${dim(`pid ${st.pid}, up ${formatDuration(now - (st.startedAt ?? now))}, ${st.workers.length} worker${st.workers.length === 1 ? '' : 's'} active`)}`);
   } else {
-    lines.push(`${dim('○')} orchestrator ${bold('not running')} ${dim('(salu run [--detach])')}`);
+    lines.push(`${dim(GLYPHS.off)} orchestrator ${bold('not running')} ${dim('(salu run [--detach])')}`);
   }
   const pause = getPause(db);
   if (pause) lines.push(`${magenta('‖')} ${bold('paused')}: ${formatPause(pause, now)}`);
@@ -44,7 +45,7 @@ export async function status(p: Parsed): Promise<number> {
       const t = getTicketById(db, w.ticketId);
       const name = t ? t.name : `#${w.ticketId}`;
       const detail = [w.model, `${w.turns} turn${w.turns === 1 ? '' : 's'}`, w.lastTool && `last: ${w.lastTool}`].filter(Boolean).join(', ');
-      lines.push(`  ${cyan('●')} ${name} ${dim(`${formatDuration(now - w.startedAt)} · ${detail}`)}`);
+      lines.push(`  ${cyan(GLYPHS.running)} ${name} ${dim(`${formatDuration(now - w.startedAt)} · ${detail}`)}`);
     }
   }
   const blocked = counts.blocked;

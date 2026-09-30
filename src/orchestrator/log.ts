@@ -1,7 +1,7 @@
 /**
  * Renders a run's JSONL log (raw Agent SDK messages plus our own `ticket_start` / `stderr` /
  * `worker_error` lines) the way `salu log` shows it, close to Claude Code's `-p` output:
- * assistant text, dimmed `⏺ Tool(args)` lines, a result line with cost and turns.
+ * assistant text, dimmed `● Tool(args)` lines, a result line with cost and turns.
  */
 import { closeSync, existsSync, openSync, readSync, statSync } from 'node:fs';
 import type { Run, TicketView } from '../db/types.ts';
@@ -11,6 +11,7 @@ import { bold, dim, gray, green, magenta, red } from '../core/ansi.ts';
 import { formatClock, formatCost, formatDuration } from '../core/format.ts';
 import { parseTrailer } from './prompt.ts';
 import { describeToolCall } from './worker.ts';
+import { GLYPHS } from '../ui/glyphs.ts';
 
 export interface RenderLogOptions {
   follow?: boolean;
@@ -45,8 +46,8 @@ export function renderLine(m: any): string | null {
       if (m.parent_tool_use_id) return null;
       const out: string[] = [];
       for (const b of m.message?.content ?? []) {
-        if (b.type === 'text' && String(b.text).trim()) out.push(`${bold('⏺')} ${String(b.text).trim()}`);
-        else if (b.type === 'tool_use') out.push(dim(`⏺ ${describeToolCall(b.name, b.input)}`));
+        if (b.type === 'text' && String(b.text).trim()) out.push(`${bold(GLYPHS.say)} ${String(b.text).trim()}`);
+        else if (b.type === 'tool_use') out.push(dim(`${GLYPHS.say} ${describeToolCall(b.name, b.input)}`));
       }
       if (m.error) out.push(red(`api error: ${m.error}`));
       return out.length ? out.join('\n') : null;
@@ -60,7 +61,7 @@ export function renderLine(m: any): string | null {
         if (b.type !== 'tool_result') continue;
         const text = typeof b.content === 'string' ? b.content : Array.isArray(b.content) ? b.content.map((c: any) => (c.type === 'text' ? c.text : `[${c.type}]`)).join('\n') : '';
         const line = first(text || '(no output)', 160);
-        out.push(b.is_error ? red(`  ⎿ ${line}`) : gray(`  ⎿ ${line}`));
+        out.push(b.is_error ? red(`  ${GLYPHS.toolResult} ${line}`) : gray(`  ${GLYPHS.toolResult} ${line}`));
       }
       return out.length ? out.join('\n') : null;
     }

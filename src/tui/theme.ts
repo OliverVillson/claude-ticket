@@ -1,5 +1,6 @@
 import type { TicketStatus } from '../db/types.ts';
 import type { Style } from './style.ts';
+import { GLYPHS } from '../ui/glyphs.ts';
 
 /**
  * Visual language: matrix green on black (palette in ../ui/theme.ts). Bright green marks focus
@@ -9,10 +10,10 @@ import type { Style } from './style.ts';
  */
 
 /** Cursor marker in front of the selected row, as in the claude prompt. */
-export const CURSOR_GLYPH = '❯';
+export const CURSOR_GLYPH = GLYPHS.cursor;
 
-/** The claude "thinking" spinner frames, used for running tickets. */
-export const SPINNER_FRAMES = ['·', '✢', '✳', '✶', '✻', '✽'];
+/** The claude "thinking" spinner frames, used for running tickets (✳ left out: it is an emoji). */
+export const SPINNER_FRAMES = GLYPHS.spinner;
 
 /** Tone names map to palette roles: accent=bright green, green=ok, yellow=warn (amber), red=error, magenta=paused (teal). */
 export type Tone = 'accent' | 'magenta' | 'yellow' | 'red' | 'green' | 'plain';
@@ -25,12 +26,12 @@ export interface StatusStyle {
 }
 
 export const STATUS_STYLE: Record<TicketStatus, StatusStyle> = {
-  running: { glyph: '●', tone: 'accent', label: 'running' },
-  paused: { glyph: '‖', tone: 'magenta', label: 'paused' },
-  todo: { glyph: '○', tone: 'plain', dim: true, label: 'todo' },
-  blocked: { glyph: '?', tone: 'yellow', label: 'blocked' },
-  failed: { glyph: '✗', tone: 'red', label: 'failed' },
-  done: { glyph: '✓', tone: 'green', label: 'done' },
+  running: { glyph: GLYPHS.running, tone: 'accent', label: 'running' },
+  paused: { glyph: GLYPHS.paused, tone: 'magenta', label: 'paused' },
+  todo: { glyph: GLYPHS.todo, tone: 'plain', dim: true, label: 'todo' },
+  blocked: { glyph: GLYPHS.blocked, tone: 'yellow', label: 'blocked' },
+  failed: { glyph: GLYPHS.failed, tone: 'red', label: 'failed' },
+  done: { glyph: GLYPHS.done, tone: 'green', label: 'done' },
 };
 
 /** Order statuses appear in summaries (mirrors the list sort order). */
