@@ -3,10 +3,22 @@ import type { Parsed } from '../args.ts';
 import { flagBool } from '../args.ts';
 import { CliError } from '../../core/errors.ts';
 
+/**
+ * True while commands run inside the TUI's command line: the terminal belongs to Ink, so
+ * handlers must not open their own prompts, forms or foreground views.
+ */
+let embedded = false;
+export function setEmbedded(on: boolean): void {
+  embedded = on;
+}
+export function isEmbedded(): boolean {
+  return embedded;
+}
+
 /** Ask a yes/no question on the terminal. Non-interactive stdin without --yes is an error. */
 export async function confirm(p: Parsed, question: string): Promise<boolean> {
   if (flagBool(p, 'yes')) return true;
-  if (!process.stdin.isTTY) throw new CliError(`${question} — pass --yes to confirm non-interactively`);
+  if (embedded || !process.stdin.isTTY) throw new CliError(`${question} — pass --yes to confirm non-interactively`);
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const answer: string = await new Promise((res) => rl.question(`${question} [y/N] `, res));
   rl.close();
@@ -22,5 +34,5 @@ export function helpIf(p: Parsed, text: string): boolean {
 }
 
 export function isTTY(): boolean {
-  return !!process.stdout.isTTY && !!process.stdin.isTTY && !process.env.SALU_NO_TUI;
+  return !embedded && !!process.stdout.isTTY && !!process.stdin.isTTY && !process.env.SALU_NO_TUI;
 }

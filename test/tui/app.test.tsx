@@ -92,7 +92,7 @@ describe('list view', () => {
     expect(last).toContain('60/60');
     expect(last).toContain('↑');
     const lines = last.split('\n');
-    expect(lines.filter((l) => l.includes('❯')).length).toBe(1);
+    expect(lines.filter((l) => l.includes('❯') && l.includes('ticket ')).length).toBe(1);
     // the last row of the sorted list (done tickets sort last) is the selected one, on the last body line
     const body = lines.filter((l) => l.startsWith('│'));
     expect(body.at(-2)).toContain('❯');
@@ -540,5 +540,72 @@ describe('run view', () => {
     await term.press('q');
     expect(stopped).toBe(1);
     expect(term.lastFrame()).toContain('stopping');
+  });
+});
+
+describe('command line', () => {
+  const type = async (term: ReturnType<typeof fakeTerminal>, text: string) => {
+    for (const ch of text) await term.press(ch, 5);
+  };
+
+  test(': focuses the prompt; a command runs through the CLI handlers and the list refreshes', async () => {
+    const { db } = seedDb(3);
+    const { term } = mountApp({ db });
+    await term.waitFor((s) => s.includes('ticket 001'));
+    await term.press(':');
+    await type(term, 'salu add "from prompt" "do it" model=sonnet');
+    await term.press(KEY.enter, 200);
+    const f = await term.waitFor((s) => s.includes('from prompt'), 'new ticket in list');
+    expect(f).toContain('from prompt');
+    expect(listTickets(db).some((t) => t.name === 'from prompt')).toBe(true);
+  });
+
+  test('the leading salu is optional and errors show in the footer', async () => {
+    const { db } = seedDb(3);
+    const { term } = mountApp({ db });
+    await term.waitFor((s) => s.includes('ticket 001'));
+    await term.press(':');
+    await type(term, 'remove "ticket 001"');
+    await term.press(KEY.enter, 200);
+    const f = await term.waitFor((s) => s.includes('--yes'), 'needs --yes');
+    expect(f).toContain('ticket 001');
+    expect(listTickets(db).some((t) => t.name === 'ticket 001')).toBe(true);
+  });
+
+  test('multi-line output opens a result view; esc returns to the list', async () => {
+    const { db } = seedDb(3);
+    const { term } = mountApp({ db }, [100, 40]);
+    await term.waitFor((s) => s.includes('ticket 001'));
+    await term.press(':');
+    await type(term, '?');
+    await term.press(KEY.enter, 200);
+    const f = await term.waitFor((s) => s.includes('output') && s.includes('a fast ticket queue'), 'help output');
+    expect(f).toContain('salu add project');
+    await term.press(KEY.esc);
+    await term.waitFor((s) => s.includes('ticket 001') && !s.includes('a fast ticket queue'));
+  });
+
+  test('up recalls history and esc leaves the prompt; single keys work again', async () => {
+    const { db } = seedDb(3);
+    const { term } = mountApp({ db });
+    await term.waitFor((s) => s.includes('ticket 001'));
+    await term.press(':');
+    await type(term, 'pause');
+    await term.press(KEY.enter, 200);
+    await term.press(KEY.up);
+    expect(term.lastFrame()).toContain('❯ pause');
+    await term.press(KEY.esc);
+    await term.press('?');
+    await term.waitFor((s) => s.includes('any key closes help'));
+  });
+
+  test('tab completes verbs and project names', async () => {
+    const { db } = seedDb(3);
+    const { term } = mountApp({ db });
+    await term.waitFor((s) => s.includes('ticket 001'));
+    await term.press(':');
+    await type(term, 'rem');
+    await term.press(KEY.tab);
+    expect(term.lastFrame()).toContain('❯ remove');
   });
 });
