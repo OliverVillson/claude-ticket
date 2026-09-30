@@ -21,5 +21,5 @@ async function run(width: number, steps: string[]) {
 await run(100, ['?', 'x', '/', 'zz', KEY.enter, KEY.esc, 'd', 'n', KEY.enter, 'x', KEY.esc, 'a', 'ab', KEY.tab, KEY.tab, KEY.esc, ':', 'sta', KEY.tab, KEY.enter, KEY.esc, KEY.esc]);
 // Two panes (wide): project tree focused, move, open, tab to tickets, back with left, remove confirm.
 await run(130, [KEY.down, KEY.right, KEY.down, KEY.left, KEY.tab, KEY.down, KEY.left, 'd', 'n', 'a', KEY.esc, KEY.esc]);
-console.log(JSON.stringify(frames));
-process.exit(0);
+// Flush before exiting: process.exit() right after console.log truncates a large payload on a pipe.
+process.stdout.write(JSON.stringify(frames) + '\n', () => process.exit(0));
