@@ -127,6 +127,35 @@ sudo -u salu env SALU_HOME=/var/lib/salu/web salu remote list    # role box, "sy
 If `remote list` shows an error, it is almost always git access: the deploy key from step 5 is missing or lacks
 write access. `sudo salu runner start|stop|restart|logs <project>` cover both services.
 
+### Optional: sign the inbox (recommended)
+
+Anyone who can push to the repo can write tickets onto `salu/inbox`. A private repo is the first lock; a shared
+secret is the second: with `SALU_REMOTE_KEY` set to the same value on the Mac and the box, unsigned or forged
+files are ignored. Without a key the inbox is unauthenticated, so the private repo stays essential either way.
+
+```sh
+openssl rand -hex 32                                   # make one secret; share it out of band, never through git
+echo 'SALU_REMOTE_KEY=<the secret>' | sudo tee -a /etc/salu/web.env >/dev/null   # box
+sudo salu runner restart web                           # both services pick it up
+echo 'export SALU_REMOTE_KEY=<the secret>' >> ~/.zshrc  # Mac; open a new terminal
+```
+
+The phone app is getting a matching setting; until it has it, a signed inbox will ignore tickets sent from the phone.
+
+### What tickets from the Mac may set
+
+On the box, remote tickets lose the tags `permission`, `tools`, `project`, `max-turns`, `model` and `effort`: a
+ticket sent through git cannot widen what the agent may do or burn quota, and runs with the project's defaults.
+To let `model`, `effort` and `max-turns` through, add `SALU_REMOTE_ALLOW_TAGS=model,effort,max-turns` to
+`/etc/salu/web.env` and restart (`permission`, `tools` and `project` can never be allowed).
+
+### The services are locked down
+
+The runner's systemd units confine the services: a read-only system, an empty home, and only the project's own
+folder. The orchestrator sees the Claude login but no SSH keys; the sync service sees the SSH key and git config
+but no Claude login. If the sandbox then fails to start on your VPS, `sudo salu runner setup --no-harden` drops
+the confinement (the worker sandbox still applies).
+
 ## 8. On your Mac: connect the project and send a ticket
 
 ```sh
