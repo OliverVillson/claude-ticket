@@ -28,6 +28,35 @@ describe('runner files', () => {
     expect(sync).toContain('WantedBy=multi-user.target');
   });
 
+  describe('unit hardening', () => {
+    const o = { bin: '/usr/local/bin/salu', user: 'salu', home: '/home/salu', root: '/var/lib/salu', etc: '/etc/salu' };
+    const sync = renderSyncUnit(o);
+
+    test('both units confine the service to its own project folder and an empty home', () => {
+      for (const u of [unit, sync]) {
+        for (const d of ['NoNewPrivileges=yes', 'ProtectSystem=strict', 'ProtectHome=tmpfs', 'TemporaryFileSystem=/var/lib/salu:ro', 'BindPaths=/var/lib/salu/%i', 'ReadWritePaths=/var/lib/salu/%i', 'PrivateTmp=yes', 'CapabilityBoundingSet=\n', 'RestrictSUIDSGID=yes', 'UMask=0077']) expect(u).toContain(d);
+      }
+    });
+
+    test('least privilege: the orchestrator gets the Claude login but no ssh keys, sync the reverse', () => {
+      expect(unit).toContain('/home/salu/.claude');
+      expect(unit).not.toContain('.ssh');
+      expect(sync).toContain('/home/salu/.ssh');
+      expect(sync).not.toContain('.claude');
+    });
+
+    test('nothing that breaks bubblewrap or Bun is set', () => {
+      for (const u of [unit, sync]) for (const bad of ['RestrictNamespaces', 'SystemCallFilter', 'ProtectKernelTunables', 'ProtectProc', 'ProcSubset', 'PrivateDevices', 'MemoryDenyWriteExecute']) expect(u).not.toContain(bad);
+      expect(unit).toContain('AF_NETLINK'); // bubblewrap sets up its network namespace over netlink
+    });
+
+    test('--no-harden renders the plain units, and paths with spaces are refused', () => {
+      expect(renderUnit({ ...o, harden: false })).not.toContain('ProtectSystem');
+      expect(renderSyncUnit({ ...o, harden: false })).not.toContain('NoNewPrivileges');
+      expect(() => renderUnit({ ...o, home: '/home/a b' })).toThrow();
+    });
+  });
+
   test('project names are safe for systemd and paths', () => {
     for (const ok of ['web', 'my-app_2']) expect(validRunnerName(ok)).toBe(true);
     for (const bad of ['', 'Web', '../x', 'a b', '-x', 'a/b']) expect(validRunnerName(bad)).toBe(false);

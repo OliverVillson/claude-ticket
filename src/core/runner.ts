@@ -51,6 +51,55 @@ export interface UnitOptions {
   home: string;
   root: string;
   etc: string;
+  /** Add the sandboxing directives below (default true). `salu runner setup --no-harden` turns them off. */
+  harden?: boolean;
+}
+
+/**
+ * Directives that confine the service itself, in case the worker sandbox is off or escaped. The worker
+ * runs as the same Linux user as the orchestrator, so without these it could read every other project
+ * and the shared Claude login. With them the process sees: a read-only system, an empty home holding only
+ * what this service needs, and only its own project's folder under the runner root.
+ *
+ *  orchestrator  its project folder (rw), the Claude login ~/.claude + ~/.claude.json (rw: sessions and token
+ *                refresh), the Claude install under ~/.local (ro). No ssh keys, no git credentials.
+ *  sync          its project folder (rw), git credentials ~/.ssh ~/.gitconfig ~/.config/git. No Claude login.
+ *
+ * Deliberately NOT set, because they break the worker sandbox's bubblewrap (it needs user namespaces,
+ * a mountable /proc, netlink for its network namespace) or Bun's JIT: RestrictNamespaces, SystemCallFilter,
+ * ProtectKernelTunables, ProtectProc/ProcSubset, PrivateDevices, MemoryDenyWriteExecute.
+ */
+export function hardening(o: UnitOptions, kind: 'orchestrator' | 'sync'): string {
+  if (o.harden === false) return '';
+  for (const v of [o.home, o.root]) if (/\s/.test(v)) throw new CliError(`cannot harden a unit with whitespace in a path: ${v}`);
+  const h = o.home;
+  const binds =
+    kind === 'orchestrator'
+      ? { rw: [`${h}/.claude`, `${h}/.claude.json`], ro: [`${h}/.local/bin`, `${h}/.local/share/claude`] }
+      : { rw: [`${h}/.ssh`], ro: [`${h}/.gitconfig`, `${h}/.config/git`] };
+  return `
+# Confinement of the service itself (see hardening() in src/core/runner.ts).
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=tmpfs
+TemporaryFileSystem=${o.root}:ro
+BindPaths=${o.root}/%i ${binds.rw.map((x) => '-' + x).join(' ')}
+ReadWritePaths=${o.root}/%i ${binds.rw.map((x) => '-' + x).join(' ')}
+BindReadOnlyPaths=${binds.ro.map((x) => '-' + x).join(' ')}
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+CapabilityBoundingSet=
+AmbientCapabilities=
+RemoveIPC=yes
+UMask=0077
+`;
 }
 
 /**
@@ -83,7 +132,7 @@ Restart=always
 RestartSec=15
 KillMode=control-group
 TimeoutStopSec=45
-
+${hardening(o, 'orchestrator')}
 [Install]
 WantedBy=multi-user.target
 `;
@@ -116,7 +165,7 @@ ExecStart=${o.bin} remote sync --watch
 Restart=always
 RestartSec=15
 KillMode=control-group
-
+${hardening(o, 'sync')}
 [Install]
 WantedBy=multi-user.target
 `;

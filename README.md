@@ -154,9 +154,9 @@ salu runner logs web -f
 ```
 
 `--auth subscription` (default, the box's Claude login) or `--auth api-key --api-key-file <file>`: the key
-is stored only in `/etc/salu/<project>.env` (root-readable). Check Anthropic's terms for unattended use of
+is stored in `/etc/salu/<project>.env` (root-readable, not on any command line). Workers still receive it in their environment, and sandboxed workers can reach any URL by default, so use a key with a spend limit, or the subscription login. Check Anthropic's terms for unattended use of
 a subscription login before relying on it. `salu runner --help` lists `setup`, `start|stop|restart`,
-`remove [--purge]` and `doctor`. `salu run --no-queue` is what the service runs: start, but never queue the backlog.
+`remove [--purge]` and `doctor`. The systemd units confine the service itself (read-only system, an empty home holding only what that service needs, only its own project folder; the orchestrator never sees ssh keys, the sync never sees the Claude login); `salu runner setup --no-harden` drops that if the sandbox's bubblewrap fails under it. Hardened units are syntax-checked with `systemd-analyze verify` but not yet run on a real box. `salu run --no-queue` is what the service runs: start, but never queue the backlog.
 
 ## Interactive list (demo: `bun run src/tui/demo.ts`)
 

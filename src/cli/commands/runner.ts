@@ -18,7 +18,10 @@ import { confirm, helpIf } from './_shared.ts';
 const HELP = `salu runner <command>      run salu unattended on an always-on Linux box (one orchestrator per project, under systemd)
 
   salu runner doctor                          check this box: systemd, Claude Code + login, sandbox, unit
-  sudo salu runner setup [--user U]           install the systemd unit (once per box); U runs the orchestrators
+  sudo salu runner setup [--user U] [--no-harden]
+                                              install the systemd units (once per box); U runs the orchestrators.
+                                              The units confine the service (read-only system, empty home, only its
+                                              own project folder); --no-harden drops that if bubblewrap fails under it
   sudo salu runner add <project> [--clone git-url | --path folder] [--auth subscription|api-key]
                                               [--api-key-file F] [--no-sandbox] [--concurrency N]
                                               [--remote git-url | --no-sync]
@@ -37,7 +40,8 @@ service salu-runner@<project> and its own git sync service salu-sync@<project>; 
 dead run left running go back to the queue and resume their Claude session.
 
 Login, once, as the runner user:  claude   then /login   (subscription)   or   --auth api-key --api-key-file ~/key
-The key is stored only in /etc/salu/<project>.env (root-readable, never passed on a command line).`;
+The key is stored in /etc/salu/<project>.env (root-readable, never on a command line). Workers do get it in
+their environment and can reach any URL by default: use a key with a spend limit.`;
 
 const dry = (p: Parsed) => flagBool(p, 'dry-run');
 const systemctl = () => process.env.SALU_SYSTEMCTL || 'systemctl';
@@ -108,7 +112,7 @@ function setup(p: Parsed): number {
     if (!mk.ok) throw new CliError(`could not create the user ${user.name}: ${mk.out}`);
     console.log(`${green('✓')} created user ${user.name}`);
   }
-  const uo = { bin, user: user.name, home: user.home, root: runnerRoot(), etc: runnerEtc() };
+  const uo = { bin, user: user.name, home: user.home, root: runnerRoot(), etc: runnerEtc(), harden: !flagBool(p, 'no-harden') };
   const text = renderUnit(uo);
   if (dry(p)) console.log(text + '\n' + renderSyncUnit(uo));
   else {
