@@ -11,7 +11,8 @@
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit",
     "build": "bun build --compile --minify --splitting src/index.ts --outfile dist/ticket",
-    "link": "bun link"
+    "install-cli": "bun run scripts/install-cli.ts",
+    "uninstall-cli": "bun run scripts/install-cli.ts --uninstall"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.285",
