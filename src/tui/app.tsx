@@ -3,7 +3,7 @@ import { render, useAnimation, useApp, useInput, useWindowSize } from 'ink';
 import type { Database } from 'bun:sqlite';
 import type { TicketStatus, TicketView } from '../db/types.ts';
 import { ticketLabels, ticketTags } from '../db/types.ts';
-import { getProjectById, getTicketById, latestRun } from '../db/queries.ts';
+import { getProjectById, getTicketById, latestRun, listRuns } from '../db/queries.ts';
 import { formatTags } from '../core/tags.ts';
 import type { TuiActions } from './actions.ts';
 import { applyFilter } from './filter.ts';
@@ -15,6 +15,7 @@ import { statSync } from 'node:fs';
 import { ancestorsOf, buildRows, pathNames, renderTreeRow, revealed, subtreeIds, treeKey, type TreeKey } from './tree.ts';
 import { tailLog, type LogLine } from './log-tail.ts';
 import { loadDetail, loadSnapshot, snapshotKey, type Snapshot, type TicketDetail } from './store.ts';
+import type { UsageSnapshot, UsageSource } from './usage.ts';
 import { PropsView } from './components/PropsView.tsx';
 import { DetailView } from './components/DetailView.tsx';
 import { FormView, type FormValues } from './components/FormView.tsx';
@@ -43,6 +44,8 @@ export interface AppProps {
    * with no flags). The app exits with the saved ticket, or null when cancelled.
    */
   form?: { ticketId?: number; projectId?: number };
+  /** cached usage snapshots for the header meter; without it the meter is hidden */
+  usage?: UsageSource;
 }
 
 export type FormResult = { action: 'added' | 'saved'; ticket: TicketView } | { action: 'cancelled' } | null;
@@ -126,6 +129,12 @@ export function App(p: AppProps) {
   const [detail, setDetail] = useState<TicketDetail | null>(null);
   const [log, setLog] = useState<LogLine[]>([]);
   const [, setTick] = useState(0);
+  const [usageSnap, setUsageSnap] = useState<UsageSnapshot | null | undefined>(() => (p.usage ? p.usage.get() : undefined));
+  useEffect(() => {
+    if (!p.usage) return;
+    setUsageSnap(p.usage.get());
+    return p.usage.subscribe(setUsageSnap);
+  }, [p.usage]);
 
   // Command line (`:`): same dispatcher as the shell CLI, with history and tab completion.
   const [cmdEditing, setCmdEditing] = useState(false);
@@ -141,7 +150,7 @@ export function App(p: AppProps) {
   const scopeIds = useMemo(() => subtreeIds(snapshot.projects, scope), [snapshot.projects, scope]);
   const scoped = useMemo(() => (scopeIds ? snapshot.tickets.filter((t) => scopeIds.has(t.project_id)) : snapshot.tickets), [snapshot.tickets, scopeIds]);
   const scopedCounts = useMemo(() => {
-    const c = { todo: 0, running: 0, done: 0, failed: 0, blocked: 0, paused: 0 } as Snapshot['counts'];
+    const c = { backlog: 0, todo: 0, running: 0, done: 0, failed: 0, blocked: 0, paused: 0 } as Snapshot['counts'];
     for (const t of scoped) c[t.status]++;
     return c;
   }, [scoped]);
@@ -587,7 +596,7 @@ export function App(p: AppProps) {
       refresh(true);
       return null;
     };
-    return <PropsView columns={columns} detail={detail} projects={snapshot.projects.map((pr) => pr.name)} now={now} onSave={save} onClose={() => setMode('list')} />;
+    return <PropsView columns={columns} detail={detail} projects={snapshot.projects.map((pr) => pr.name)} now={now} rows={viewportRows(termRows, 4)} loadRuns={(id) => listRuns(db, id)} onSave={save} onClose={() => setMode('list')} />;
   }
   if (mode === 'help') return <HelpView columns={columns} scopeName={scopeName} />;
   if (mode === 'detail' && detail) {
@@ -640,6 +649,7 @@ export function App(p: AppProps) {
       commandFocus={cmdEditing}
       command={<CommandLine columns={columns} focused={cmdEditing} value={cmdValue} onChange={setCmdValue} busy={cmdBusy} nonce={cmdNonce} />}
       working={working}
+      usage={usageSnap}
       ticketFocus={!twoPane || pane === 'tickets'}
       crumbs={scopeCrumbs}
       projectConfirm={projConfirm ? `remove project "${projConfirm.name}" and its tickets?` : null}

@@ -15,7 +15,10 @@ Usage   (salu ?  |  salu help  |  salu --help  shows this list; quote the ? in z
   salu change "name" [--name N] [--query Q] [--tags T] [--priority P] [--status S]
   salu change project "name" [--in parent|none] [--path P] [--model M] [--effort E] [--tools T] [--concurrency N] [--default]
   salu list [project] [--plain] [--status S] [--projects] [--json]
-  salu run [project] [--concurrency N] [--detach] [--plain]
+  salu queue "name"... | --all [project]     queue saved tickets to run (add only saves; nothing runs by itself)
+  salu unqueue "name"                        take a queued ticket back to the backlog
+  salu run [project|"name"...] [--concurrency N] [--detach] [--plain]
+                                             queue everything saved (or just the named tickets) and start
   salu pause | salu resume | salu stop
   salu status [--json]
   salu usage [--json] [--refresh]            how much of your Claude plan's 5-hour and weekly usage is left
@@ -64,6 +67,10 @@ export async function dispatch(argv: string[]): Promise<number> {
       return (await import('./commands/status.ts')).status(sub);
     case 'run':
       return (await import('./commands/run.ts')).run(sub);
+    case 'queue':
+      return (await import('./commands/queue.ts')).queue(sub);
+    case 'unqueue':
+      return (await import('./commands/queue.ts')).unqueue(sub);
     case 'pause':
       return (await import('./commands/pause.ts')).pause(sub);
     case 'resume':

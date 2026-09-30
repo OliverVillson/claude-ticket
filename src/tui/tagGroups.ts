@@ -31,7 +31,7 @@ export const PERMISSION_CHOICES: Choice[] = [{ value: '', label: 'default', hint
 
 export const PRIORITY_CHOICES: Choice[] = [1, 2, 3, 4, 5].map((n) => ({ value: String(n), label: `p${n}`, hint: n === 1 ? 'highest' : n === 5 ? 'lowest' : undefined }));
 
-export const STATUS_CHOICES: Choice[] = ['todo', 'running', 'paused', 'blocked', 'failed', 'done'].map((s) => ({ value: s, label: s }));
+export const STATUS_CHOICES: Choice[] = ['backlog', 'todo', 'running', 'paused', 'blocked', 'failed', 'done'].map((s) => ({ value: s, label: s }));
 
 const PRESETS = new Set(TOOL_PRESETS.map((t) => t.name));
 

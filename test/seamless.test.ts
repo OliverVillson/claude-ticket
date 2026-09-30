@@ -55,7 +55,7 @@ describe('project for a new ticket', () => {
   test('the same ticket name twice reuses its "-proj" project', () => {
     const db = fresh();
     const a = projectForNewTicket(db, 'same', null, dir).project;
-    createTicket(db, { project_id: a.id, name: 'same', query: 'q', tags: {}, labels: [], priority: 3 });
+    createTicket(db, { status: 'todo', project_id: a.id, name: 'same', query: 'q', tags: {}, labels: [], priority: 3 });
     expect(projectForNewTicket(db, 'same', null, dir).project.id).toBe(a.id);
   });
 
