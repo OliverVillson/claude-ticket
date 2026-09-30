@@ -3,13 +3,15 @@ import { existsSync, mkdirSync } from 'node:fs';
 import type { Parsed } from '../args.ts';
 import { flagBool, flagNum, flagStr } from '../args.ts';
 import { openDb } from '../../db/db.ts';
-import { createProject, createTicket, getProjectByName } from '../../db/queries.ts';
+import { createProject, createTicket, getProjectByName, updateTicket } from '../../db/queries.ts';
 import { validateTools } from '../../core/tools.ts';
 import { DEFAULT_EFFORT, DEFAULT_MODEL, parseTags, validateEffort, validateModel, validatePriority } from '../../core/tags.ts';
 import { ensureProjectChain, folderSlug, projectForNewTicket, resolveProjectRef } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
 import { dim, green } from '../../core/ansi.ts';
 import { cloneRepo, repoNameFromUrl } from '../../core/clone.ts';
+import { getRemote } from '../../sync/store.ts';
+import { publishTicket, syncProject } from '../../sync/sync.ts';
 import { helpIf } from './_shared.ts';
 
 const HELP = `salu add "name" ["query"] ["tags"] [--queue]
@@ -18,6 +20,7 @@ salu add "name" "query" ["tags"] [--project P] [--priority N] [--tags T]
 
 A new ticket is only saved (status backlog): it does not run until you start it with salu queue "name",
 salu run, or r in the TUI. --queue saves and queues it in one go.
+In a project with a box remote (salu remote add), the ticket is sent to the box, which runs it (--backlog: save it there without running).
 
 Adds a ticket. "query" is optional: when left out, the name is the instruction.
 The project is taken from the project=<name> tag or --project (created if it does not exist),
@@ -96,6 +99,21 @@ export async function add(p: Parsed): Promise<number> {
     priority,
     status: flagBool(p, 'queue') ? 'todo' : 'backlog',
   });
+  const remote = getRemote(db, project.id);
+  if (remote?.role === 'client') {
+    // This project runs on a box: the ticket is sent there (queued unless --backlog) and never runs here.
+    const queue = !flagBool(p, 'backlog');
+    publishTicket(db, project, t, { queue });
+    if (queue) updateTicket(db, t.id, { status: 'todo' });
+    try {
+      syncProject(db, project, remote);
+      console.log(`${green('✓')} #${t.id} ${t.name} ${dim(`sent to ${remote.url}, ${queue ? 'it runs on the box' : 'saved in its backlog'}`)}`);
+    } catch (e: any) {
+      console.log(`${green('✓')} #${t.id} ${t.name} ${dim('saved; it will be sent on the next `salu remote sync`')}`);
+      console.error(`${dim('could not reach the remote now: ' + String(e?.message ?? e))}`);
+    }
+    return 0;
+  }
   console.log(`${green('✓')} #${t.id} ${t.name} ${dim(`in ${project.name}, priority ${t.priority}, ${t.status === 'todo' ? 'queued' : 'saved: `salu queue` or `salu run` starts it'}`)}`);
   return 0;
 }

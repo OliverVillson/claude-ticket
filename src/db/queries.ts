@@ -403,7 +403,8 @@ export function claimNextTicket(
     vals.push(...opts.projectIds);
   }
   const sql = `${TICKET_VIEW_SQL}
-    WHERE t.status IN ('paused', 'todo') ${where.length ? 'AND ' + where.join(' AND ') : ''}
+    WHERE t.status IN ('paused', 'todo')
+      AND NOT EXISTS (SELECT 1 FROM remote_tickets r WHERE r.ticket_id = t.id AND r.direction = 'out') ${where.length ? 'AND ' + where.join(' AND ') : ''}
     ORDER BY CASE t.status WHEN 'paused' THEN 0 ELSE 1 END, t.priority ASC, t.created_at ASC`;
   const tx = db.transaction(() => {
     const candidates = db.query<TicketView, any[]>(sql).all(...vals);

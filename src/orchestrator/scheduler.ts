@@ -9,6 +9,7 @@ import type { Denial } from '../core/tools.ts';
 import type { Database } from 'bun:sqlite';
 import { statSync, watch, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
+import { recordRemoteEvent } from '../sync/events.ts';
 import { claimNextTicket, createRun, finishRun, getProjectById, getState, inheritedProject, getTicketById, listProjects, listTickets, setState, updateTicket, type TicketPatch } from '../db/queries.ts';
 import { STATE, type Run, type TicketStatus, type TicketView } from '../db/types.ts';
 import { CliError } from '../core/errors.ts';
@@ -533,6 +534,7 @@ export class Orchestrator {
   }
 
   private emit(e: OrchestratorEvent): void {
+    recordRemoteEvent(this.db, e); // messages for `salu notif` when this machine is a project's box
     for (const l of this.listeners) {
       try {
         l(e);
