@@ -9,7 +9,7 @@ const VERSION = '0.1.0';
 
 const HELP = `ticket — a fast ticket queue for Claude Code agents
 
-Usage
+Usage   (ticket ?  |  ticket help  |  ticket --help  shows this list; quote the ? in zsh: ticket '?')
   ticket add project "name" [path] [--model M] [--effort E] [--concurrency N] [--default]
   ticket add "name" "query" ["tags"]           tags: key=value pairs and bare labels
   ticket remove "name" [--yes]                 (also: ticket remove project "name")
@@ -73,6 +73,7 @@ async function main(argv: string[]): Promise<number> {
     case 'projects':
       return (await import('./cli/commands/list.ts')).list({ ...sub, flags: { ...sub.flags, projects: true } });
     case 'help':
+    case '?':
       console.log(HELP);
       return 0;
     default:
