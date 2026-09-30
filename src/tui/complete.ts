@@ -1,6 +1,6 @@
 import { tokenize } from './command.ts';
 
-export const VERBS = ['add', 'remove', 'change', 'list', 'projects', 'run', 'pause', 'resume', 'stop', 'status', 'log', 'plan', 'help', 'quit'];
+export const VERBS = ['add', 'remove', 'change', 'list', 'projects', 'run', 'pause', 'resume', 'stop', 'status', 'log', 'plan', 'update', 'help', 'quit'];
 export const TAG_KEYS = ['project', 'model', 'effort', 'priority', 'max-turns', 'permission'];
 const TAG_VALUES: Record<string, string[]> = {
   model: ['opus', 'sonnet', 'haiku'],
