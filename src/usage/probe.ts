@@ -1,3 +1,4 @@
+import { claudeExecutableOption } from '../core/claude-bin.ts';
 import { detectLimit, kindForWindow, limitFromRateLimitInfo, parseLimitText, toEpochMs } from './detect.ts';
 import type { LimitHit, ProbeResult } from './types.ts';
 import { existsSync, readFileSync } from 'node:fs';
@@ -253,6 +254,8 @@ export async function probeWindow(opts: ProbeOptions = {}): Promise<ProbeResult>
     permissionMode: 'default',
     env: probeEnv(),
   };
+  const exe = claudeExecutableOption();
+  if (exe) base.pathToClaudeCodeExecutable = exe;
   try {
     const q = opts.queryFn ?? (await loadQuery());
     if (opts.readUsage !== false) {

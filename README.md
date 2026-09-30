@@ -50,6 +50,8 @@ bun run install-cli   # launcher that runs this checkout; `bun run uninstall-cli
 
 `install-cli` accepts `--binary` (compile `dist/salu` and install that), `--dir <folder>` and `--force`.
 
+salu runs your installed Claude Code (install it with `curl -fsSL https://claude.ai/install.sh | bash`, then run `claude` once to log in). It finds `claude` on your PATH and in the usual install folders; `SALU_CLAUDE_PATH=/path/to/claude` overrides that. `salu doctor` checks all of this, and `salu run` checks it before starting, so a missing or logged-out Claude Code never turns into failed tickets: the ticket goes back to todo with the reason on it.
+
 ## Quick start
 
 ```sh

@@ -191,6 +191,12 @@ describe('runWorker classification', () => {
   const run = (runner: WorkerRunner, resume: string | null = null) =>
     runWorker({ ticket: tv(), project: proj(), resume, abort: new AbortController(), runner, logPath: join(tmpdir(), `nolog-${Date.now()}-${Math.random()}.jsonl`) });
 
+  test('the SDK failing to find claude is an environment problem, not a failed ticket', async () => {
+    const r = await run(stream([], { throwAfter: new Error('Native CLI binary for darwin-arm64 not found. Reinstall @anthropic-ai/claude-agent-sdk without --omit=optional, or set options.pathToClaudeCodeExecutable.') }));
+    expect(r).toMatchObject({ outcome: 'failed', subtype: 'environment', costUsd: 0 });
+    expect(r.message).toContain('claude.ai/install.sh');
+    expect(r.message).not.toContain('Native CLI binary');
+  });
   test('success with the done trailer', async () => {
     const r = await run(stream([init, res({ result: 'ok\nTICKET: done' })]));
     expect(r).toMatchObject({ outcome: 'done', sessionId: 'S1', costUsd: 0.5, turns: 3 });
@@ -212,9 +218,15 @@ describe('runWorker classification', () => {
     expect(r).toMatchObject({ outcome: 'failed', message: 'boom', resumable: false });
   });
   test('a thrown error is a failure carrying the process stderr', async () => {
-    const r = await run(stream([init, { type: 'stderr', text: 'not logged in' }], { throwAfter: new Error('Claude Code process exited with code 1') }));
+    const r = await run(stream([init, { type: 'stderr', text: 'unknown flag --frobnicate' }], { throwAfter: new Error('Claude Code process exited with code 1') }));
     expect(r.outcome).toBe('failed');
-    expect(r.message).toBe('Claude Code process exited with code 1: not logged in');
+    expect(r.subtype).not.toBe('environment');
+    expect(r.message).toBe('Claude Code process exited with code 1: unknown flag --frobnicate');
+  });
+  test('a logged-out Claude Code is an environment problem with the login fix', async () => {
+    const r = await run(stream([init, { type: 'stderr', text: 'not logged in' }], { throwAfter: new Error('Claude Code process exited with code 1') }));
+    expect(r).toMatchObject({ outcome: 'failed', subtype: 'environment' });
+    expect(r.message).toContain('`claude` once to log in');
   });
   test('the typed rate limit event makes it rate_limited, keeping the session', async () => {
     const r = await run(stream([init, { type: 'rate_limit_event', rate_limit_info: { status: 'rejected', rateLimitType: 'five_hour', resetsAt: 1_900_000_000 } }, res({ is_error: true, result: "You've hit your session limit · resets 3:45pm" })]));

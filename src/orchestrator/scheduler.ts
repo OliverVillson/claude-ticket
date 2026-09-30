@@ -72,6 +72,8 @@ export class Orchestrator {
   private watcher: FSWatcher | null = null;
   private wakePoll: ReturnType<typeof setInterval> | null = null;
   private stopping = false;
+  /** Set when a worker could not start Claude Code at all; ends the run after the workers in flight. */
+  private envProblem: string | null = null;
   private started = false;
   private lastPauseKey: string | null = null;
   private resuming = false;
@@ -347,6 +349,15 @@ export class Orchestrator {
           patch.attempts = Math.max(0, fresh.attempts - 1);
           break;
         case 'failed':
+          if (result.subtype === 'environment') {
+            // The machine, not the ticket: no attempt burned, no failure recorded, and nothing else
+            // is dispatched until the problem is fixed (the reason stays on the ticket).
+            patch.status = 'todo';
+            patch.attempts = Math.max(0, fresh.attempts - 1);
+            patch.error = result.message;
+            this.envProblem = result.message;
+            break;
+          }
           if (fresh.attempts >= this.maxAttempts) {
             patch.status = 'failed';
             patch.finished_at = now;
@@ -361,6 +372,10 @@ export class Orchestrator {
       updateTicket(db, t.id, patch);
     }
 
+    if (this.envProblem && !this.stopping) {
+      this.log('error', `${this.envProblem} The ticket went back to todo; run \`salu run\` again once this is fixed.`);
+      this.stop('environment problem');
+    }
     if (result.outcome === 'rate_limited' && result.limit && !this.stopping) {
       try {
         const r = this.hooks.onLimitHit(db, result.limit, fresh ?? t, now);

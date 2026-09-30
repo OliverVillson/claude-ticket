@@ -1,0 +1,21 @@
+#!/usr/bin/env bun
+// A stand-in for Claude Code: speaks just enough of the stream-json protocol for one ticket.
+import { createInterface } from 'node:readline';
+if (process.argv.includes('--version')) { console.log('9.9.9 (stub)'); process.exit(0); }
+if (process.argv[2] === 'auth') { console.log('logged in (stub)'); process.exit(0); }
+const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
+const sid = 'stub-session-1';
+const rl = createInterface({ input: process.stdin });
+let answered = false;
+rl.on('line', (line) => {
+  let m; try { m = JSON.parse(line); } catch { return; }
+  if (m.type === 'control_request') {
+    out({ type: 'control_response', response: { subtype: 'success', request_id: m.request_id, response: {} } });
+  } else if (m.type === 'user' && !answered) {
+    answered = true;
+    out({ type: 'system', subtype: 'init', session_id: sid, model: 'stub', cwd: process.cwd(), tools: [], mcp_servers: [], permissionMode: 'default', apiKeySource: 'none', slash_commands: [], output_style: 'default' });
+    out({ type: 'assistant', session_id: sid, message: { id: 'm1', role: 'assistant', model: 'stub', content: [{ type: 'text', text: 'hello from the stub' }], usage: {} }, parent_tool_use_id: null });
+    out({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1, duration_api_ms: 1, num_turns: 1, result: 'stub did it\nTICKET: done', session_id: sid, total_cost_usd: 0.01, usage: {} });
+    setTimeout(() => process.exit(0), 50);
+  }
+});

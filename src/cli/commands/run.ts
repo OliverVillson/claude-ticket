@@ -3,6 +3,8 @@ import { flagBool, flagNum, flagStr } from '../args.ts';
 import { openDb } from '../../db/db.ts';
 import { subtreeIds } from '../../db/queries.ts';
 import { resolveProject } from '../../core/resolve.ts';
+import { preflightClaude } from '../../core/claude-bin.ts';
+import { CliError } from '../../core/errors.ts';
 import { helpIf, isTTY } from './_shared.ts';
 import { applyAuthPolicy } from '../../core/env.ts';
 
@@ -16,6 +18,8 @@ instead; --detach runs it in the background (salu stop ends it).`;
 export async function run(p: Parsed): Promise<number> {
   if (helpIf(p, HELP)) return 0;
   const db = openDb();
+  const missing = preflightClaude();
+  if (missing) throw new CliError(missing);
   const auth = applyAuthPolicy();
   if (auth.warning) console.error(`warning: ${auth.warning}`);
   const projectName = p.positional[0] ?? flagStr(p, 'project');

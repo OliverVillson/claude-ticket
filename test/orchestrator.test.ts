@@ -143,6 +143,31 @@ describe('dispatch', () => {
   });
 });
 
+describe('environment problems', () => {
+  test('Claude Code missing: the ticket goes back to todo untouched, nothing else is tried, the run ends with the reason', async () => {
+    const a = ticket('a', 'x');
+    const b = ticket('b', 'x');
+    const events: OrchestratorEvent[] = [];
+    const broken = {
+      name: 'broken',
+      async *run(): AsyncGenerator<any> {
+        throw new Error('Native CLI binary for darwin-arm64 not found. Reinstall @anthropic-ai/claude-agent-sdk without --omit=optional, or set options.pathToClaudeCodeExecutable.');
+      },
+      async probe() {
+        return 'ok' as const;
+      },
+    };
+    const orch = new Orchestrator({ db, concurrency: 1, exitWhenEmpty: true, heartbeatMs: 100, runner: broken as any, onEvent: (e) => events.push(e) });
+    await orch.start();
+    const first = [status(a.id), status(b.id)];
+    expect(first.map((t) => t.status)).toEqual(['todo', 'todo']);
+    expect(first.every((t) => t.attempts === 0 || t.attempts === undefined || t.attempts < 1)).toBe(true);
+    expect(first.some((t) => (t.error ?? '').includes('claude.ai/install.sh'))).toBe(true);
+    expect(listRuns(db, a.id).length + listRuns(db, b.id).length).toBe(1); // only one ticket was even tried
+    expect(events.some((e) => e.type === 'log' && e.level === 'error' && e.message.includes('salu run'))).toBe(true);
+  });
+});
+
 describe('outcomes', () => {
   test('a failing ticket is retried once, then marked failed', async () => {
     const t = ticket('flaky', 'FAKE:failed cannot reach the database');
