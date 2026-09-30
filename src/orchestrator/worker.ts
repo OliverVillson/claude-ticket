@@ -5,6 +5,7 @@
  * every message to the run's JSONL log, keeps a live summary for the status view, and classifies
  * how the session ended. Nothing here touches the database; the scheduler does that.
  */
+import { safeText } from '../core/ansi.ts';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
@@ -256,6 +257,16 @@ export interface RunWorkerParams extends WorkerInput {
   onRateLimit?: (info: any) => void;
 }
 
+/** The worker's final message without its TICKET: trailer, trimmed and capped: what a finished ticket shows as its summary. */
+export function summaryFrom(text: string): string | null {
+  const body = safeText(text)
+    .split('\n')
+    .filter((l) => !/^\s*TICKET:\s*(done|blocked|failed)\b/i.test(l))
+    .join('\n')
+    .trim();
+  return body ? body.slice(0, 4000) : null;
+}
+
 /**
  * Run one ticket to the end of its session and say how it went. Never throws: a crash of the SDK
  * or of the `claude` process is a `failed` result (or `killed` when we aborted it).
@@ -357,7 +368,7 @@ export async function runWorker(p: RunWorkerParams): Promise<WorkerResult> {
   if (trailer?.kind === 'failed') return { ...base, outcome: 'failed', message: trailer.message || 'the worker gave up', subtype: result?.subtype ?? null };
 
   if (result && result.subtype === 'success' && !result.is_error) {
-    return { ...base, outcome: 'done', message: trailer ? trailer.message || null : firstLine(text, 200) || null, subtype: 'success' };
+    return { ...base, outcome: 'done', message: trailer ? trailer.message || null : firstLine(text, 200) || null, summary: summaryFrom(text), subtype: 'success' };
   }
   if (!result) return { ...base, outcome: 'failed', message: crash ?? 'the worker ended without a result', subtype: 'error' };
 

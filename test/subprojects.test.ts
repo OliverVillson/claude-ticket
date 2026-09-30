@@ -38,7 +38,7 @@ describe('subprojects', () => {
     old.close();
     const migrated = openDb(path);
     expect(migrated.query('SELECT parent_id FROM projects').get()).toEqual({ parent_id: null });
-    expect(migrated.query<{ user_version: number }, []>('PRAGMA user_version').get()!.user_version).toBe(5);
+    expect(migrated.query<{ user_version: number }, []>('PRAGMA user_version').get()!.user_version).toBe(6);
   });
 
   test('a subproject without a path gets a folder under its parent', () => {

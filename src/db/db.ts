@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { dbPath, ensureHome } from '../core/paths.ts';
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -89,6 +89,11 @@ function migrate(db: Database) {
   if (version < 5) {
     // Opt-in kernel sandbox per project (0 = off, 1 = on).
     db.exec('ALTER TABLE projects ADD COLUMN sandbox INTEGER NOT NULL DEFAULT 0;');
+  }
+  if (version < 6) {
+    // What a finished ticket leaves behind: the worker's short final report and the branch it committed on.
+    db.exec('ALTER TABLE tickets ADD COLUMN summary TEXT;');
+    db.exec('ALTER TABLE tickets ADD COLUMN branch TEXT;');
   }
   if (version < SCHEMA_VERSION) db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
 }

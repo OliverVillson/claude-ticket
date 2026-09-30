@@ -9,9 +9,11 @@ import type { Denial } from '../core/tools.ts';
 import type { Database } from 'bun:sqlite';
 import { statSync, watch, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
-import { claimNextTicket, createRun, finishRun, getProjectById, getState, inheritedProject, getTicketById, listProjects, listTickets, setState, updateTicket, type TicketPatch } from '../db/queries.ts';
+import { claimNextTicket, createRun, finishRun, getProjectById, getProjectByName, getState, inheritedProject, getTicketById, listProjects, listTickets, setState, updateTicket, type TicketPatch } from '../db/queries.ts';
 import { STATE, type Run, type TicketStatus, type TicketView } from '../db/types.ts';
 import { CliError } from '../core/errors.ts';
+import { ticketBranch } from '../core/branch.ts';
+import { kernelPath, sandboxOn } from '../core/kernel.ts';
 import { logsDir, ticketHome, wakeFile } from '../core/paths.ts';
 import { clearPause, resolveHooks, type UsageHooks } from './gate.ts';
 import { clearAllWorkerInfo, clearWorkerInfo, HEARTBEAT_MS, readStatus, setPause, writeWorkerInfo, type PauseInfo } from './status.ts';
@@ -321,6 +323,16 @@ export class Orchestrator {
       .catch((e) => this.log('error', `exit handler: ${String(e?.message ?? e)}`));
   }
 
+  /** The salu/<ticket> branch a finished ticket committed on, if the project folder (or its kernel copy) has one. */
+  private branchFor(t: TicketView): string | null {
+    try {
+      const sandboxed = getProjectByName(this.db, t.project)?.sandbox && sandboxOn();
+      return ticketBranch(sandboxed ? kernelPath(t.project) : t.project_path, t.name);
+    } catch {
+      return null;
+    }
+  }
+
   /** Persist a worker's outcome: the run row, then the ticket's status, cost and session; then wake. */
   private onExit(entry: Active, result: WorkerResult): void {
     const db = this.db;
@@ -340,6 +352,8 @@ export class Orchestrator {
       switch (result.outcome) {
         case 'done':
           patch.status = 'done';
+          patch.summary = result.summary ?? null;
+          patch.branch = this.branchFor(t);
           patch.finished_at = now;
           patch.error = null;
           break;

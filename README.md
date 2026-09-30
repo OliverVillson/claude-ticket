@@ -60,7 +60,7 @@ salu add "landing page"          # no project yet? salu makes "landing-page-proj
 salu add "fix login" "Fix the login bug in auth.ts and add a test" "model=opus effort=high priority=1 bug"
 salu add "write docs" "Write a README for the API" "docs max-turns=20"
 salu list                                      # interactive list (arrow keys)
-salu queue "fix login"                         # adding only saves a ticket; queue it to let it run
+salu queue "fix login"                         # only needed after `salu add --save`
 salu run                                       # queues everything saved, then the orchestrator with a live view
 salu run --detach                              # or in the background; `salu stop` ends it
 salu status                                    # state, counts, pause reason and resume time
@@ -73,7 +73,8 @@ salu log "fix login" --follow                  # worker transcript
 | --- | --- |
 | `salu add project "sub" --in parent` | Subproject (also `"parent/sub"`); its folder defaults to a folder inside the parent's. A project shows the tickets of all its subprojects, a subproject only its own. `salu change project "x" --in parent\|none` moves it; removing a project removes its subprojects too (it asks first). |
 | `salu add project "name" [path] [--clone git-url]` | Registers a project. With no `path` it uses the current folder if that is a git repo, else creates `./<name>`. `--clone <url>` (with `--path folder`, default `./<repo name>`) has salu clone the repo there first; the folder must be new or empty. Works with `--in parent`. Flags: `--model`, `--effort`, `--concurrency`, `--default`. |
-| `salu add "name" "query" ["tags"] [--queue]` | Saves a ticket (status `backlog`); it never runs by itself. `query` is the prompt the worker gets. Tags are `key=value` pairs and bare labels. `--queue` saves and queues it. |
+| `salu add "name" "query" ["tags"] [--save]` | Adds a ticket and queues it: a running orchestrator picks it up, so you can write an idea and walk away. `query` is the prompt the worker gets. Tags are `key=value` pairs and bare labels. `--save` only saves it (status `backlog`) until you queue it. |
+| `salu show "name" [--json]` | What a ticket ended with: status, the `salu/<ticket>` branch the work was committed on, and the worker's short summary (or the question it is blocked on). |
 | `salu queue "name"... \| --all [project]` | Queues saved tickets (status `todo`, shown as queued): a running orchestrator starts them at once. Also re-queues a done, failed or blocked ticket. `--now` goes to the front. |
 | `salu allow "name" [--tool RULE]` | Unblocks a ticket that was refused a permission: adds the denied rule (or `--tool`) to its `tools` and queues it again. |
 | `salu unqueue "name"` | Takes a queued ticket that has not started back to the backlog. |
