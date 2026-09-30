@@ -206,12 +206,12 @@ async function turnProbe(q: QueryLike, options: any, log?: (s: string) => void):
 }
 
 /**
- * With `TICKET_WORKER=fake` (the orchestrator's fake runner) the probe never calls the SDK:
- * `TICKET_FAKE_LIMIT_UNTIL=<epoch ms>` (or the file `<TICKET_HOME>/fake-limit-until`) says
+ * With `SALU_WORKER=fake` (the orchestrator's fake runner) the probe never calls the SDK:
+ * `SALU_FAKE_LIMIT_UNTIL=<epoch ms>` (or the file `<SALU_HOME>/fake-limit-until`) says
  * until when the window is closed; absent or past means open.
  */
 export function fakeProbe(opts: ProbeOptions = {}, now = Date.now()): ProbeResult {
-  let raw = process.env.TICKET_FAKE_LIMIT_UNTIL ?? '';
+  let raw = process.env.SALU_FAKE_LIMIT_UNTIL ?? '';
   if (!raw) {
     try {
       const f = join(ticketHome(), 'fake-limit-until');
@@ -233,7 +233,7 @@ export function fakeProbe(opts: ProbeOptions = {}, now = Date.now()): ProbeResul
 /** Check whether the usage window is open. Never throws. */
 export async function probeWindow(opts: ProbeOptions = {}): Promise<ProbeResult> {
   const log = opts.log;
-  if (process.env.TICKET_WORKER === 'fake' && !opts.queryFn) return fakeProbe(opts);
+  if (process.env.SALU_WORKER === 'fake' && !opts.queryFn) return fakeProbe(opts);
   const ac = new AbortController();
   const onAbort = () => ac.abort();
   opts.signal?.addEventListener('abort', onAbort, { once: true });

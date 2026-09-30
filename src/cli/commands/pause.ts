@@ -7,7 +7,7 @@ import { dim, green, magenta } from '../../core/ansi.ts';
 import { helpIf } from './_shared.ts';
 
 export async function pause(p: Parsed): Promise<number> {
-  if (helpIf(p, 'ticket pause\n\nStops dispatching new workers after the current ones finish. `ticket resume` continues.')) return 0;
+  if (helpIf(p, 'salu pause\n\nStops dispatching new workers after the current ones finish. `salu resume` continues.')) return 0;
   const db = openDb();
   enterManualPause(db); // keeps an active rate-limit pause underneath
   wakeOrchestrator();
@@ -17,17 +17,17 @@ export async function pause(p: Parsed): Promise<number> {
 }
 
 export async function resume(p: Parsed): Promise<number> {
-  if (helpIf(p, 'ticket resume\n\nClears a pause (manual or rate-limit) and dispatches again right away.')) return 0;
+  if (helpIf(p, 'salu resume\n\nClears a pause (manual or rate-limit) and dispatches again right away.')) return 0;
   const db = openDb();
   clearPause(db);
   wakeOrchestrator();
   const st = readStatus(db);
-  console.log(`${green('▶')} resumed ${dim(st.alive ? '' : '(orchestrator not running: ticket run)')}`);
+  console.log(`${green('▶')} resumed ${dim(st.alive ? '' : '(orchestrator not running: salu run)')}`);
   return 0;
 }
 
 export async function stop(p: Parsed): Promise<number> {
-  if (helpIf(p, 'ticket stop\n\nStops a detached orchestrator. Running workers are interrupted and their tickets go back to the queue.')) return 0;
+  if (helpIf(p, 'salu stop\n\nStops a detached orchestrator. Running workers are interrupted and their tickets go back to the queue.')) return 0;
   const db = openDb();
   const st = readStatus(db);
   if (!st.alive || !st.pid) {

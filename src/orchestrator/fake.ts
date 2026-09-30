@@ -1,5 +1,5 @@
 /**
- * A worker runner that spawns nothing. Selected with `TICKET_WORKER=fake`; the ticket's query
+ * A worker runner that spawns nothing. Selected with `SALU_WORKER=fake`; the ticket's query
  * text says what happens:
  *
  *   FAKE:done [text]                        success, `TICKET: done`
@@ -11,8 +11,8 @@
  *   FAKE:sleep <ms> then <one of the above> wait first (abortable)
  *   FAKE:crash                              throw mid-stream
  *
- * Anything else counts as `FAKE:done`. The probe honours `TICKET_FAKE_LIMIT_UNTIL=<epoch ms>` or
- * a file `fake-limit-until` in TICKET_HOME holding that number: closed until then, open after.
+ * Anything else counts as `FAKE:done`. The probe honours `SALU_FAKE_LIMIT_UNTIL=<epoch ms>` or
+ * a file `fake-limit-until` in SALU_HOME holding that number: closed until then, open after.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -44,7 +44,7 @@ function clock(ms: number): string {
 }
 
 export function fakeLimitUntil(): number | null {
-  const env = process.env.TICKET_FAKE_LIMIT_UNTIL;
+  const env = process.env.SALU_FAKE_LIMIT_UNTIL;
   if (env) return Number(env) || null;
   try {
     const f = join(ticketHome(), 'fake-limit-until');

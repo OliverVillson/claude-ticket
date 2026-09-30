@@ -1,33 +1,36 @@
 #!/usr/bin/env bun
 // Entry point. Keeps startup light: the TUI (Ink/React) and the orchestrator (Agent SDK)
 // are imported lazily, so `add`, `remove`, `change`, `status` never load them.
+import './core/compat.ts';
 import { parseArgs } from './cli/args.ts';
 import { CliError } from './core/errors.ts';
 import { red } from './core/ansi.ts';
 
 const VERSION = '0.1.0';
 
-const HELP = `ticket — a fast ticket queue for Claude Code agents
+const HELP = `salu — a fast ticket queue for Claude Code agents
 
-Usage   (ticket ?  |  ticket help  |  ticket --help  shows this list; quote the ? in zsh: ticket '?')
-  ticket add project "name" [path] [--model M] [--effort E] [--concurrency N] [--default]
-  ticket add "name" "query" ["tags"]           tags: key=value pairs and bare labels
-  ticket remove "name" [--yes]                 (also: ticket remove project "name")
-  ticket change "name" [--name N] [--query Q] [--tags T] [--priority P] [--status S]
-  ticket change project "name" [--path P] [--model M] [--effort E] [--concurrency N] [--default]
-  ticket list [project] [--plain] [--status S] [--projects] [--json]
-  ticket run [project] [--concurrency N] [--detach] [--plain]
-  ticket pause | ticket resume | ticket stop
-  ticket status [--json]
-  ticket log "name" [--follow] [--raw]
-  ticket plan "name"                           split a ticket into sub-tickets with Claude
+Usage   (salu ?  |  salu help  |  salu --help  shows this list; quote the ? in zsh: salu '?')
+  salu add project "name" [path] [--model M] [--effort E] [--concurrency N] [--default]
+  salu add "name" ["query"] ["tags"]           no project? one is made ("<name>-proj", in ./<name>-proj)
+                                               tags: key=value pairs and bare labels
+  salu remove "name" [--yes]                 (also: salu remove project "name")
+  salu change "name" [--name N] [--query Q] [--tags T] [--priority P] [--status S]
+  salu change project "name" [--path P] [--model M] [--effort E] [--concurrency N] [--default]
+  salu list [project] [--plain] [--status S] [--projects] [--json]
+  salu run [project] [--concurrency N] [--detach] [--plain]
+  salu pause | salu resume | salu stop
+  salu status [--json]
+  salu log "name" [--follow] [--raw]
+  salu plan "name"                           split a ticket into sub-tickets with Claude
 
 Tags
   project=<name>  model=opus|sonnet|haiku|<id>  effort=low|medium|high|xhigh|max
+  defaults: model claude-opus-5-5, effort medium (set per ticket, or per project with --model/--effort)
   priority=1..5 (1 highest, default 3)  max-turns=<n>  permission=plan|default|acceptEdits|bypass
   anything else (bug, docs, …) is a label
 
-Run \`ticket <command> --help\` for details. Data lives in ~/.ticket (override with TICKET_HOME).`;
+Run \`salu <command> --help\` for details. Data lives in ~/.salu (override with SALU_HOME).`;
 
 async function main(argv: string[]): Promise<number> {
   const parsed = parseArgs(argv);

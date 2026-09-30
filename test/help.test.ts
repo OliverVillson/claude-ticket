@@ -4,7 +4,7 @@ import { join } from 'node:path';
 const ENTRY = join(import.meta.dir, '..', 'src', 'index.ts');
 
 async function run(...args: string[]) {
-  const p = Bun.spawn([process.execPath, ENTRY, ...args], { stdout: 'pipe', stderr: 'pipe', env: { ...process.env, TICKET_HOME: join(import.meta.dir, '..', '.ticket-test', 'help'), NO_COLOR: '1' } });
+  const p = Bun.spawn([process.execPath, ENTRY, ...args], { stdout: 'pipe', stderr: 'pipe', env: { ...process.env, SALU_HOME: join(import.meta.dir, '..', '.ticket-test', 'help'), NO_COLOR: '1' } });
   const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
   return { code: await p.exited, out, err };
 }

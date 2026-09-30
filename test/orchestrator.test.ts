@@ -18,14 +18,14 @@ let project: Project;
 const saved: Record<string, string | undefined> = {};
 
 beforeEach(() => {
-  for (const k of ['TICKET_HOME', 'TICKET_WORKER', 'TICKET_RESUME_MARGIN_MS', 'TICKET_FAKE_LIMIT_UNTIL']) saved[k] = process.env[k];
+  for (const k of ['SALU_HOME', 'SALU_WORKER', 'SALU_RESUME_MARGIN_MS', 'SALU_FAKE_LIMIT_UNTIL']) saved[k] = process.env[k];
   home = mkdtempSync(join(tmpdir(), 'ticket-orch-'));
   projPath = join(home, 'proj');
   mkdirSync(projPath);
-  process.env.TICKET_HOME = home;
-  process.env.TICKET_WORKER = 'fake';
-  process.env.TICKET_RESUME_MARGIN_MS = '0';
-  delete process.env.TICKET_FAKE_LIMIT_UNTIL;
+  process.env.SALU_HOME = home;
+  process.env.SALU_WORKER = 'fake';
+  process.env.SALU_RESUME_MARGIN_MS = '0';
+  delete process.env.SALU_FAKE_LIMIT_UNTIL;
   db = openDb();
   project = createProject(db, { name: 'demo', path: projPath });
 });
@@ -254,7 +254,7 @@ describe('usage limits', () => {
 
   test('the probe finding the window still closed pushes the resume out', async () => {
     const t = ticket('slow-window', 'FAKE:ratelimit session resets +300');
-    process.env.TICKET_FAKE_LIMIT_UNTIL = String(Date.now() + 1300);
+    process.env.SALU_FAKE_LIMIT_UNTIL = String(Date.now() + 1300);
     const { orch, events } = make({ concurrency: 1 });
     orch.on((e) => {
       if (e.type === 'pause') updateTicket(db, t.id, { query: 'FAKE:done' });
@@ -304,7 +304,7 @@ describe('control', () => {
     expect(getState(db, 'worker:' + t.id)).toBeNull();
   });
 
-  test('removing a running ticket stops its worker', async () => {
+  test('removing a running salu stops its worker', async () => {
     const t = ticket('doomed', 'FAKE:sleep 10000 then FAKE:done');
     const { orch, events } = make({ concurrency: 1, exitWhenEmpty: false });
     const run = orch.start();

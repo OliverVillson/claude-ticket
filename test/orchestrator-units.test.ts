@@ -60,7 +60,7 @@ describe('prompts', () => {
     const s = systemAppend(tv());
     expect(s).toContain('ticket "Add login page" of project "web"');
     expect(s).toContain('/work/web');
-    expect(s).toContain('ticket/add-login-page');
+    expect(s).toContain('salu/add-login-page');
     expect(s).toContain('never push');
     expect(s).toContain('TICKET: blocked');
   });
@@ -76,8 +76,8 @@ describe('SDK options', () => {
     expect(o.cwd).toBe('/work/web');
     expect(o.maxTurns).toBe(50);
     expect(o.permissionMode).toBe('acceptEdits');
-    expect(o.model).toBeUndefined();
-    expect(o.effort).toBeUndefined();
+    expect(o.model).toBe('claude-opus-5-5');
+    expect(o.effort).toBe('medium');
     expect(o.resume).toBeUndefined();
     expect(o.permissionPrompts).toBe('none');
     expect((o.systemPrompt as any).preset).toBe('claude_code');
@@ -114,12 +114,12 @@ describe('SDK options', () => {
   test('an invalid max-turns falls back to 50', () => {
     expect(workerSdkOptions(tv({ tags: JSON.stringify({ 'max-turns': 'lots' }) }), proj()).maxTurns).toBe(50);
   });
-  test("TICKET_CLAUDE_PATH selects the claude executable", () => {
-    process.env.TICKET_CLAUDE_PATH = '/opt/claude';
+  test("SALU_CLAUDE_PATH selects the claude executable", () => {
+    process.env.SALU_CLAUDE_PATH = '/opt/claude';
     try {
       expect(workerSdkOptions(tv(), proj()).pathToClaudeCodeExecutable).toBe('/opt/claude');
     } finally {
-      delete process.env.TICKET_CLAUDE_PATH;
+      delete process.env.SALU_CLAUDE_PATH;
     }
   });
 });
@@ -137,7 +137,7 @@ describe('worker environment', () => {
       expect(env.ANTHROPIC_API_KEY).toBe('sk-test');
       expect(env.MY_SETTING).toBe('kept');
       expect(env.TICKET_ID).toBe('9');
-      expect(env.CLAUDE_AGENT_SDK_CLIENT_APP).toContain('claude-ticket');
+      expect(env.CLAUDE_AGENT_SDK_CLIENT_APP).toContain('salu');
       expect(process.env.CLAUDE_CODE_SESSION_ID).toBe('parent-session'); // ours is untouched
     } finally {
       for (const k of ['CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_MESSAGING_SOCKET', 'ANTHROPIC_API_KEY', 'MY_SETTING']) {
@@ -372,7 +372,7 @@ describe('event lines', () => {
   });
   test('pause text: manual, session countdown, weekly, per-model', () => {
     const now = 1_000_000;
-    expect(describePause({ until: null, reason: 'x', kind: 'manual', models: [], manual: true }, now)).toContain('ticket resume');
+    expect(describePause({ until: null, reason: 'x', kind: 'manual', models: [], manual: true }, now)).toContain('salu resume');
     const s = describePause({ until: now + 3_600_000, reason: 'x', kind: 'session', models: [] }, now);
     expect(s).toContain('resumes');
     expect(s).toContain('1h');

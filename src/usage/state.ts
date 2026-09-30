@@ -5,8 +5,8 @@ import { labelForKind } from './detect.ts';
 import type { GateResult, LimitHit, LimitKind, LimitSource, PauseState } from './types.ts';
 
 /**
- * Pause bookkeeping in the `state` table. Uses the core's STATE keys for what `ticket status`,
- * `ticket pause`/`resume`, the orchestrator and the TUI read (paused_until, pause_reason,
+ * Pause bookkeeping in the `state` table. Uses the core's STATE keys for what `salu status`,
+ * `salu pause`/`resume`, the orchestrator and the TUI read (paused_until, pause_reason,
  * pause_kind, pause_models, manual_pause) plus a few `usage_*` keys of its own.
  */
 export const USAGE_STATE = {
@@ -106,7 +106,7 @@ export function enterPause(db: Database, hit: LimitHit, opts: EnterPauseOptions 
 /** Alias of `enterPause` under the name the core's contract uses. */
 export const recordLimitHit = enterPause;
 
-/** `ticket pause`: stop dispatch until `ticket resume`. Keeps any limit pause underneath. */
+/** `salu pause`: stop dispatch until `salu resume`. Keeps any limit pause underneath. */
 export function enterManualPause(db: Database, now = Date.now()): PauseState {
   const tx = db.transaction(() => {
     setState(db, STATE.manualPause, '1');
@@ -117,7 +117,7 @@ export function enterManualPause(db: Database, now = Date.now()): PauseState {
   return getPause(db)!;
 }
 
-/** Clear every pause (limit and manual). `ticket resume` calls this. */
+/** Clear every pause (limit and manual). `salu resume` calls this. */
 export function clearPause(db: Database, now = Date.now()): void {
   const tx = db.transaction(() => {
     for (const k of [STATE.pausedUntil, STATE.pauseReason, STATE.pauseKind, STATE.pauseModels, STATE.manualPause]) setState(db, k, null);
@@ -128,7 +128,7 @@ export function clearPause(db: Database, now = Date.now()): void {
 }
 
 /**
- * Clear the limit pause but keep a manual pause (`ticket pause`) in place. The auto-resume
+ * Clear the limit pause but keep a manual pause (`salu pause`) in place. The auto-resume
  * uses this: a probe never overrides a pause a person asked for.
  */
 export function clearLimitPause(db: Database, now = Date.now()): void {
@@ -202,7 +202,7 @@ export function pauseCoversModel(models: string[], model: string | null | undefi
 /**
  * Synchronous dispatch check. Closed while a manual pause is on, or while a limit pause covers
  * the model. A limit pause stays closed after its reset time until `waitUntilOpen` /
- * `resumeIfDue` (or `ticket resume`) clears it, so a probe always precedes resumption.
+ * `resumeIfDue` (or `salu resume`) clears it, so a probe always precedes resumption.
  */
 export function gateFor(db: Database, model: string | null | undefined): GateResult {
   const state = getPause(db);

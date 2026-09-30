@@ -30,10 +30,10 @@ export interface SchedulerOptions {
   db: Database;
   /** Only dispatch tickets of these projects. Default: every project. */
   projectIds?: number[];
-  /** Global cap on running workers. Default: the `concurrency` state key, else TICKET_CONCURRENCY, else 2. */
+  /** Global cap on running workers. Default: the `concurrency` state key, else SALU_CONCURRENCY, else 2. */
   concurrency?: number;
   hooks?: Partial<UsageHooks>;
-  /** The worker runner. Default: `selectRunner()` (the SDK, or the fake with TICKET_WORKER=fake). */
+  /** The worker runner. Default: `selectRunner()` (the SDK, or the fake with SALU_WORKER=fake). */
   runner?: WorkerRunner;
   /** Injected stream consumer (tests). */
   runWorker?: RunWorkerFn;
@@ -43,9 +43,9 @@ export interface SchedulerOptions {
   maxAttempts?: number;
   /** Stop once no ticket is left to run and no worker is running (scripts, tests). */
   exitWhenEmpty?: boolean;
-  /** Folder holding the wake file. Default: TICKET_HOME. */
+  /** Folder holding the wake file. Default: SALU_HOME. */
   home?: string;
-  /** Folder for run logs. Default: TICKET_HOME/logs. */
+  /** Folder for run logs. Default: SALU_HOME/logs. */
   logs?: string;
 }
 
@@ -115,7 +115,7 @@ export class Orchestrator {
     if (this.opts.concurrency && this.opts.concurrency > 0) return this.opts.concurrency;
     const fromState = Number(getState(this.db, STATE.concurrency));
     if (Number.isInteger(fromState) && fromState > 0) return fromState;
-    const fromEnv = Number(process.env.TICKET_CONCURRENCY);
+    const fromEnv = Number(process.env.SALU_CONCURRENCY);
     if (Number.isInteger(fromEnv) && fromEnv > 0) return fromEnv;
     return DEFAULT_CONCURRENCY;
   }
@@ -133,13 +133,13 @@ export class Orchestrator {
     r?.();
   }
 
-  /** Hold dispatch by hand. Running workers are left alone. Same state as `ticket pause`. */
+  /** Hold dispatch by hand. Running workers are left alone. Same state as `salu pause`. */
   pause(p: { until: number | null; reason: string; kind: string; models?: string[]; manual?: boolean } = { until: null, reason: 'paused', kind: 'manual', manual: true }): void {
     setPause(this.db, p);
     this.wake();
   }
 
-  /** Lift any pause and dispatch right away. Same as `ticket resume`. */
+  /** Lift any pause and dispatch right away. Same as `salu resume`. */
   resume(): void {
     clearPause(this.db);
     this.wake();
@@ -161,7 +161,7 @@ export class Orchestrator {
     const db = this.db;
     const st = readStatus(db);
     if (st.alive && st.pid && st.pid !== process.pid) {
-      throw new CliError(`an orchestrator is already running (pid ${st.pid}); \`ticket stop\` ends it`);
+      throw new CliError(`an orchestrator is already running (pid ${st.pid}); \`salu stop\` ends it`);
     }
     if (!this.runner) this.runner = await selectRunner();
     const now = Date.now();

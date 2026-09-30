@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 /**
- * Puts a `ticket` command on your PATH.
+ * Puts a `salu` command on your PATH.
  *
  *   bun run install-cli                 install (or refresh) the launcher
- *   bun run install-cli --binary        also compile dist/ticket and install that instead
+ *   bun run install-cli --binary        also compile dist/salu and install that instead
  *   bun run install-cli --dir ~/bin     choose the folder yourself
  *   bun run uninstall-cli               remove it
  *
@@ -69,7 +69,7 @@ function isOurs(file: string): boolean {
 
 const dirArg = value('dir');
 const chosen = dirArg ? { dir: resolve(dirArg.replace(/^~/, home)), onPath: onPath.includes(resolve(dirArg.replace(/^~/, home))) } : pickDir();
-const target = join(chosen.dir, 'ticket');
+const target = join(chosen.dir, 'salu');
 
 if (flag('uninstall')) {
   if (!existsSync(target) && !lstatSafe(target)) console.log(`nothing to remove at ${target}`);
@@ -100,7 +100,7 @@ mkdirSync(chosen.dir, { recursive: true });
 if (lstatSafe(target)) unlinkSync(target);
 
 if (flag('binary')) {
-  const out = join(repo, 'dist', 'ticket');
+  const out = join(repo, 'dist', 'salu');
   const build = Bun.spawnSync([process.execPath, 'run', 'build'], { cwd: repo, stdout: 'inherit', stderr: 'inherit' });
   if (build.exitCode !== 0) process.exit(build.exitCode ?? 1);
   await Bun.write(target, Bun.file(out));
@@ -116,5 +116,5 @@ if (!chosen.onPath) {
   const shell = (process.env.SHELL || '').endsWith('zsh') ? '~/.zshrc' : '~/.bashrc';
   console.log(`\n${chosen.dir} is not on your PATH. Add it, then open a new terminal:\n\n  echo 'export PATH="${chosen.dir}:$PATH"' >> ${shell}\n`);
 } else {
-  console.log('try it:  ticket "?"');
+  console.log('try it:  salu "?"');
 }

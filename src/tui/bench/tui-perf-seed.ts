@@ -1,4 +1,4 @@
-// Seed TICKET_HOME with N tickets (default 500) for timing the list view: bun run src/tui/bench/tui-perf-seed.ts 500
+// Seed SALU_HOME with N tickets (default 500) for timing the list view: bun run src/tui/bench/tui-perf-seed.ts 500
 import { openDb } from '../../db/db.ts';
 import { createProject, createTicket, updateTicket } from '../../db/queries.ts';
 const n = Number(process.argv[2] ?? 500);
@@ -19,4 +19,4 @@ db.transaction(() => {
     updateTicket(db, t.id, { status: statuses[i % statuses.length]!, cost_usd: (i % 9) * 0.13 });
   }
 })();
-console.log(`seeded ${n} tickets in ${process.env.TICKET_HOME}`);
+console.log(`seeded ${n} tickets in ${process.env.SALU_HOME}`);
