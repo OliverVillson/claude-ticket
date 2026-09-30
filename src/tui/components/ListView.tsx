@@ -67,7 +67,8 @@ export const LIST_HINTS: Array<[string, string]> = [
   ['p', 'pause'],
   ['/', 'filter'],
   [':', 'command'],
-  ['tab', 'project'],
+  ['→', 'properties'],
+  ['tab', 'window'],
   ['?', 'help'],
   ['q', 'quit'],
 ];

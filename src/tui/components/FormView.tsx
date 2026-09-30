@@ -4,6 +4,9 @@ import { Frame, hintsText, titleText } from './Frame.tsx';
 import { style as st } from '../style.ts';
 import { inkColor } from '../../ui/theme.ts';
 import { TextField } from './TextField.tsx';
+import { TagEditor } from './TagEditor.tsx';
+import { GROUP_LABEL, type TagGroup } from '../tagRows.ts';
+import { groupSummary, splitTags } from '../tagGroups.ts';
 
 export interface FormValues {
   name: string;
@@ -34,8 +37,17 @@ const FIELDS: Array<{ key: keyof FormValues; label: string; placeholder: string;
 export const FORM_HINTS: Array<[string, string]> = [
   ['⏎', 'save'],
   ['tab', 'next field'],
+  ['→', 'tag groups'],
   ['esc', 'cancel'],
 ];
+
+const TAG_HINTS: Array<[string, string]> = [
+  ['↑↓', 'move'],
+  ['→ ⏎', 'open / change'],
+  ['←', 'back'],
+];
+
+const TAGS = 2; // index of the tags row in FIELDS
 
 /**
  * Inline add/edit form inside the same frame. Enter saves when name and query are filled,
@@ -44,12 +56,19 @@ export const FORM_HINTS: Array<[string, string]> = [
 export function FormView(p: FormViewProps) {
   const [values, setValues] = useState<FormValues>(p.initial);
   const [focus, setFocus] = useState(0);
+  const [tagsOpen, setTagsOpen] = useState(false);
+  const [group, setGroup] = useState<TagGroup | null>(null);
   const set = (k: keyof FormValues) => (v: string) => {
     setValues((prev) => ({ ...prev, [k]: v }));
     p.onChange?.();
   };
 
-  useInput((_input, key) => {
+  useInput(
+    (_input, key) => {
+    if (focus === TAGS && key.rightArrow) {
+      setTagsOpen(true);
+      return;
+    }
     if (key.escape) {
       p.onCancel();
       return;
@@ -67,22 +86,54 @@ export function FormView(p: FormViewProps) {
       if (!values.query.trim()) return setFocus(1);
       p.onSubmit({ name: values.name.trim(), query: values.query.trim(), tags: values.tags.trim(), priority: values.priority.trim() });
     }
-  });
+    },
+    { isActive: !tagsOpen },
+  );
 
   const cols = p.columns;
   const labelW = 11;
   const crumbs = [p.projectName, p.mode === 'add' ? 'new ticket' : `edit ${p.initial.name}`];
-  const help = 'tags: model=opus|sonnet|haiku  effort=low|medium|high|xhigh|max  max-turns=N  permission=acceptEdits|bypass  project=name  bare words become labels';
+  const help = 'tags: press → to choose model / effort, tools and other settings';
+  const summary = groupSummary(splitTags(values.tags));
   return (
-    <Frame columns={cols} header={{ left: titleText(crumbs) }} footer={{ left: hintsText(FORM_HINTS, cols - 2) }}>
-      {FIELDS.map((f, i) => (
-        <Text key={f.key} wrap="truncate-end">
-          <Text color={inkColor(i === focus ? 'accent' : 'chrome')}>
-            {(i === focus ? '❯ ' : '  ') + f.label.padEnd(labelW - 2)}
+    <Frame columns={cols} header={{ left: titleText(crumbs) }} footer={{ left: hintsText(tagsOpen ? TAG_HINTS : FORM_HINTS, cols - 2) }}>
+      {FIELDS.map((f, i) => {
+        const label = (
+          <Text color={inkColor(i === focus ? 'accent' : 'chrome')}>{(i === focus ? '❯ ' : '  ') + f.label.padEnd(labelW - 2)}</Text>
+        );
+        if (f.key === 'tags') {
+          return (
+            <React.Fragment key="tags">
+              <Text wrap="truncate-end">
+                {label}
+                {values.tags ? st.text(values.tags) : st.dim(`${summary.modelEffort} · ${summary.tools}   → to choose`)}
+                {tagsOpen && group ? st.dim(`   ${GROUP_LABEL[group]}`) : ''}
+              </Text>
+              {tagsOpen ? (
+                <TagEditor
+                  columns={cols}
+                  tags={values.tags}
+                  onChange={(t) => {
+                    set('tags')(t);
+                    return null;
+                  }}
+                  onGroup={setGroup}
+                  onClose={() => {
+                    setTagsOpen(false);
+                    setGroup(null);
+                  }}
+                />
+              ) : null}
+            </React.Fragment>
+          );
+        }
+        return (
+          <Text key={f.key} wrap="truncate-end">
+            {label}
+            <TextField value={values[f.key]} onChange={set(f.key)} focus={i === focus && !tagsOpen} placeholder={f.placeholder} width={Math.max(10, Math.min(f.width ?? 999, cols - 4 - labelW))} />
           </Text>
-          <TextField value={values[f.key]} onChange={set(f.key)} focus={i === focus} placeholder={f.placeholder} width={Math.max(10, Math.min(f.width ?? 999, cols - 4 - labelW))} />
-        </Text>
-      ))}
+        );
+      })}
       <Text> </Text>
       {p.error ? (
         <Text color={inkColor('error')} wrap="truncate-end">

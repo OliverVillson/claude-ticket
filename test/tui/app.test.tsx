@@ -129,22 +129,22 @@ describe('list view', () => {
     expect(term.lastFrame()).toContain('nothing matches "zzzz"');
   });
 
-  test('in one pane the left and right arrows cycle projects and show only their tickets', async () => {
+  test('in one pane < and > cycle projects and show only their tickets', async () => {
     const { db } = seedDb(12);
     const { term } = mountApp({ db });
     await term.waitFor((s) => s.includes('all projects'));
-    await term.press(KEY.right);
+    await term.press('>');
     let f = await term.waitFor((s) => s.includes('salu › web'), 'web');
     expect(f).toContain('ticket 001');
     expect(f).not.toContain('ticket 002');
-    await term.press(KEY.right);
+    await term.press('>');
     f = await term.waitFor((s) => s.includes('salu › api'), 'api');
     expect(f).toContain('ticket 002');
     expect(f).not.toContain('ticket 001');
-    await term.press(KEY.right);
+    await term.press('>');
     await term.waitFor((s) => s.includes('all projects'), 'all again');
-    await term.press(KEY.left);
-    await term.waitFor((s) => s.includes('salu › api'), 'left goes back');
+    await term.press('<');
+    await term.waitFor((s) => s.includes('salu › api'), '< goes back');
   });
 
   test('a status scope from --status shows in the header and limits rows', async () => {
@@ -278,6 +278,38 @@ describe('ticket actions from the list', () => {
   });
 });
 
+/** Drive the tag-group menu from the tags row: model/effort picks by index, labels text. */
+async function setTags(term: any, o: { model?: number; effort?: number; labels?: string }) {
+  await term.press(KEY.right); // open the groups
+  if (o.model != null || o.effort != null) {
+    await term.press(KEY.right); // Model / effort
+    if (o.model != null) {
+      await term.press(KEY.right);
+      for (let i = 0; i < o.model; i++) await term.press(KEY.down);
+      await term.press(KEY.enter);
+    }
+    if (o.effort != null) {
+      await term.press(KEY.down);
+      await term.press(KEY.right);
+      for (let i = 0; i < o.effort; i++) await term.press(KEY.down);
+      await term.press(KEY.enter);
+    }
+    await term.press(KEY.left); // back to the groups
+  }
+  if (o.labels != null) {
+    await term.press(KEY.down);
+    await term.press(KEY.down);
+    await term.press(KEY.right); // Other
+    await term.press(KEY.down);
+    await term.press(KEY.down);
+    await term.press(KEY.right);
+    await term.press(o.labels);
+    await term.press(KEY.enter);
+    await term.press(KEY.left);
+  }
+  await term.press(KEY.left); // back to the form
+}
+
 describe('add and edit form', () => {
   test('a adds a ticket to the current project with tags and priority', async () => {
     const { db, web } = seedDb(3);
@@ -289,7 +321,7 @@ describe('add and edit form', () => {
     await term.press(KEY.tab);
     await term.press('Build it and test it');
     await term.press(KEY.tab);
-    await term.press('model=opus effort=high docs');
+    await setTags(term, { model: 1, effort: 3, labels: 'docs' });
     await term.press(KEY.tab);
     await term.press(KEY.backspace);
     await term.press('1');
@@ -344,12 +376,13 @@ describe('add and edit form', () => {
     await term.press(KEY.tab);
     await term.press('q');
     await term.press(KEY.tab);
-    await term.press('effort=turbo');
+    await setTags(term, { labels: 'effort=turbo' });
     await term.press(KEY.enter);
     const f = await term.waitFor((s) => s.includes('effort must be one of'), 'error');
     expect(f).toContain('new ticket');
     expect(listTickets(db).some((t) => t.name === 'Bad tags')).toBe(false);
-    await term.press(KEY.backspace);
+    await term.press(KEY.tab);
+    await term.press('x');
     await term.waitFor((s) => !s.includes('effort must be one of'), 'error cleared');
   });
 
@@ -688,14 +721,16 @@ describe('two panes: project tree and tickets', () => {
     expect(term.lastFrame()).toContain('┏━ ▌projects');
     expect(term.lastFrame()).not.toContain('┃ ▌❯');
     await term.press(KEY.tab);
-    await term.press(KEY.left); // arrows still move between the two panes
+    await term.press(KEY.left); // arrows never move between windows
+    expect(term.lastFrame()).toContain('┏━ ▌tickets');
+    await term.press(KEY.shiftTab); // reverse: tickets -> tree -> command line -> tickets
     expect(term.lastFrame()).toContain('┏━ ▌projects');
-    await term.press(KEY.shiftTab); // reverse: tree -> command line -> tickets
+    await term.press(KEY.right); // on a leaf-or-open row, right stays in the tree
+    expect(term.lastFrame()).toContain('┏━ ▌projects');
+    await term.press(KEY.shiftTab);
     expect(term.lastFrame()).toContain('┃ ▌❯');
     await term.press(KEY.shiftTab);
     expect(term.lastFrame()).toContain('┏━ ▌tickets');
-    await term.press(KEY.shiftTab);
-    expect(term.lastFrame()).toContain('┏━ ▌projects');
   });
 
   test('narrow terminals fall back to a single pane', async () => {
@@ -813,5 +848,128 @@ describe('three windows and the live activity area', () => {
     expect(f).toContain('activity');
     expect(f).toContain('┏━ ▌tickets');
     expect(f).not.toContain('projects ─');
+  });
+});
+
+describe('ticket properties (right arrow on a ticket)', () => {
+  const rowsDown = async (term: any, n: number) => {
+    for (let i = 0; i < n; i++) await term.press(KEY.down);
+  };
+  const poll = async (fn: () => boolean, what: string) => {
+    for (let i = 0; i < 60 && !fn(); i++) await new Promise((r) => setTimeout(r, 50));
+    if (!fn()) throw new Error('timed out: ' + what);
+  };
+
+  test('right opens every property, left closes; arrows never leave through the sides', async () => {
+    const { db } = seedDb(12);
+    const { term } = mountApp({ db });
+    await term.waitFor((s) => s.includes('ticket 001'));
+    await term.press(KEY.right);
+    const f = await term.waitFor((s) => s.includes('properties'), 'props');
+    for (const w of ['name', 'query', 'project', 'status', 'model', 'effort', 'toolset', 'priority', 'permission', 'max-turns', 'created', 'last run']) expect(f).toContain(w);
+    expect(f).toContain('opus');
+    expect(f).toContain('standard');
+    await term.press(KEY.left);
+    await term.waitFor((s) => !s.includes('properties') && s.includes('ticket 001'), 'back to list');
+  });
+
+  test('a text property is edited in place and saved through salu change', async () => {
+    const { db, ids } = seedDb(12);
+    const { term } = mountApp({ db });
+    await term.waitFor((s) => s.includes('ticket 001'));
+    await term.press(KEY.right);
+    await term.waitFor((s) => s.includes('properties'));
+    await term.press(KEY.right); // edit the name
+    await term.press(' renamed');
+    await term.press(KEY.enter);
+    await poll(() => getTicketById(db, ids[0]!)!.name === 'ticket 001 renamed', 'rename');
+  });
+
+  test('pick-lists change model and tools without losing the other tags', async () => {
+    const { db, ids } = seedDb(12);
+    const { term } = mountApp({ db });
+    await term.waitFor((s) => s.includes('ticket 001'));
+    await term.press(KEY.right);
+    await term.waitFor((s) => s.includes('properties'));
+    await rowsDown(term, 4); // model
+    await term.press(KEY.right);
+    await term.waitFor((s) => s.includes('sonnet'), 'model choices');
+    await term.press(KEY.down); // opus -> sonnet
+    await term.press(KEY.enter);
+    await poll(() => JSON.parse(getTicketById(db, ids[0]!)!.tags).model === 'sonnet', 'model saved');
+    let t = getTicketById(db, ids[0]!)!;
+    expect(JSON.parse(t.tags).effort).toBe('high');
+    expect(JSON.parse(t.labels)).toEqual(['bug']);
+    await rowsDown(term, 2); // toolset
+    await term.press(KEY.right);
+    await term.waitFor((s) => s.includes('read-only'), 'toolset choices');
+    await term.press(KEY.down);
+    await term.press(KEY.enter);
+    await poll(() => JSON.parse(getTicketById(db, ids[0]!)!.tags).tools === 'readonly', 'tools saved');
+    t = getTicketById(db, ids[0]!)!;
+    expect(JSON.parse(t.tags).model).toBe('sonnet');
+  });
+
+  test('status and priority are pick-lists too; a bad value is reported and nothing is saved', async () => {
+    const { db, ids } = seedDb(12);
+    const { term } = mountApp({ db });
+    await term.waitFor((s) => s.includes('ticket 001'));
+    await term.press(KEY.right);
+    await term.waitFor((s) => s.includes('properties'));
+    await rowsDown(term, 3); // status (running -> done is the next choice)
+    await term.press(KEY.right);
+    await term.press(KEY.down);
+    await term.press(KEY.enter);
+    await poll(() => getTicketById(db, ids[0]!)!.status === 'done', 'status saved');
+    await rowsDown(term, 7); // max-turns text row
+    await term.press(KEY.right);
+    await term.press('abc');
+    await term.press(KEY.enter);
+    await term.waitFor((s) => s.includes('max-turns must be'), 'error');
+    expect(JSON.parse(getTicketById(db, ids[0]!)!.tags)['max-turns']).toBeUndefined();
+  });
+});
+
+describe('tag groups in the form', () => {
+  test('the groups are Model / effort, Tools and Other; tools defaults to standard', async () => {
+    const { db } = seedDb(3);
+    const { term } = mountApp({ db });
+    await term.waitFor((s) => s.includes('1/3'));
+    await term.press('a');
+    await term.press(KEY.tab);
+    await term.press(KEY.tab);
+    await term.press(KEY.right);
+    let f = await term.waitFor((s) => s.includes('Model / effort'), 'groups');
+    expect(f).toContain('Tools');
+    expect(f).toContain('Other');
+    expect(f).toContain('standard');
+    await term.press(KEY.down);
+    await term.press(KEY.right);
+    f = await term.waitFor((s) => s.includes('toolset'), 'tools group');
+    await term.press(KEY.right);
+    f = await term.waitFor((s) => s.includes("Claude Code's regular toolset"), 'toolset choices');
+    expect(f).toContain('read-only');
+  });
+
+  test('tools chosen in the form end up in the ticket tags', async () => {
+    const { db } = seedDb(3);
+    const { term } = mountApp({ db });
+    await term.waitFor((s) => s.includes('1/3'));
+    await term.press('a');
+    await term.press('Tooled');
+    await term.press(KEY.tab);
+    await term.press('q');
+    await term.press(KEY.tab);
+    await term.press(KEY.right);
+    await term.press(KEY.down);
+    await term.press(KEY.right); // Tools
+    await term.press(KEY.right); // toolset pick
+    await term.press(KEY.down);
+    await term.press(KEY.enter); // read-only
+    await term.press(KEY.left);
+    await term.press(KEY.left);
+    await term.press(KEY.enter);
+    await term.waitFor((s) => s.includes('added "Tooled"'), 'added');
+    expect(JSON.parse(listTickets(db).find((x) => x.name === 'Tooled')!.tags).tools).toBe('readonly');
   });
 });
