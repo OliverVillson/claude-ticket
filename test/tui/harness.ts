@@ -2,7 +2,7 @@ import { PassThrough, Writable } from 'node:stream';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openDb } from '../../src/db/db.ts';
+import { closeDb, openDb } from '../../src/db/db.ts';
 import { createProject, createTicket, updateTicket } from '../../src/db/queries.ts';
 import type { TicketStatus } from '../../src/db/types.ts';
 
@@ -78,6 +78,7 @@ export function fakeTerminal(columns = 100, rows = 30) {
 export function seedDb(n = 12) {
   const home = mkdtempSync(join(tmpdir(), 'ticket-tui-test-'));
   process.env.SALU_HOME = home;
+  closeDb(); // command-line handlers use the cached default db: point it at this test's home
   const db = openDb(join(home, 'tickets.db'));
   const web = createProject(db, { name: 'web', path: join(home, 'web') });
   const api = createProject(db, { name: 'api', path: join(home, 'api') });

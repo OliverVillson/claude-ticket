@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { App } from '../../src/tui/app.tsx';
 import { RunView } from '../../src/tui/components/RunView.tsx';
 import { defaultActions } from '../../src/tui/actions.ts';
-import { createRun, getTicketById, listTickets, setState } from '../../src/db/queries.ts';
+import { createProject, createRun, createTicket, getTicketById, listProjects, listTickets, setState } from '../../src/db/queries.ts';
 import { STATE } from '../../src/db/types.ts';
 import { clearPause, readStatus, setPause, writeWorkerInfo } from '../../src/orchestrator/status.ts';
 import type { OrchestratorEvent } from '../../src/orchestrator/types.ts';
@@ -607,5 +607,98 @@ describe('command line', () => {
     await type(term, 'rem');
     await term.press(KEY.tab);
     expect(term.lastFrame()).toContain('❯ remove');
+  });
+});
+
+describe('two panes: project tree and tickets', () => {
+  function seedTree() {
+    const { db, home } = seedDb(0);
+    const web = listProjects(db).find((p) => p.name === 'web')!;
+    const ui = createProject(db, { name: 'web-ui', path: join(home, 'web', 'ui'), parentId: web.id });
+    const forms = createProject(db, { name: 'forms', path: join(home, 'web', 'ui', 'forms'), parentId: ui.id });
+    const mk = (project_id: number, name: string) => createTicket(db, { project_id, name, query: name, tags: {}, labels: [], priority: 3 });
+    mk(web.id, 'web root job');
+    mk(ui.id, 'ui job');
+    mk(forms.id, 'forms job');
+    return { db, web, ui, forms };
+  }
+
+  test('wide terminals show the tree beside the tickets; a project lists its whole subtree', async () => {
+    const { db } = seedTree();
+    const { term } = mountApp({ db }, [130, 30]);
+    let f = await term.waitFor((s) => s.includes('all projects') && s.includes('web root job'), 'tree and tickets');
+    expect(f).toContain('▸');
+    await term.press(KEY.down); // web
+    f = term.lastFrame();
+    expect(f).toContain('web root job');
+    expect(f).toContain('ui job');
+    expect(f).toContain('forms job');
+    await term.press(KEY.right); // open web
+    f = term.lastFrame();
+    expect(f).toContain('web-ui');
+    await term.press(KEY.down); // web-ui
+    f = term.lastFrame();
+    expect(f).not.toContain('web root job');
+    expect(f).toContain('ui job');
+    expect(f).toContain('forms job');
+    await term.press(KEY.right); // open web-ui
+    await term.press(KEY.down); // forms
+    f = term.lastFrame();
+    expect(f).not.toContain('ui job');
+    expect(f).toContain('forms job');
+    expect(f).toContain('▌salu › web › web-ui › forms');
+  });
+
+  test('left goes back up; right on a leaf and tab move focus to the tickets', async () => {
+    const { db } = seedTree();
+    const { term } = mountApp({ db }, [130, 30]);
+    await term.waitFor((s) => s.includes('web root job'));
+    await term.press(KEY.down);
+    await term.press(KEY.right);
+    await term.press(KEY.down);
+    await term.press(KEY.left); // web-ui is closed, so back to web
+    expect(term.lastFrame()).toContain('▌salu › web');
+    expect(term.lastFrame()).not.toContain('▌salu › web › web-ui');
+    await term.press(KEY.tab);
+    expect(term.lastFrame()).toContain('open'); // list hints, not tree hints
+    await term.press(KEY.left); // back to the tree
+    expect(term.lastFrame()).toContain('add project');
+  });
+
+  test('narrow terminals fall back to a single pane', async () => {
+    const { db } = seedTree();
+    const { term } = mountApp({ db }, [90, 30]);
+    const f = await term.waitFor((s) => s.includes('web root job'));
+    expect(f).not.toContain(' │ ');
+    expect(f).not.toContain('▸');
+  });
+
+  test('a adds a project through the command line, d removes the selected one after y', async () => {
+    const { db } = seedTree();
+    const { term } = mountApp({ db }, [130, 30]);
+    await term.waitFor((s) => s.includes('web root job'));
+    await term.press('a');
+    for (const ch of 'newproj') await term.press(ch, 5);
+    await term.press(KEY.enter, 300);
+    await term.waitFor((s) => /[▸ ] newproj\s+\d*\s*│/.test(s) || s.includes('added') || s.includes('project newproj'), 'command ran');
+    for (let i = 0; i < 50 && !listProjects(db).some((p) => p.name === 'newproj'); i++) await sleep(20);
+    expect(listProjects(db).some((p) => p.name === 'newproj')).toBe(true);
+    await term.waitFor((s) => /newproj\s+\d*\s*│/.test(s), 'project in tree');
+    await term.press(KEY.esc);
+    await term.press(KEY.down);
+    await term.press(KEY.down);
+    await term.press(KEY.down); // web, api, newproj
+    await term.press('d');
+    expect(term.lastFrame()).toContain('remove project "newproj"');
+    await term.press('y', 300);
+    await term.waitFor((s) => !s.includes('newproj'), 'project gone');
+    expect(listProjects(db).some((p) => p.name === 'newproj')).toBe(false);
+  });
+
+  test('the pixel dog runs in the header while something is running', async () => {
+    const { db } = seedDb(6); // ticket 001 is running
+    const { term } = mountApp({ db }, [130, 30]);
+    const f = await term.waitFor((s) => /[▀▄█]/.test(s.split('\n')[0] ?? ''), 'dog in header');
+    expect(f.split('\n')[0]).toMatch(/[▀▄█]/);
   });
 });

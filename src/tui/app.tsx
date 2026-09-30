@@ -143,7 +143,8 @@ export function App(p: AppProps) {
   const showProjectCol = scopeIds == null || scopeIds.size > 1;
   const layout = useMemo(() => computeLayout(listInnerWidth(columns) - (twoPane ? leftW + 3 : 0), { showProject: showProjectCol }), [columns, twoPane, leftW, showProjectCol]);
   const now = Date.now();
-  const anyRunningVisible = mode === 'list' ? visible.slice(top, top + rows).some((t) => t.status === 'running') : mode === 'detail' && selected?.status === 'running';
+  const working = snapshot.status.workers.length > 0 || snapshot.tickets.some((t) => t.status === 'running');
+  const anyRunningVisible = (mode === 'list' && working) || (mode === 'list' ? visible.slice(top, top + rows).some((t) => t.status === 'running') : mode === 'detail' && selected?.status === 'running');
   const { frame } = useAnimation({ interval: 200, isActive: anyRunningVisible });
 
   // ----- data refresh --------------------------------------------------------------------
@@ -525,6 +526,7 @@ export function App(p: AppProps) {
   return (
     <Box flexDirection="column">
     <ListView
+      working={working}
       sidebar={sidebar}
       ticketFocus={!twoPane || pane === 'tickets'}
       crumbs={scopeCrumbs}

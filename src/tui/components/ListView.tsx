@@ -5,6 +5,7 @@ import type { OrchestratorStatus } from '../../orchestrator/status.ts';
 import { displayWidth, truncate } from '../format.ts';
 import type { RowLayout } from '../layout.ts';
 import { messageText, type Message } from '../messages.ts';
+import { DOG_WIDTH, dogFrame } from '../dog/line.ts';
 import { renderRow } from '../rows.ts';
 import { style as st } from '../style.ts';
 import { STATUS_ORDER } from '../theme.ts';
@@ -45,6 +46,8 @@ export interface ListViewProps {
   projectConfirm?: string | null;
   /** hint bar override (the tree pane has its own keys) */
   hints?: Array<[string, string]>;
+  /** workers are running: the pixel dog runs in the header */
+  working?: boolean;
 }
 
 export const LIST_HINTS: Array<[string, string]> = [
@@ -80,8 +83,10 @@ export function ListView(p: ListViewProps) {
   if (!p.filterEditing && p.filter.trim()) crumbs.push(`/${truncate(p.filter.trim(), 24)}`);
   const counts = p.filter.trim() ? `${p.tickets.length} of ${p.total} match` : countsText(p.counts);
   const badgeW = displayWidth(statusText(p.status, p.now));
-  const countsShown = truncate(counts, Math.max(0, cols - 1 - titleWidth(crumbs) - badgeW - 9));
-  const headerRight = (countsShown ? st.dim(countsShown + '  ·  ') : '') + statusBadge(p.status, p.now);
+  const dogW = p.working ? DOG_WIDTH + 2 : 0;
+  const countsShown = truncate(counts, Math.max(0, cols - 1 - titleWidth(crumbs) - badgeW - 9 - dogW));
+  const dog = p.working && cols - 1 - titleWidth(crumbs) - badgeW - 9 >= dogW ? dogFrame(p.spinner ?? 0, { level: st.level }) + '  ' : '';
+  const headerRight = dog + (countsShown ? st.dim(countsShown + '  ·  ') : '') + statusBadge(p.status, p.now);
 
   // Footer: filter prompt, delete confirm, message or hints; position on the right.
   const position = p.tickets.length ? `${p.cursor + 1}/${p.tickets.length}` : '';
