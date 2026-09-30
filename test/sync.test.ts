@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { openDb } from '../src/db/db.ts';
@@ -7,7 +7,7 @@ import { addTurn, listTurns, replyToTicket, claimNextTicket, createProject, crea
 import { addRemoteTicket, enqueueMessage, listNotifications, markRead, setRemote, unreadCount } from '../src/sync/store.ts';
 import { publishReply, publishTicket, syncProject } from '../src/sync/sync.ts';
 import { recordRemoteEvent } from '../src/sync/events.ts';
-import { parseReplyFile, parseMessageFile, parseTicketFile, newId } from '../src/sync/format.ts';
+import { signFile, stripControl, parseReplyFile, parseMessageFile, parseTicketFile, newId } from '../src/sync/format.ts';
 import { git } from '../src/sync/git.ts';
 
 let root: string;
@@ -104,7 +104,7 @@ describe('git sync', () => {
     sync(client);
     sync(box);
     const tags = JSON.parse(listTickets(box.db)[0]!.tags);
-    expect(tags).toEqual({ model: 'sonnet' });
+    expect(tags).toEqual({});
   });
 
   test('both sides pushing at once never conflict', () => {
@@ -208,6 +208,91 @@ describe('replies', () => {
     expect(parseReplyFile(JSON.stringify({ v: 1, id: newId(), body: 'hi' }))).toBeNull(); // no ticket
     expect(parseReplyFile(JSON.stringify({ v: 1, id: newId(), ticket: { id: 4, name: 'x' }, body: 'hi' }))).toMatchObject({ ticketId: 4, name: 'x' });
     expect(parseReplyFile(JSON.stringify({ v: 1, id: newId(), name: 'x', body: '  ' }))).toBeNull();
+  });
+});
+
+describe('untrusted remote', () => {
+  test('control characters are stripped from everything parsed', () => {
+    const osc = '\x1b]52;c;ZXZpbA==\x07';
+    const m = parseMessageFile(JSON.stringify({ v: 1, id: newId(), type: 'note', title: `hi${osc}`, body: `a${osc}\nb\tc`, ticket: { name: `n${osc}`, id: 1 } }))!;
+    expect(m.title).toBe('hi]52;c;ZXZpbA==');
+    expect(m.body).toBe('a]52;c;ZXZpbA==\nb\tc');
+    expect(m.ticket!.name).not.toContain('\x1b');
+    const t = parseTicketFile(JSON.stringify({ v: 1, id: newId(), name: `x${osc}`, query: `q\x9b31m`, tags: { [`k${osc}`]: `v${osc}` }, labels: [`l${osc}`] }))!;
+    expect([t.name, t.query, ...Object.keys(t.tags), ...Object.values(t.tags), ...t.labels].join('')).not.toMatch(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/);
+    expect(stripControl('a\u202eb')).toBe('ab');
+  });
+
+  test('a symlinked inbox folder on the remote is never written through', () => {
+    // A pusher commits salu-inbox/messages as a symlink to a folder outside the sync dir.
+    const outside = join(root, 'outside');
+    mkdirSync(outside);
+    const evil = join(root, 'evil');
+    git(root, ['init', '-q', evil]);
+    mkdirSync(join(evil, 'salu-inbox'));
+    symlinkSync(outside, join(evil, 'salu-inbox', 'messages'));
+    git(evil, ['add', '-A']);
+    git(evil, ['-c', 'user.name=x', '-c', 'user.email=x@x', 'commit', '-qm', 'evil']);
+    git(evil, ['push', '-q', bare, 'HEAD:refs/heads/salu/inbox']);
+    enqueueMessage(box.db, box.project.id, 'web', 'box', { type: 'note', level: 'info', title: 'hello' });
+    expect(() => sync(box)).toThrow(/not safe|outside/);
+    expect(existsSync(outside) && Bun.spawnSync(['ls', outside]).stdout.toString().trim()).toBe('');
+  });
+
+  test('tags that burn quota are stripped unless the box owner allows them', () => {
+    sendTicket('costly', { 'max-turns': '999999', model: 'opus', effort: 'max', perm: 'x' });
+    sync(client);
+    sync(box);
+    expect(JSON.parse(listTickets(box.db)[0]!.tags)).toEqual({ perm: 'x' });
+    process.env.SALU_REMOTE_ALLOW_TAGS = 'model, permission';
+    try {
+      sendTicket('allowed', { model: 'sonnet', permission: 'bypass', effort: 'max' });
+      sync(client);
+      sync(box);
+      expect(JSON.parse(listTickets(box.db).find((t) => t.name === 'allowed')!.tags)).toEqual({ model: 'sonnet' });
+    } finally {
+      delete process.env.SALU_REMOTE_ALLOW_TAGS;
+    }
+  });
+
+  test('with SALU_REMOTE_KEY, unsigned or wrongly signed files are ignored', () => {
+    const forged = { v: 1, id: newId(), project: 'web', from: 'box', at: Date.now(), type: 'ticket.done', level: 'success', title: 'forged' };
+    process.env.SALU_REMOTE_KEY = 'secret-one';
+    try {
+      const ok = signFile(forged);
+      expect(parseMessageFile(JSON.stringify(ok))?.title).toBe('forged');
+      expect(parseMessageFile(JSON.stringify(forged))).toBeNull(); // unsigned
+      expect(parseMessageFile(JSON.stringify({ ...ok, title: 'edited' }))).toBeNull(); // changed after signing
+      process.env.SALU_REMOTE_KEY = 'secret-two';
+      expect(parseMessageFile(JSON.stringify(ok))).toBeNull(); // other key
+    } finally {
+      delete process.env.SALU_REMOTE_KEY;
+    }
+    expect(parseMessageFile(JSON.stringify(forged))?.title).toBe('forged'); // no key: accepted
+  });
+
+  test('a full round trip works with signing on, and a forged ticket is not accepted', () => {
+    process.env.SALU_REMOTE_KEY = 'shared';
+    try {
+      const { t } = sendTicket('signed');
+      sync(client);
+      expect(sync(box).ticketsReceived).toBe(1);
+      sync(client);
+      expect(listNotifications(client.db)[0]!.type).toBe('ticket.accepted');
+      expect(getTicketById(client.db, t.id)).toBeTruthy();
+      // A pusher without the key writes a ticket file straight into the inbox.
+      const forged = { v: 1, id: newId(), project: 'web', name: 'evil', query: 'rm -rf', tags: {}, labels: [], priority: 1, queue: true, at: 0 };
+      const evil = join(root, 'evil2');
+      git(root, ['clone', '-q', '--branch', 'salu/inbox', bare, evil]);
+      writeFileSync(join(evil, 'salu-inbox', 'tickets', `${forged.id}.json`), JSON.stringify(forged));
+      git(evil, ['add', '-A']);
+      git(evil, ['-c', 'user.name=x', '-c', 'user.email=x@x', 'commit', '-qm', 'forged']);
+      git(evil, ['push', '-q', 'origin', 'HEAD:refs/heads/salu/inbox']);
+      expect(sync(box).ticketsReceived).toBe(0);
+      expect(listTickets(box.db).some((x) => x.name === 'evil')).toBe(false);
+    } finally {
+      delete process.env.SALU_REMOTE_KEY;
+    }
   });
 });
 

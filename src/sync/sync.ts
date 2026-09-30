@@ -7,7 +7,7 @@ import { CliError } from '../core/errors.ts';
 import { kernelPath, isGitRepo } from '../core/kernel.ts';
 import { existsSync } from 'node:fs';
 import { git, gitProblem, inboxDir, exchange, readDir } from './git.ts';
-import { MESSAGES_DIR, REMOTE_FORBIDDEN_TAGS, REPLIES_DIR, TICKETS_DIR, newId, parseMessageFile, parseReplyFile, parseTicketFile, type MessageFile, type ReplyFile, type TicketFile } from './format.ts';
+import { MESSAGES_DIR, remoteForbiddenTags, signFile, REPLIES_DIR, TICKETS_DIR, newId, parseMessageFile, parseReplyFile, parseTicketFile, type MessageFile, type ReplyFile, type TicketFile } from './format.ts';
 import {
   addOutReply,
   addRemoteTicket,
@@ -81,7 +81,7 @@ function ticketFile(db: Database, project: Project, uuid: string): TicketFile | 
 /** Box: make a ticket that arrived from a client. Returns the local ticket, or null when it is not valid here. */
 function acceptTicket(db: Database, project: Project, f: TicketFile): TicketView {
   const tags = { ...f.tags };
-  for (const k of REMOTE_FORBIDDEN_TAGS) delete tags[k];
+  for (const k of remoteForbiddenTags()) delete tags[k];
   let name = f.name;
   for (let n = 2; ; n++) {
     try {
@@ -141,12 +141,12 @@ export function syncProject(db: Database, project: Project, remote: Remote = get
     const outTickets = remote.role === 'client' ? pendingOutTickets(db, project.id) : [];
     for (const rt of outTickets) {
       const f = ticketFile(db, project, rt.uuid);
-      if (f) files[`${TICKETS_DIR}/${f.id}.json`] = JSON.stringify(f, null, 2) + '\n';
+      if (f) files[`${TICKETS_DIR}/${f.id}.json`] = JSON.stringify(signFile(f), null, 2) + '\n';
     }
     const outReplies = remote.role === 'client' ? pendingOutReplies(db, project.id) : [];
-    for (const r of outReplies) files[`${REPLIES_DIR}/${r.id}.json`] = JSON.stringify({ ...r, project: project.name }, null, 2) + '\n';
+    for (const r of outReplies) files[`${REPLIES_DIR}/${r.id}.json`] = JSON.stringify(signFile({ ...r, project: project.name }), null, 2) + '\n';
     const outMessages = remote.role === 'box' ? pendingMessages(db, project.id) : [];
-    for (const m of outMessages) files[`${MESSAGES_DIR}/${m.id}.json`] = JSON.stringify(JSON.parse(m.body), null, 2) + '\n';
+    for (const m of outMessages) files[`${MESSAGES_DIR}/${m.id}.json`] = JSON.stringify(signFile(JSON.parse(m.body)), null, 2) + '\n';
     exchange(dir, remote.url, files);
     markTicketsSent(db, outTickets.map((t) => t.uuid));
     markMessagesPosted(db, outMessages.map((m) => m.id));
@@ -180,7 +180,7 @@ export function syncProject(db: Database, project: Project, remote: Remote = get
       const more = pendingMessages(db, project.id);
       if (more.length) {
         const extra: Record<string, string> = {};
-        for (const m of more) extra[`${MESSAGES_DIR}/${m.id}.json`] = JSON.stringify(JSON.parse(m.body), null, 2) + '\n';
+        for (const m of more) extra[`${MESSAGES_DIR}/${m.id}.json`] = JSON.stringify(signFile(JSON.parse(m.body)), null, 2) + '\n';
         exchange(dir, remote.url, extra);
         markMessagesPosted(db, more.map((m) => m.id));
         s.messagesSent += more.length;

@@ -120,7 +120,7 @@ salu-inbox/messages/<id>.json   box -> client   what the orchestrator tells you
 
 `<id>` is `<13-digit epoch ms>-<8 hex>` (`newId()`, strictly increasing in a process, so file names sort by time). All JSON has `"v": 1`; files over 64 KB and unknown versions or types are ignored.
 
-Ticket file: `{ v, id, project, name, query, tags{}, labels[], priority 1..5, queue (bool), at }`. On the box the tags `permission`, `tools` and `project` are dropped (a ticket from the remote may not widen what the worker may do); a name that already exists gets ` (2)`.
+Ticket file: `{ v, id, project, name, query, tags{}, labels[], priority 1..5, queue (bool), at }`. On the box the tags `permission`, `tools`, `project`, `max-turns`, `model` and `effort` are dropped: a ticket from the remote may not widen what the worker may do or burn quota. The box's owner can allow some with `SALU_REMOTE_ALLOW_TAGS=model,effort,max-turns` (never permission, tools or project). A name that already exists gets ` (2)`.
 
 Reply file (`ReplyFile`; a follow-up prompt on a ticket that already has an answer; the phone can write these too):
 ```
@@ -144,6 +144,8 @@ Message file (`MessageFile` in `src/sync/format.ts`):
 ```
 
 **Results.** On the box each sync also pushes every `salu/*` branch (except `salu/inbox`) of the project's repo (its kernel when the project is sandboxed) to the remote. On the client each sync fetches them into the project's repo as `salu-box/*` remote-tracking branches. On the client the `reply` of each done/blocked/failed message is stored as the ticket's latest `assistant` turn (see "Follow-ups").
+
+**Untrusted input.** Anyone who can push to the remote can write files on `salu/inbox`, so: control characters (ESC, BEL, C1, bidi overrides; newline and tab stay) are stripped from every string at parse time, so a message cannot carry terminal escapes such as OSC 52; files over 64 KB, non-regular files and symlinks are skipped, and git runs with `core.symlinks=false` and every write is checked to stay inside the sync folder (a symlinked inbox folder makes sync stop with an error instead of writing through it). **Signing (optional):** set the same `SALU_REMOTE_KEY` on your computer and the box (share it out of band, never through git). Every file then carries `sig` (HMAC-SHA256 of its canonical JSON without `sig`: keys sorted, compact), and files without a valid one are ignored, so a pusher cannot forge tickets, replies or messages. Without a key the inbox is unauthenticated; use a private repository. Anything writing these files (the phone app) must sign the same way when the key is set. Write-once is a convention, not a guarantee: a force-push can rewrite the branch.
 
 **Local tables** (schema version 7; version 6 is the `turns` table of the follow-ups work): `remotes`, `remote_tickets`, `remote_replies`, `remote_messages` (id, body JSON, direction in|out, `posted` for out, `read_at` for in), all in `src/sync/store.ts`.
 
