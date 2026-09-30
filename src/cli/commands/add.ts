@@ -3,16 +3,17 @@ import { existsSync, mkdirSync } from 'node:fs';
 import type { Parsed } from '../args.ts';
 import { flagBool, flagNum, flagStr } from '../args.ts';
 import { openDb } from '../../db/db.ts';
-import { createProject, createTicket } from '../../db/queries.ts';
+import { createProject, createTicket, getProjectByName } from '../../db/queries.ts';
 import { validateTools } from '../../core/tools.ts';
 import { DEFAULT_EFFORT, DEFAULT_MODEL, parseTags, validateEffort, validateModel, validatePriority } from '../../core/tags.ts';
 import { ensureProjectChain, folderSlug, projectForNewTicket, resolveProjectRef } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
 import { dim, green } from '../../core/ansi.ts';
+import { cloneRepo, repoNameFromUrl } from '../../core/clone.ts';
 import { helpIf } from './_shared.ts';
 
 const HELP = `salu add "name" ["query"] ["tags"] [--queue]
-salu add project "name" [path] [--in parent] [--model M] [--effort E] [--tools T] [--concurrency N] [--default]
+salu add project "name" [path|--path folder] [--clone git-url] [--in parent] [--model M] [--effort E] [--tools T] [--concurrency N] [--default]
 salu add "name" "query" ["tags"] [--project P] [--priority N] [--tags T]
 
 A new ticket is only saved (status backlog): it does not run until you start it with salu queue "name",
@@ -29,6 +30,11 @@ tickets also show up in every project above it. With no path it uses the current
 a git repository, otherwise a new folder "./<name>" (created for you). Workers run inside the
 project folder, so everything they write lands there.
 
+--clone <git-url> has salu itself clone the repository into the project folder first (the folder
+must be new or empty; default ./<repo name>, or inside the parent's folder with --in), then registers
+it. It needs git, and a private repo needs you to be logged in (gh auth login or an SSH key).
+Example: salu add project web --clone https://github.com/you/web --path ~/code/web
+
 Workers use ${DEFAULT_MODEL} at effort ${DEFAULT_EFFORT} unless the ticket (model=, effort=) or its project says otherwise.
 Tools: tools=standard|readonly|edit|none|allow:Read,Grep,Bash(git *)[;deny:Bash(rm *)] (default standard).`;
 
@@ -42,11 +48,16 @@ export async function add(p: Parsed): Promise<number> {
     const name = segs[segs.length - 1]!;
     const inFlag = flagStr(p, 'in') ?? flagStr(p, 'parent');
     const parent = inFlag ? resolveProjectRef(db, inFlag) : segs.length > 1 ? ensureProjectChain(db, segs.slice(0, -1)) : null;
-    const given = p.positional[2];
+    const given = p.positional[2] ?? flagStr(p, 'path');
+    const cloneUrl = flagStr(p, 'clone');
+    if (p.flags.clone !== undefined && !cloneUrl) throw new CliError('--clone needs a git URL: salu add project "name" --clone https://github.com/you/repo [--path folder]');
+    if (getProjectByName(db, name)) throw new CliError(`project "${name}" already exists`);
+    const slug = folderSlug(cloneUrl ? repoNameFromUrl(cloneUrl) : name);
     const path = parent
-      ? given ? resolve(given) : join(parent.path, folderSlug(name))
-      : given ? resolve(given) : existsSync(join(process.cwd(), '.git')) ? process.cwd() : join(process.cwd(), folderSlug(name));
-    if (!existsSync(path)) mkdirSync(path, { recursive: true });
+      ? given ? resolve(given) : join(parent.path, slug)
+      : given ? resolve(given) : cloneUrl ? join(process.cwd(), slug) : existsSync(join(process.cwd(), '.git')) ? process.cwd() : join(process.cwd(), slug);
+    if (cloneUrl) cloneRepo(cloneUrl, path, { log: (l) => console.log(dim(l)) });
+    else if (!existsSync(path)) mkdirSync(path, { recursive: true });
     const model = flagStr(p, 'model');
     const effort = flagStr(p, 'effort');
     const tools = flagStr(p, 'tools');

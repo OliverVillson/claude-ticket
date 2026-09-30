@@ -72,7 +72,7 @@ salu log "fix login" --follow                  # worker transcript
 | Command | What it does |
 | --- | --- |
 | `salu add project "sub" --in parent` | Subproject (also `"parent/sub"`); its folder defaults to a folder inside the parent's. A project shows the tickets of all its subprojects, a subproject only its own. `salu change project "x" --in parent\|none` moves it; removing a project removes its subprojects too (it asks first). |
-| `salu add project "name" [path]` | Registers a project. With no `path` it uses the current folder if that is a git repo, else creates `./<name>`. Flags: `--model`, `--effort`, `--concurrency`, `--default`. |
+| `salu add project "name" [path] [--clone git-url]` | Registers a project. With no `path` it uses the current folder if that is a git repo, else creates `./<name>`. `--clone <url>` (with `--path folder`, default `./<repo name>`) has salu clone the repo there first; the folder must be new or empty. Works with `--in parent`. Flags: `--model`, `--effort`, `--concurrency`, `--default`. |
 | `salu add "name" "query" ["tags"] [--queue]` | Saves a ticket (status `backlog`); it never runs by itself. `query` is the prompt the worker gets. Tags are `key=value` pairs and bare labels. `--queue` saves and queues it. |
 | `salu queue "name"... \| --all [project]` | Queues saved tickets (status `todo`, shown as queued): a running orchestrator starts them at once. Also re-queues a done, failed or blocked ticket. `--now` goes to the front. |
 | `salu allow "name" [--tool RULE]` | Unblocks a ticket that was refused a permission: adds the denied rule (or `--tool`) to its `tools` and queues it again. |
