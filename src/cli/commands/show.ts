@@ -3,7 +3,7 @@ import { flagBool, flagStr } from '../args.ts';
 import { openDb } from '../../db/db.ts';
 import { resolveTicket } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
-import { dim } from '../../core/ansi.ts';
+import { dim, safeText } from '../../core/ansi.ts';
 import { formatAgo, formatCost, statusColor, statusIcon } from '../../core/format.ts';
 import { ticketTags } from '../../db/types.ts';
 import { helpIf } from './_shared.ts';
@@ -22,11 +22,15 @@ export async function show(p: Parsed): Promise<number> {
     console.log(JSON.stringify({ id: t.id, name: t.name, project: t.project, status: t.status, branch: t.branch ?? null, summary: t.summary ?? null, error: t.error, cost_usd: t.cost_usd, tags: ticketTags(t) }, null, 2));
     return 0;
   }
+  const name = safeText(t.name);
+  const branch = safeText(t.branch);
+  const error = safeText(t.error);
+  const summary = safeText(t.summary);
   const color = statusColor(t.status);
-  console.log(`${color(statusIcon(t.status))} #${t.id} ${t.name} ${dim(`in ${t.project} · ${t.status}${t.cost_usd ? ` · ${formatCost(t.cost_usd)}` : ''} · updated ${formatAgo(t.updated_at)}`)}`);
-  if (t.branch) console.log(`branch   ${t.branch} ${dim(`(git -C ${t.project_path} log ${t.branch})`)}`);
-  if (t.error) console.log(`${t.status === 'blocked' ? 'needs    ' : 'error    '}${t.error}`);
-  if (t.summary) console.log(`\n${t.summary}`);
+  console.log(`${color(statusIcon(t.status))} #${t.id} ${name} ${dim(`in ${safeText(t.project)} · ${t.status}${t.cost_usd ? ` · ${formatCost(t.cost_usd)}` : ''} · updated ${formatAgo(t.updated_at)}`)}`);
+  if (branch) console.log(`branch   ${branch} ${dim(`(git -C ${safeText(t.project_path)} log ${branch})`)}`);
+  if (error) console.log(`${t.status === 'blocked' ? 'needs    ' : 'error    '}${error}`);
+  if (summary) console.log(`\n${summary}`);
   else if (t.status === 'done') console.log(dim('\n(the worker left no summary)'));
   return 0;
 }

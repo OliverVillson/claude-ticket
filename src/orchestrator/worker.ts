@@ -5,6 +5,7 @@
  * every message to the run's JSONL log, keeps a live summary for the status view, and classifies
  * how the session ended. Nothing here touches the database; the scheduler does that.
  */
+import { safeText } from '../core/ansi.ts';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
@@ -255,7 +256,7 @@ export interface RunWorkerParams extends WorkerInput {
 
 /** The worker's final message without its TICKET: trailer, trimmed and capped: what a finished ticket shows as its summary. */
 export function summaryFrom(text: string): string | null {
-  const body = text
+  const body = safeText(text)
     .split('\n')
     .filter((l) => !/^\s*TICKET:\s*(done|blocked|failed)\b/i.test(l))
     .join('\n')

@@ -27,3 +27,13 @@ export function stripAnsi(s: string): string {
   // eslint-disable-next-line no-control-regex
   return s.replace(/\u001b\[[0-9;]*m/g, '');
 }
+
+/**
+ * Make untrusted text (a worker's summary, a ticket name or error from a remote) safe to print:
+ * drops every control character (ESC and so terminal/OSC sequences, C1 controls, DEL, CR) except tab
+ * and newline, and the bare remainder of an escape sequence is left as harmless printable text.
+ */
+export function safeText(s: string | null | undefined): string {
+  // eslint-disable-next-line no-control-regex
+  return (s ?? '').replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029]/g, '');
+}

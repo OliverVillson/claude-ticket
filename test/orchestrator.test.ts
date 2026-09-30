@@ -621,4 +621,28 @@ describe('what a finished ticket leaves behind', () => {
     expect(summaryFrom('TICKET: done')).toBeNull();
     expect(summaryFrom('x'.repeat(9000))!.length).toBe(4000);
   });
+
+  test('terminal escapes from a worker summary or ticket fields never reach the screen', () => {
+    const { safeText } = require('../src/core/ansi.ts');
+    const { summaryFrom } = require('../src/orchestrator/worker.ts');
+    const evil = 'ok\u001b]52;c;ZXZpbA==\u0007 \u001b[2Jdone\u009b31m\r\tx\ny';
+    expect(safeText(evil)).toBe('ok]52;c;ZXZpbA== [2Jdone31m\tx\ny');
+    expect(safeText(evil)).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/);
+    expect(summaryFrom(`${evil}\nTICKET: done`)).not.toContain('\u001b');
+  });
+
+  test('salu show strips escapes stored in a ticket', async () => {
+    const t = ticket('plain', 'FAKE:done');
+    updateTicket(db, t.id, { status: 'done', summary: 'hi\u001b]52;c;eA==\u0007 there', error: 'e\u001b[31m' });
+    const lines: string[] = [];
+    const log = console.log;
+    console.log = (...a: unknown[]) => void lines.push(a.join(' '));
+    try {
+      await dispatch(['show', 'plain']);
+    } finally {
+      console.log = log;
+    }
+    expect(lines.join('\n')).not.toContain('\u001b]');
+    expect(lines.join('\n')).not.toContain('\u0007');
+  });
 });

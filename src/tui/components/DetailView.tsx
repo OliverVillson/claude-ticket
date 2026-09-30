@@ -9,6 +9,7 @@ import { messageText, type Message } from '../messages.ts';
 import { style as st } from '../style.ts';
 import { SPINNER_FRAMES, STATUS_STYLE, paint, paintPriority, paintStatus } from '../theme.ts';
 import { Frame, confirmText, hintsText, titleText } from './Frame.tsx';
+import { safeText } from '../../core/ansi.ts';
 import { GLYPHS } from '../../ui/glyphs.ts';
 
 export interface DetailViewProps {
@@ -67,7 +68,7 @@ export function DetailView(p: DetailViewProps) {
   const fixed = 1 + (hasTags ? 1 : 0) + 1 + (hasError ? 1 : 0) + (hasDone ? 2 : 0) + (hasRun ? 2 : 0);
   const logBudget = Math.min(p.log.length, Math.max(0, Math.min(8, p.rows - fixed - 3)));
   const queryBudget = Math.max(2, p.rows - fixed - logBudget);
-  const queryLines = wrapText(t.query, inner);
+  const queryLines = wrapText(safeText(t.query), inner);
   const shownQuery = queryLines.slice(0, queryBudget);
   const queryCut = queryLines.length - shownQuery.length;
   if (queryCut > 0) shownQuery[shownQuery.length - 1] = truncate(shownQuery[shownQuery.length - 1]! + ` … (+${queryCut} lines)`, inner);
@@ -87,7 +88,7 @@ export function DetailView(p: DetailViewProps) {
     paintStatus(st, t.status, glyph + ' ' + info.label) +
       '   ' +
       paintPriority(st, t.priority, priorityText(t.priority)) +
-      st.dim(`   ${t.project}`) +
+      st.dim(`   ${safeText(t.project)}`) +
       (t.attempts ? st.dim(`   attempt ${t.attempts}`) : '') +
       (t.cost_usd ? st.dim(`   ${fmtCost(t.cost_usd)}`) : '') +
       st.dim(`   updated ${ago(t.updated_at, p.now)}`),
@@ -95,10 +96,10 @@ export function DetailView(p: DetailViewProps) {
   if (hasTags) lines.push(st.dim(tagBits.join('   ')));
   lines.push('');
   for (const l of shownQuery) lines.push(l);
-  if (hasError) lines.push(paint(st, 'red', '✗ ' + truncate(t.error!.replace(/\s+/g, ' '), inner - 2)));
+  if (hasError) lines.push(paint(st, 'red', '✗ ' + truncate(safeText(t.error).replace(/\s+/g, ' '), inner - 2)));
   if (hasDone) {
-    if (t.summary) lines.push(paint(st, 'green', GLYPHS.done + ' ' + truncate(t.summary.replace(/\s+/g, ' '), inner - 2)));
-    if (t.branch) lines.push(st.dim(`branch ${t.branch}`));
+    if (t.summary) lines.push(paint(st, 'green', GLYPHS.done + ' ' + truncate(safeText(t.summary).replace(/\s+/g, ' '), inner - 2)));
+    if (t.branch) lines.push(st.dim(`branch ${safeText(t.branch)}`));
   }
   if (hasRun) {
     lines.push('');
@@ -108,7 +109,7 @@ export function DetailView(p: DetailViewProps) {
   // A running ticket gets the blinking writing cursor after its newest log line.
   lines.push(...(t.status === 'running' && logBudget > 0 ? withWritingCursor(logLines, inner, logBudget, blinkOn(p.spinner ?? 0), st, displayWidth) : logLines));
 
-  const crumbs = [p.scopeName ?? t.project, truncate(t.name, Math.max(8, cols - 30))];
+  const crumbs = [p.scopeName ?? t.project, truncate(safeText(t.name), Math.max(8, cols - 30))];
   const idText = `#${t.id}${t.session_id ? ` · session ${t.session_id.slice(0, 8)}` : ''}`;
   const footer = p.confirm
     ? { left: confirmText(`delete "${truncate(p.confirm.name, 40)}"?`) }
