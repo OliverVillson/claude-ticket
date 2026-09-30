@@ -8,7 +8,7 @@
 import type { Database } from 'bun:sqlite';
 import { statSync, watch, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
-import { claimNextTicket, createRun, finishRun, getProjectById, getState, getTicketById, listProjects, listTickets, setState, updateTicket, type TicketPatch } from '../db/queries.ts';
+import { claimNextTicket, createRun, finishRun, getProjectById, getState, inheritedProject, getTicketById, listProjects, listTickets, setState, updateTicket, type TicketPatch } from '../db/queries.ts';
 import { STATE, type Run, type TicketStatus, type TicketView } from '../db/types.ts';
 import { CliError } from '../core/errors.ts';
 import { logsDir, ticketHome, wakeFile } from '../core/paths.ts';
@@ -264,7 +264,8 @@ export class Orchestrator {
 
   private launch(t: TicketView): void {
     const db = this.db;
-    const project = getProjectById(db, t.project_id);
+    const base = getProjectById(db, t.project_id);
+    const project = base ? inheritedProject(db, base) : null;
     const run = createRun(db, t.id, null);
     const logPath = join(this.opts.logs ?? logsDir(), slug(t.project), `${t.id}-${run.id}.jsonl`);
     db.run('UPDATE runs SET log_path = ? WHERE id = ?', [logPath, run.id]);

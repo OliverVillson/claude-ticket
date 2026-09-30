@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import type { Project, Run, RunOutcome, Ticket, TicketStatus, TicketView } from './types.ts';
+import type { Project, ProjectNode, Run, RunOutcome, Ticket, TicketStatus, TicketView } from './types.ts';
 import { CliError } from '../core/errors.ts';
 import { appendFileSync } from 'node:fs';
 import { DEFAULT_MODEL } from '../core/tags.ts';
@@ -28,17 +28,19 @@ export interface NewProject {
   defaultModel?: string | null;
   defaultEffort?: string | null;
   concurrency?: number | null;
+  parentId?: number | null;
 }
 
 export function createProject(db: Database, p: NewProject): Project {
+  if (p.parentId != null && !getProjectById(db, p.parentId)) throw new CliError(`no project with id ${p.parentId} to put "${p.name}" in`);
   const count = db.query<{ c: number }, []>('SELECT COUNT(*) AS c FROM projects').get()!.c;
   const isDefault = p.isDefault || count === 0 ? 1 : 0;
   const tx = db.transaction(() => {
     if (isDefault) db.run('UPDATE projects SET is_default = 0');
     db.run(
-      `INSERT INTO projects (name, path, is_default, default_model, default_effort, concurrency, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [p.name, p.path, isDefault, p.defaultModel ?? null, p.defaultEffort ?? null, p.concurrency ?? null, now()],
+      `INSERT INTO projects (name, path, is_default, default_model, default_effort, concurrency, created_at, parent_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [p.name, p.path, isDefault, p.defaultModel ?? null, p.defaultEffort ?? null, p.concurrency ?? null, now(), p.parentId ?? null],
     );
   });
   try {
@@ -91,13 +93,102 @@ export function updateProject(
   db.run(`UPDATE projects SET ${sets.join(', ')} WHERE id = ?`, vals);
 }
 
+/** Deletes the project, all its descendants and every ticket in them. */
 export function deleteProject(db: Database, id: number) {
   const p = getProjectById(db, id);
-  db.run('DELETE FROM projects WHERE id = ?', [id]);
+  db.run('DELETE FROM projects WHERE id = ?', [id]); // children and tickets go with it (ON DELETE CASCADE)
   if (p?.is_default) {
     const next = db.query<Project, []>('SELECT * FROM projects ORDER BY created_at ASC LIMIT 1').get();
     if (next) setDefaultProject(db, next.id);
   }
+}
+
+/** The id of `id` plus the ids of every descendant, parents before children. */
+export function subtreeIds(db: Database, id: number): number[] {
+  return db
+    .query<{ id: number }, [number]>(
+      `WITH RECURSIVE sub(id) AS (SELECT id FROM projects WHERE id = ? UNION ALL SELECT p.id FROM projects p JOIN sub ON p.parent_id = sub.id) SELECT id FROM sub`,
+    )
+    .all(id)
+    .map((r) => r.id);
+}
+
+export function getChildren(db: Database, parentId: number | null): Project[] {
+  return parentId == null
+    ? db.query<Project, []>('SELECT * FROM projects WHERE parent_id IS NULL ORDER BY is_default DESC, name ASC').all()
+    : db.query<Project, [number]>('SELECT * FROM projects WHERE parent_id = ? ORDER BY name ASC').all(parentId);
+}
+
+/** Names from the top-level project down to `id`: `parent/sub/leaf`. */
+export function projectQualifiedName(db: Database, id: number): string {
+  const names: string[] = [];
+  for (let p = getProjectById(db, id), guard = 0; p && guard < 64; p = p.parent_id == null ? null : getProjectById(db, p.parent_id), guard++) names.unshift(p.name);
+  return names.join('/');
+}
+
+/** Every project as a tree (roots first), with ticket counts for each node alone and for its whole subtree. */
+export function listProjectTree(db: Database): ProjectNode[] {
+  const all = db.query<Project, []>('SELECT * FROM projects ORDER BY is_default DESC, name ASC').all();
+  const rows = db.query<{ project_id: number; status: TicketStatus; c: number }, []>('SELECT project_id, status, COUNT(*) AS c FROM tickets GROUP BY project_id, status').all();
+  const empty = (): Record<TicketStatus, number> => ({ todo: 0, running: 0, done: 0, failed: 0, blocked: 0, paused: 0 });
+  const nodes = new Map<number, ProjectNode>();
+  for (const p of all) nodes.set(p.id, { ...p, depth: 0, children: [], counts: empty(), own: empty() });
+  for (const r of rows) {
+    const n = nodes.get(r.project_id);
+    if (n) n.own[r.status] = r.c;
+  }
+  const roots: ProjectNode[] = [];
+  for (const n of nodes.values()) {
+    const parent = n.parent_id == null ? undefined : nodes.get(n.parent_id);
+    (parent ? parent.children : roots).push(n);
+  }
+  const fill = (n: ProjectNode, depth: number) => {
+    n.depth = depth;
+    n.children.sort((a, b) => a.name.localeCompare(b.name));
+    n.counts = { ...n.own };
+    for (const c of n.children) {
+      fill(c, depth + 1);
+      for (const s of Object.keys(n.counts) as TicketStatus[]) n.counts[s] += c.counts[s];
+    }
+  };
+  for (const r of roots) fill(r, 0);
+  return roots;
+}
+
+/** The tree as rows in display order; a node's children are left out when `isExpanded(node)` is false. */
+export function flattenProjectTree(nodes: ProjectNode[], isExpanded: (p: Project) => boolean = () => true): ProjectNode[] {
+  const out: ProjectNode[] = [];
+  const walk = (list: ProjectNode[]) => {
+    for (const n of list) {
+      out.push(n);
+      if (n.children.length && isExpanded(n)) walk(n.children);
+    }
+  };
+  walk(nodes);
+  return out;
+}
+
+/** Re-parent a project (null = top level). Folders are not moved. */
+export function moveProject(db: Database, id: number, parentId: number | null): void {
+  if (parentId != null) {
+    if (!getProjectById(db, parentId)) throw new CliError(`no project with id ${parentId}`);
+    if (subtreeIds(db, id).includes(parentId)) throw new CliError('a project cannot be moved into itself or one of its own subprojects');
+  }
+  db.run('UPDATE projects SET parent_id = ? WHERE id = ?', [parentId, id]);
+}
+
+/** The project with model, effort and concurrency filled in from the nearest ancestor that sets them. */
+export function inheritedProject(db: Database, p: Project): Project {
+  const out = { ...p };
+  for (let cur = p, guard = 0; cur.parent_id != null && guard < 64; guard++) {
+    const parent = getProjectById(db, cur.parent_id);
+    if (!parent) break;
+    out.default_model ??= parent.default_model;
+    out.default_effort ??= parent.default_effort;
+    out.concurrency ??= parent.concurrency;
+    cur = parent;
+  }
+  return out;
 }
 
 /** The registered project whose folder contains `cwd` (longest path wins), else null. */
@@ -174,6 +265,8 @@ export function findTicketsByName(db: Database, name: string): TicketView[] {
 
 export interface ListFilter {
   projectId?: number;
+  /** With projectId: include every descendant project's tickets (default true). false = that project only. */
+  recursive?: boolean;
   status?: TicketStatus | TicketStatus[];
 }
 
@@ -181,8 +274,9 @@ export function listTickets(db: Database, f: ListFilter = {}): TicketView[] {
   const where: string[] = [];
   const vals: any[] = [];
   if (f.projectId != null) {
-    where.push('t.project_id = ?');
-    vals.push(f.projectId);
+    const ids = f.recursive === false ? [f.projectId] : subtreeIds(db, f.projectId);
+    where.push(`t.project_id IN (${ids.map(() => '?').join(',')})`);
+    vals.push(...ids);
   }
   if (f.status) {
     const s = Array.isArray(f.status) ? f.status : [f.status];
@@ -240,9 +334,10 @@ export function deleteTicket(db: Database, id: number) {
   wakeOrchestrator();
 }
 
-export function countTickets(db: Database, projectId?: number): Record<TicketStatus, number> {
+export function countTickets(db: Database, projectId?: number, recursive = true): Record<TicketStatus, number> {
+  const ids = projectId ? (recursive ? subtreeIds(db, projectId) : [projectId]) : [];
   const rows = projectId
-    ? db.query<{ status: TicketStatus; c: number }, [number]>('SELECT status, COUNT(*) AS c FROM tickets WHERE project_id = ? GROUP BY status').all(projectId)
+    ? db.query<{ status: TicketStatus; c: number }, number[]>(`SELECT status, COUNT(*) AS c FROM tickets WHERE project_id IN (${ids.map(() => '?').join(',')}) GROUP BY status`).all(...ids)
     : db.query<{ status: TicketStatus; c: number }, []>('SELECT status, COUNT(*) AS c FROM tickets GROUP BY status').all();
   const out: Record<TicketStatus, number> = { todo: 0, running: 0, done: 0, failed: 0, blocked: 0, paused: 0 };
   for (const r of rows) out[r.status] = r.c;
@@ -296,7 +391,7 @@ export function effectiveModel(db: Database, t: TicketView): string | null {
     /* ignore */
   }
   const p = getProjectById(db, t.project_id);
-  return p?.default_model ?? DEFAULT_MODEL;
+  return (p ? inheritedProject(db, p).default_model : null) ?? DEFAULT_MODEL;
 }
 
 // ---------------------------------------------------------------------------

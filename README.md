@@ -68,6 +68,7 @@ salu log "fix login" --follow                  # worker transcript
 
 | Command | What it does |
 | --- | --- |
+| `salu add project "sub" --in parent` | Subproject (also `"parent/sub"`); its folder defaults to a folder inside the parent's. A project shows the tickets of all its subprojects, a subproject only its own. `salu change project "x" --in parent\|none` moves it; removing a project removes its subprojects too (it asks first). |
 | `salu add project "name" [path]` | Registers a project. With no `path` it uses the current folder if that is a git repo, else creates `./<name>`. Flags: `--model`, `--effort`, `--concurrency`, `--default`. |
 | `salu add "name" "query" ["tags"]` | Adds a ticket. `query` is the prompt the worker gets. Tags are `key=value` pairs and bare labels. |
 | `salu remove "name" [--yes]` | Deletes a ticket; a running one is stopped first. `salu remove project "name"` deletes a project and its tickets. |

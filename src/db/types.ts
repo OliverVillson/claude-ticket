@@ -12,6 +12,15 @@ export interface Project {
   default_effort: string | null;
   concurrency: number | null;
   created_at: number; // epoch ms
+  parent_id: number | null; // null = top-level project
+}
+
+/** A project in the tree, with ticket counts for the project alone (`own`) and its whole subtree (`counts`). */
+export interface ProjectNode extends Project {
+  depth: number;
+  children: ProjectNode[];
+  counts: Record<TicketStatus, number>;
+  own: Record<TicketStatus, number>;
 }
 
 export interface Ticket {
