@@ -20,7 +20,7 @@ export function dogFrame(frame: number, opts: { level?: ColorLevel } = {}): stri
   return level === 0 ? ASCII_LINE_RUN[i]! : renderSprite(LINE_RUN[i]!, level)[0]!;
 }
 
-/** Multi-line (6 rows, 22 cells) variant. */
+/** Multi-line (10 rows, 36 cells) run variant. */
 export function dogLines(frame: number, opts: { level?: ColorLevel } = {}): string[] {
   return renderDog(frame, { level: opts.level ?? defaultLevel() });
 }
