@@ -77,7 +77,7 @@ settled, the API key is the safe choice.
   install -m 600 /dev/null ~/anthropic.key && nano ~/anthropic.key     # paste the key, save
   ```
   salu stores it only in `/etc/salu/<project>.env` (root-readable), never on a command line.
-- **Subscription** (uses your plan's usage window): `sudo -iu salu`, run `claude`, type `/login`, follow the link
+- **Subscription** (uses your plan's usage window; `salu runner add` prints a terms warning and suggests an API key): `sudo -iu salu`, run `claude`, type `/login`, follow the link
   in a browser on your Mac. Then `exit`. If it later says the login expired, repeat.
 
 ## 5. On the server: let the `salu` user use git on the private repo **[untested]**
@@ -124,6 +124,10 @@ journalctl -u salu-sync@web -f              # a line every time something moves
 sudo -u salu env SALU_HOME=/var/lib/salu/web salu remote list    # role box, "synced ... ago", no error
 ```
 
+If the login is dead when a service starts, the orchestrator exits (code 78) and stays failed: `salu runner list`
+shows it, and you also get an error notif on the Mac ("The box stopped: ..."). Repair the login (`sudo -iu salu`,
+`claude`, `/login`, or fix the API key), then `sudo salu runner restart web`.
+
 If `remote list` shows an error, it is almost always git access: the deploy key from step 5 is missing or lacks
 write access. `sudo salu runner start|stop|restart|logs <project>` cover both services.
 
@@ -140,7 +144,7 @@ sudo salu runner restart web                           # both services pick it u
 echo 'export SALU_REMOTE_KEY=<the secret>' >> ~/.zshrc  # Mac; open a new terminal
 ```
 
-The phone app is getting a matching setting; until it has it, a signed inbox will ignore tickets sent from the phone.
+The phone app has a matching optional signing key in its Settings (kept in the Keychain on that phone only): paste the same secret there. With a key set on the box, unsigned messages are ignored.
 
 ### What tickets from the Mac may set
 
@@ -208,7 +212,7 @@ The inbox refreshes every 30 s while the app is open and on pull-down. There are
 ## 11. Prove the sandbox on your Mac (once) **[untested]**
 
 ```sh
-salu doctor --sandbox        # uses a few haiku requests; every line should be a green ✓
+salu doctor --sandbox        # uses a few haiku requests; every line should be a green ✓ (refuses to run if SALU_SANDBOX=off)
 ```
 
 It runs a small ticket that tries to read, write and hard-link canary files in your home folder and checks they
@@ -239,5 +243,5 @@ on its own.
 - Tickets sent but never start: `journalctl -u salu-sync@web` (is sync running? can `salu` push to the repo?).
 - `permission denied (publickey)` in the sync log: the deploy key is missing or lacks write access (step 5).
 - Ticket `blocked: needs permission`: `salu allow "name"` on the box.
-- `login expired`: on the box, `sudo -iu salu`, run `claude`, `/login`.
+- `login expired` or "The box stopped": on the box, `sudo -iu salu`, run `claude`, `/login`, then `sudo salu runner restart web`.
 - Nothing on the Mac after a sync: `salu remote list` shows the last sync time and any error per project.
