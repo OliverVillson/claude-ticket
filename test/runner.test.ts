@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { boxProblems, renderEnvFile, renderUnit, requireRunnerName, validRunnerName } from '../src/core/runner.ts';
+import { boxProblems, renderEnvFile, renderSyncUnit, renderUnit, requireRunnerName, validRunnerName } from '../src/core/runner.ts';
 
 const ENTRY = join(import.meta.dir, '..', 'src', 'index.ts');
 
@@ -17,6 +17,15 @@ describe('runner files', () => {
     expect(unit).toContain('KillMode=control-group');
     expect(unit).toContain('WantedBy=multi-user.target');
     expect(unit).toContain('User=salu');
+  });
+
+  test('the sync unit runs `remote sync --watch` in the same home and restarts', () => {
+    const sync = renderSyncUnit({ bin: '/usr/local/bin/salu', user: 'salu', home: '/home/salu', root: '/var/lib/salu', etc: '/etc/salu' });
+    expect(sync).toContain('ExecStart=/usr/local/bin/salu remote sync --watch');
+    expect(sync).toContain('Environment=SALU_HOME=/var/lib/salu/%i');
+    expect(sync).toContain('GIT_TERMINAL_PROMPT=0');
+    expect(sync).toContain('Restart=always');
+    expect(sync).toContain('WantedBy=multi-user.target');
   });
 
   test('project names are safe for systemd and paths', () => {
@@ -45,6 +54,8 @@ describe('boxProblems', () => {
     expect(p.join('\n')).toMatch(/salu runner setup/);
   });
 });
+
+const HAS_REMOTE = Bun.spawnSync([process.execPath, ENTRY, 'remote', '--help']).exitCode === 0;
 
 describe('salu runner (fake systemctl)', () => {
   function box() {
@@ -91,6 +102,32 @@ describe('salu runner (fake systemctl)', () => {
     expect(l.out).toContain('web');
     expect(l.out).toContain('api');
     expect(l.out).toContain('active');
+  });
+
+  test('without `salu remote` (older builds) add runs the orchestrator only and says so', async () => {
+    if (HAS_REMOTE) return;
+    const b = box();
+    const r = await b.run('add', 'web', '--no-sandbox');
+    expect(r.out).toContain('git sync is not in this salu build');
+    expect(b.calls()).not.toContain('salu-sync@');
+  });
+
+  test.skipIf(!HAS_REMOTE)('add also registers the box remote and enables, controls and removes the sync service', async () => {
+    const b = box();
+    const r = await b.run('add', 'web', '--no-sandbox', '--remote', 'https://example.invalid/web.git');
+    expect(r.err).toBe('');
+    // (unreachable remote: the registration itself must still be refused or accepted consistently; the check is --force-free here)
+    expect(r.code).toBe(0);
+    expect(existsSync(join(b.d, 'units', 'salu-sync@.service'))).toBe(true);
+    expect(readFileSync(join(b.d, 'etc', 'web.env'), 'utf8')).toContain('SALU_RUNNER_SYNC=1');
+    expect(b.calls()).toContain('enable --now salu-runner@web.service salu-sync@web.service');
+    await b.run('restart', 'web');
+    expect(b.calls()).toContain('restart salu-runner@web.service salu-sync@web.service');
+    await b.run('remove', 'web', '--yes');
+    expect(b.calls()).toContain('disable --now salu-runner@web.service salu-sync@web.service');
+    // --no-sync: orchestrator only
+    await b.run('add', 'api', '--no-sandbox', '--no-sync');
+    expect(b.calls()).toContain('enable --now salu-runner@api.service\n');
   });
 
   test('add refuses a repeat, bad names, and api-key without a key', async () => {

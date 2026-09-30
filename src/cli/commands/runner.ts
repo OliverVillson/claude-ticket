@@ -10,7 +10,7 @@ import { checkClaude } from '../../core/claude-bin.ts';
 import { sandboxSupport } from '../../core/kernel.ts';
 import { selfCommand } from '../../orchestrator/index.ts';
 import {
-  UNIT_NAME, boxProblems, renderEnvFile, renderUnit, requireRunnerName, runnerEnvFile, runnerEtc, runnerHome, runnerRoot, runnerWork, serviceName, unitDir,
+  SYNC_UNIT_NAME, UNIT_NAME, boxProblems, renderEnvFile, renderSyncUnit, renderUnit, requireRunnerName, runnerEnvFile, runnerEtc, runnerHome, runnerRoot, runnerWork, serviceName, syncServiceName, unitDir,
   type AuthMode,
 } from '../../core/runner.ts';
 import { confirm, helpIf } from './_shared.ts';
@@ -21,15 +21,19 @@ const HELP = `salu runner <command>      run salu unattended on an always-on Lin
   sudo salu runner setup [--user U]           install the systemd unit (once per box); U runs the orchestrators
   sudo salu runner add <project> [--clone git-url | --path folder] [--auth subscription|api-key]
                                               [--api-key-file F] [--no-sandbox] [--concurrency N]
+                                              [--remote git-url | --no-sync]
                                               create the project's own salu home, register the project
-                                              (sandbox ON unless --no-sandbox), start it now and on every boot
+                                              (sandbox ON unless --no-sandbox), start it now and on every boot.
+                                              Also runs \`salu remote sync --watch\` as salu-sync@<project>, so tickets
+                                              arrive and results leave over the project's git remote (--remote: the
+                                              url, default the --clone url; --no-sync: orchestrator only)
   salu runner list                            every runner project: service state, queued / running tickets
   sudo salu runner start|stop|restart <project>
   salu runner logs <project> [--follow]       the orchestrator's log (journalctl)
   sudo salu runner remove <project> [--purge] [--yes]   stop and disable it; --purge also deletes its data
 
-Each project gets its own folder /var/lib/salu/<project> (its database, log and kernel) and its own
-service salu-runner@<project>; a crashed or rebooted box brings every orchestrator back, and tickets a
+Each project gets its own folder /var/lib/salu/<project> (its database, log and kernel), its own
+service salu-runner@<project> and its own git sync service salu-sync@<project>; a crashed or rebooted box brings every orchestrator back, and tickets a
 dead run left running go back to the queue and resume their Claude session.
 
 Login, once, as the runner user:  claude   then /login   (subscription)   or   --auth api-key --api-key-file ~/key
@@ -65,6 +69,26 @@ function runnerUser(p: Parsed): { name: string; home: string } {
 function unitPath(): string {
   return join(unitDir(), UNIT_NAME);
 }
+function syncUnitPath(): string {
+  return join(unitDir(), SYNC_UNIT_NAME);
+}
+
+/** Does this salu have `salu remote` (git sync)? Older builds do not; then the runner works without sync. */
+function hasRemote(): boolean {
+  const r = spawnSync(selfCommand(['remote', '--help'])[0]!, selfCommand(['remote', '--help']).slice(1), { encoding: 'utf8' });
+  return r.status === 0 && /salu remote/.test(r.stdout ?? '');
+}
+
+/** Services of one project: the orchestrator, plus the sync when it was set up. */
+function servicesOf(name: string): string[] {
+  let sync = false;
+  try {
+    sync = /^SALU_RUNNER_SYNC=1$/m.test(readFileSync(runnerEnvFile(name), 'utf8'));
+  } catch {
+    /* no env file */
+  }
+  return sync ? [serviceName(name), syncServiceName(name)] : [serviceName(name)];
+}
 
 /** User recorded in the installed unit (so `add` and the unit agree). */
 function installedUser(): string | null {
@@ -84,11 +108,13 @@ function setup(p: Parsed): number {
     if (!mk.ok) throw new CliError(`could not create the user ${user.name}: ${mk.out}`);
     console.log(`${green('✓')} created user ${user.name}`);
   }
-  const text = renderUnit({ bin, user: user.name, home: user.home, root: runnerRoot(), etc: runnerEtc() });
-  if (dry(p)) console.log(text);
+  const uo = { bin, user: user.name, home: user.home, root: runnerRoot(), etc: runnerEtc() };
+  const text = renderUnit(uo);
+  if (dry(p)) console.log(text + '\n' + renderSyncUnit(uo));
   else {
     mkdirSync(dirname(unitPath()), { recursive: true });
     writeFileSync(unitPath(), text);
+    writeFileSync(syncUnitPath(), renderSyncUnit(uo));
     mkdirSync(runnerRoot(), { recursive: true });
     mkdirSync(runnerEtc(), { recursive: true, mode: 0o755 });
   }
@@ -140,22 +166,34 @@ function add(p: Parsed): number {
   if (made.out) console.log(made.out);
 
   const envPath = runnerEnvFile(name);
-  const text = renderEnvFile({ auth, apiKey: apiKey ?? (dry(p) ? 'dry-run' : undefined), sandbox });
+  // Git sync: on when this salu has `salu remote` and the project has a git url to exchange through.
+  let sync = false;
+  const remoteUrl = flagStr(p, 'remote') ?? clone;
+  if (!flagBool(p, 'no-sync')) {
+    if (!hasRemote()) console.log(dim('· git sync is not in this salu build yet, so only the orchestrator was set up (update salu, then `salu runner add` again)'));
+    else {
+      const rargs = ['remote', 'add', name, ...(remoteUrl ? [remoteUrl] : []), '--box'];
+      const rr = sh(p, [...asUser, ...selfCommand(rargs)]);
+      if (!rr.ok) throw new CliError(`could not set up git sync:\n${rr.out}\n(pass --remote <git-url>, or --no-sync for the orchestrator only)`);
+      sync = true;
+    }
+  }
+  const text = renderEnvFile({ auth, apiKey: apiKey ?? (dry(p) ? 'dry-run' : undefined), sandbox, sync });
   if (!dry(p)) {
     mkdirSync(dirname(envPath), { recursive: true });
     writeFileSync(envPath, text, { mode: 0o600 });
     chmodSync(envPath, 0o600);
   }
-  const en = sh(p, [systemctl(), 'enable', '--now', serviceName(name)]);
+  const en = sh(p, [systemctl(), 'enable', '--now', serviceName(name), ...(sync ? [syncServiceName(name)] : [])]);
   if (!en.ok) throw new CliError(`systemctl enable failed: ${en.out}`);
-  console.log(`${green('✓')} runner ${name} ${dim(`started (${auth}, sandbox ${sandbox ? 'on' : 'off'}); home ${home}; \`salu runner logs ${name}\`)`)}`);
+  console.log(`${green('✓')} runner ${name} ${dim(`started (${auth}, sandbox ${sandbox ? 'on' : 'off'}, git sync ${sync ? 'on' : 'off'}); home ${home}; \`salu runner logs ${name}\`)`)}`);
   return 0;
 }
 
 function control(p: Parsed, verb: 'start' | 'stop' | 'restart'): number {
   const name = requireRunnerName(p.positional[1]);
   if (!dry(p)) mustRoot(`salu runner ${verb}`);
-  const r = sh(p, [systemctl(), verb, serviceName(name)]);
+  const r = sh(p, [systemctl(), verb, ...servicesOf(name)]);
   if (!r.ok) throw new CliError(`systemctl ${verb} ${name} failed: ${r.out}`);
   console.log(`${green('✓')} ${verb === 'stop' ? 'stopped' : verb === 'start' ? 'started' : 'restarted'} ${name}`);
   return 0;
@@ -163,7 +201,7 @@ function control(p: Parsed, verb: 'start' | 'stop' | 'restart'): number {
 
 function logs(p: Parsed): number {
   const name = requireRunnerName(p.positional[1]);
-  const args = ['-u', serviceName(name), '--no-pager', '-n', flagStr(p, 'lines') ?? '100'];
+  const args = [...servicesOf(name).flatMap((u) => ['-u', u]), '--no-pager', '-n', flagStr(p, 'lines') ?? '100'];
   if (flagBool(p, 'follow')) args.push('-f');
   const r = spawnSync(process.env.SALU_JOURNALCTL || 'journalctl', args, { stdio: 'inherit' });
   return r.status ?? 1;
@@ -178,7 +216,7 @@ function remove(p: Parsed): Promise<number> | number {
       console.log(dim('left as it was'));
       return 0;
     }
-    sh(p, [systemctl(), 'disable', '--now', serviceName(name)]);
+    sh(p, [systemctl(), 'disable', '--now', ...servicesOf(name)]);
     if (purge && !dry(p)) {
       rmSync(runnerHome(name), { recursive: true, force: true });
       rmSync(runnerEnvFile(name), { force: true });
@@ -206,7 +244,8 @@ async function list(p: Parsed): Promise<number> {
   for (const n of names.sort()) {
     const st = sh({ ...p, flags: { ...p.flags, 'dry-run': false } }, [systemctl(), 'is-active', serviceName(n)]).out || 'unknown';
     const counts = ticketCounts(runnerHome(n));
-    rows.push({ project: n, service: st, ...counts });
+    const sv = servicesOf(n).length > 1 ? sh({ ...p, flags: { ...p.flags, 'dry-run': false } }, [systemctl(), 'is-active', syncServiceName(n)]).out || 'unknown' : null;
+    rows.push({ project: n, service: st, sync: sv, ...counts });
   }
   if (flagBool(p, 'json')) {
     console.log(JSON.stringify(rows, null, 2));
@@ -214,7 +253,7 @@ async function list(p: Parsed): Promise<number> {
   }
   for (const r of rows) {
     const mark = r.service === 'active' ? green('●') : red('●');
-    console.log(`${mark} ${r.project}  ${r.service}  ${dim(`${r.todo} queued · ${r.running} running · ${r.blocked} blocked · ${r.done} done`)}`);
+    console.log(`${mark} ${r.project}  ${r.service}  ${dim(`sync ${r.sync ?? 'off'} · ${r.todo} queued · ${r.running} running · ${r.blocked} blocked · ${r.done} done`)}`);
   }
   return 0;
 }
