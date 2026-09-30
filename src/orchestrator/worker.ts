@@ -18,12 +18,12 @@ import { buildPrompt, buildResumePrompt, parseTrailer, systemAppend } from './pr
 import type { WorkerInput, WorkerLive, WorkerResult, WorkerRunner } from './types.ts';
 
 export const DEFAULT_MAX_TURNS = 50;
-export const DEFAULT_PERMISSION: Permission = (process.env.TICKET_DEFAULT_PERMISSION as Permission) || 'acceptEdits';
+export const DEFAULT_PERMISSION: Permission = (process.env.SALU_DEFAULT_PERMISSION as Permission) || 'acceptEdits';
 
 /**
  * Variables a Claude Code session sets for its own children. A worker that inherits them thinks it
  * is that session: `CLAUDE_CODE_SESSION_ID` alone makes every worker report (and resume) the
- * parent's session id, so `ticket run` started from inside Claude Code would give all tickets one
+ * parent's session id, so `salu run` started from inside Claude Code would give all tickets one
  * shared session. Auth and config variables are left alone.
  */
 export const SESSION_ENV_VARS = [
@@ -39,14 +39,14 @@ export const SESSION_ENV_VARS = [
 
 /** `process.env` without the parent session's identity, plus the given extras. */
 export function workerEnv(extra: Record<string, string> = {}): Record<string, string | undefined> {
-  const env = scrubParentSession(); // core helper: broader scrub, TICKET_INHERIT_CLAUDE_ENV=1 opts out
-  if (process.env.TICKET_INHERIT_CLAUDE_ENV !== '1') for (const k of SESSION_ENV_VARS) delete env[k];
-  return { ...env, CLAUDE_AGENT_SDK_CLIENT_APP: 'claude-ticket/0.1.0', ...extra };
+  const env = scrubParentSession(); // core helper: broader scrub, SALU_INHERIT_CLAUDE_ENV=1 opts out
+  if (process.env.SALU_INHERIT_CLAUDE_ENV !== '1') for (const k of SESSION_ENV_VARS) delete env[k];
+  return { ...env, CLAUDE_AGENT_SDK_CLIENT_APP: 'salu/0.1.0', ...extra };
 }
 
 /**
  * Unattended workers cannot answer permission prompts, and acceptEdits denies git. The rules ask
- * for a commit on a `ticket/<name>` branch, so local git is allowed; pushing and remote or config
+ * for a commit on a `salu/<name>` branch, so local git is allowed; pushing and remote or config
  * changes never are.
  */
 export const DEFAULT_ALLOWED_TOOLS = [
@@ -90,7 +90,7 @@ export function workerSdkOptions(t: TicketView, project: Project | null, extra: 
     title: `ticket #${t.id} ${t.name}`,
     env: workerEnv({ TICKET_ID: String(t.id), TICKET_NAME: t.name, TICKET_PROJECT: t.project }),
   };
-  if (process.env.TICKET_CLAUDE_PATH) opts.pathToClaudeCodeExecutable = process.env.TICKET_CLAUDE_PATH;
+  if (process.env.SALU_CLAUDE_PATH) opts.pathToClaudeCodeExecutable = process.env.SALU_CLAUDE_PATH;
   if (s.model) opts.model = s.model;
   if (s.effort) opts.effort = s.effort;
   switch (s.permission) {
@@ -165,7 +165,7 @@ export function describeTool(name: string, input: any): string {
   }
 }
 
-/** `Bash(bun test)`-style label, as `ticket log` prints tool calls. */
+/** `Bash(bun test)`-style label, as `salu log` prints tool calls. */
 export function describeToolCall(name: string, input: any): string {
   const d = describeTool(name, input);
   const i = d.indexOf(': ');
@@ -228,9 +228,9 @@ export const sdkRunner: WorkerRunner = {
   },
 };
 
-/** The runner the environment asks for: `TICKET_WORKER=fake` for tests, the SDK otherwise. */
+/** The runner the environment asks for: `SALU_WORKER=fake` for tests, the SDK otherwise. */
 export async function selectRunner(): Promise<WorkerRunner> {
-  if (process.env.TICKET_WORKER === 'fake') return (await import('./fake.ts')).fakeRunner;
+  if (process.env.SALU_WORKER === 'fake') return (await import('./fake.ts')).fakeRunner;
   return sdkRunner;
 }
 

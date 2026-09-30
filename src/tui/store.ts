@@ -6,7 +6,7 @@ import { readStatus, type OrchestratorStatus } from '../orchestrator/status.ts';
 export interface Scope {
   /** null or undefined = every project */
   projectId?: number | null;
-  /** only these statuses (from `ticket list --status`) */
+  /** only these statuses (from `salu list --status`) */
   statuses?: TicketStatus[];
 }
 

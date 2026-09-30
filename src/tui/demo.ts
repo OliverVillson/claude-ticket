@@ -6,14 +6,14 @@
  *   bun run src/tui/demo.ts --n 500    # stress test
  *   bun run src/tui/demo.ts --plain
  *
- * Uses a throwaway TICKET_HOME so nothing touches ~/.ticket.
+ * Uses a throwaway SALU_HOME so nothing touches ~/.salu.
  */
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const home = mkdtempSync(join(tmpdir(), 'ticket-demo-'));
-process.env.TICKET_HOME = home;
+process.env.SALU_HOME = home;
 
 const { openDb } = await import('../db/db.ts');
 const { createProject, createTicket, updateTicket, createRun, finishRun, setState } = await import('../db/queries.ts');

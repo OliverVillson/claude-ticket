@@ -8,7 +8,7 @@ import { formatClock, formatDuration, statusColor } from '../../core/format.ts';
 import { helpIf } from './_shared.ts';
 import { formatPause, getPause } from '../../usage/index.ts';
 
-const HELP = `ticket status [--json]
+const HELP = `salu status [--json]
 
 One screen: whether the orchestrator is running, tickets by status, and if it is paused,
 why and when it resumes.`;
@@ -27,7 +27,7 @@ export async function status(p: Parsed): Promise<number> {
   if (st.alive) {
     lines.push(`${green('●')} orchestrator ${bold('running')} ${dim(`pid ${st.pid}, up ${formatDuration(now - (st.startedAt ?? now))}, ${st.workers.length} worker${st.workers.length === 1 ? '' : 's'} active`)}`);
   } else {
-    lines.push(`${dim('○')} orchestrator ${bold('not running')} ${dim('(ticket run [--detach])')}`);
+    lines.push(`${dim('○')} orchestrator ${bold('not running')} ${dim('(salu run [--detach])')}`);
   }
   const pause = getPause(db);
   if (pause) lines.push(`${magenta('‖')} ${bold('paused')}: ${formatPause(pause, now)}`);
@@ -48,8 +48,8 @@ export async function status(p: Parsed): Promise<number> {
     }
   }
   const blocked = counts.blocked;
-  if (blocked) lines.push('', yellow(`${blocked} ticket${blocked === 1 ? '' : 's'} blocked on a question: ticket list --status blocked`));
-  if (counts.failed) lines.push(red(`${counts.failed} failed: ticket log "name" shows why; ticket change "name" --status todo retries`));
+  if (blocked) lines.push('', yellow(`${blocked} ticket${blocked === 1 ? '' : 's'} blocked on a question: salu list --status blocked`));
+  if (counts.failed) lines.push(red(`${counts.failed} failed: salu log "name" shows why; salu change "name" --status todo retries`));
   console.log(lines.join('\n'));
   return 0;
 }

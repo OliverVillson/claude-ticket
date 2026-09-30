@@ -10,8 +10,8 @@ import { CliError } from '../../core/errors.ts';
 import { dim, green } from '../../core/ansi.ts';
 import { helpIf } from './_shared.ts';
 
-const HELP = `ticket add project "name" [path] [--model M] [--effort E] [--concurrency N] [--default]
-ticket add "name" "query" ["tags"] [--project P] [--priority N] [--tags T]
+const HELP = `salu add project "name" [path] [--model M] [--effort E] [--concurrency N] [--default]
+salu add "name" "query" ["tags"] [--project P] [--priority N] [--tags T]
 
 Registers a project (path defaults to the current folder; the first project becomes the
 default), or adds a ticket to a project. The project for a ticket is taken from the
@@ -23,7 +23,7 @@ export async function add(p: Parsed): Promise<number> {
   const db = openDb();
   if (p.positional[0] === 'project') {
     const name = p.positional[1];
-    if (!name) throw new CliError('usage: ticket add project "name" [path]');
+    if (!name) throw new CliError('usage: salu add project "name" [path]');
     const path = resolve(p.positional[2] ?? process.cwd());
     if (!existsSync(path)) throw new CliError(`folder does not exist: ${path}`);
     const model = flagStr(p, 'model');
@@ -40,7 +40,7 @@ export async function add(p: Parsed): Promise<number> {
     return 0;
   }
   const [name, query, ...tagArgs] = p.positional;
-  if (!name || !query) throw new CliError('usage: ticket add "name" "query" ["tags"]');
+  if (!name || !query) throw new CliError('usage: salu add "name" "query" ["tags"]');
   const tagInput = [...tagArgs];
   const tagsFlag = flagStr(p, 'tags');
   if (tagsFlag) tagInput.push(tagsFlag);

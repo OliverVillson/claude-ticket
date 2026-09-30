@@ -33,7 +33,7 @@ describe('workerEnv', () => {
     const copy = { ...parent };
     workerEnv(parent);
     expect(parent).toEqual(copy);
-    expect(workerEnv({ ...parent, TICKET_INHERIT_CLAUDE_ENV: '1' }).CLAUDE_CODE_SESSION_ID).toBe('parent-session');
+    expect(workerEnv({ ...parent, SALU_INHERIT_CLAUDE_ENV: '1' }).CLAUDE_CODE_SESSION_ID).toBe('parent-session');
   });
   test('only CLAUDE_* names are ever dropped', () => {
     expect(isParentSessionVar('SESSION_SECRET')).toBe(false);
@@ -49,11 +49,25 @@ describe('applyAuthPolicy', () => {
     expect(applyAuthPolicy(env).warning).toContain('API credits');
     expect(env.ANTHROPIC_API_KEY).toBe('sk');
   });
-  test('TICKET_AUTH=subscription removes the key, api-key silences the warning', () => {
-    const a = { ANTHROPIC_API_KEY: 'sk', ANTHROPIC_AUTH_TOKEN: 't', TICKET_AUTH: 'subscription' } as NodeJS.ProcessEnv;
+  test('SALU_AUTH=subscription removes the key, api-key silences the warning', () => {
+    const a = { ANTHROPIC_API_KEY: 'sk', ANTHROPIC_AUTH_TOKEN: 't', SALU_AUTH: 'subscription' } as NodeJS.ProcessEnv;
     expect(applyAuthPolicy(a).warning).toBeNull();
     expect('ANTHROPIC_API_KEY' in a || 'ANTHROPIC_AUTH_TOKEN' in a).toBe(false);
-    expect(applyAuthPolicy({ ANTHROPIC_API_KEY: 'sk', TICKET_AUTH: 'api-key' } as NodeJS.ProcessEnv).warning).toBeNull();
+    expect(applyAuthPolicy({ ANTHROPIC_API_KEY: 'sk', SALU_AUTH: 'api-key' } as NodeJS.ProcessEnv).warning).toBeNull();
     expect(applyAuthPolicy({} as NodeJS.ProcessEnv).warning).toBeNull();
+  });
+});
+
+describe('legacy TICKET_* variables', () => {
+  test('fill in the SALU_* twin unless it is already set', async () => {
+    const run = async (env: Record<string, string>) => {
+      const p = Bun.spawn([process.execPath, '-e', "await import('./src/core/compat.ts');console.log(process.env.SALU_AUTH)"], {
+        stdout: 'pipe',
+        env: { PATH: process.env.PATH!, ...env },
+      });
+      return (await new Response(p.stdout).text()).trim();
+    };
+    expect(await run({ TICKET_AUTH: 'subscription' })).toBe('subscription');
+    expect(await run({ TICKET_AUTH: 'subscription', SALU_AUTH: 'api-key' })).toBe('api-key');
   });
 });

@@ -2,7 +2,7 @@ import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
 import { oneLine, truncate } from './format.ts';
 
 /**
- * Reads the end of a worker log (`~/.ticket/logs/<project>/<ticket>-<run>.jsonl`, one Agent SDK
+ * Reads the end of a worker log (`~/.salu/logs/<project>/<ticket>-<run>.jsonl`, one Agent SDK
  * message per line) and turns it into short display lines in the claude transcript style:
  *
  *   ⏺ Read(src/auth.ts)

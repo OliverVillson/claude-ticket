@@ -10,15 +10,15 @@ import { CliError } from './errors.ts';
 export function resolveProject(db: Database, name?: string | null, cwd = process.cwd()): Project {
   if (name) {
     const p = getProjectByName(db, name);
-    if (!p) throw new CliError(`no project named "${name}" (see \`ticket list --projects\`)`);
+    if (!p) throw new CliError(`no project named "${name}" (see \`salu list --projects\`)`);
     return p;
   }
   const byCwd = findProjectForCwd(db, cwd);
   if (byCwd) return byCwd;
   const def = getDefaultProject(db);
   if (def) return def;
-  if (listProjects(db).length === 0) throw new CliError('no projects yet: run `ticket add project "name" [path]` first');
-  throw new CliError('no default project: run `ticket add project "name" [path]` or pass project=<name>');
+  if (listProjects(db).length === 0) throw new CliError('no projects yet: run `salu add project "name" [path]` first');
+  throw new CliError('no default project: run `salu add project "name" [path]` or pass project=<name>');
 }
 
 /**

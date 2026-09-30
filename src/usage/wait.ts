@@ -6,7 +6,7 @@ import type { PauseState, ProbeResult, ResumeInfo } from './types.ts';
 
 export interface WaitOptions {
   signal?: AbortSignal;
-  /** How often to re-read the pause while sleeping (a `ticket resume` or a new hit changes it). Default 5 s. */
+  /** How often to re-read the pause while sleeping (a `salu resume` or a new hit changes it). Default 5 s. */
   pollMs?: number;
   /** Grace after a reset time reported by a probe. Default RESUME_MARGIN_MS. */
   margin?: number;
@@ -105,7 +105,7 @@ export async function resumeIfDue(db: Database, opts: WaitOptions = {}): Promise
  * Block until dispatch may continue. Resolves with how the pause ended, or null when the abort
  * signal fired. Returns at once (with `confirmedBy: 'manual'`) when there is no pause.
  *
- * While waiting: sleeps in `pollMs` chunks so `ticket resume` (which clears the pause) and new
+ * While waiting: sleeps in `pollMs` chunks so `salu resume` (which clears the pause) and new
  * hits (which extend it) are noticed; once the reset time passes, probes; on "still closed"
  * re-arms from the probe's reset time; on repeated inconclusive probes resumes anyway.
  */

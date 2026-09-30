@@ -47,7 +47,7 @@ const H = 3_600_000;
 let home: string;
 beforeAll(() => {
   home = mkdtempSync(join(tmpdir(), 'ticket-usage-'));
-  process.env.TICKET_HOME = home;
+  process.env.SALU_HOME = home;
 });
 afterAll(() => {
   rmSync(home, { recursive: true, force: true });
@@ -344,7 +344,7 @@ describe('formatting', () => {
     enterManualPause(d, NOW_MS);
     expect(formatPause(getPause(d), NOW_MS).endsWith('· also paused by hand')).toBe(true);
     clearPause(d);
-    expect(formatPause(enterManualPause(d, NOW_MS), NOW_MS)).toBe('paused by hand · ticket resume to continue');
+    expect(formatPause(enterManualPause(d, NOW_MS), NOW_MS)).toBe('paused by hand · salu resume to continue');
     expect(formatPause(null)).toBe('running');
     clearPause(d);
     s = enterPause(d, sessionHit(NOW_MS + H), { now: NOW_MS });
@@ -445,12 +445,12 @@ describe('probeWindow with a stubbed SDK', () => {
     const open = await probeWindow({ queryFn: q, cwd: home, model: 'sonnet' });
     expect(open.status).toBe('open');
   });
-  test('fake runner mode reads TICKET_FAKE_LIMIT_UNTIL', () => {
-    process.env.TICKET_FAKE_LIMIT_UNTIL = String(Date.now() + 60_000);
+  test('fake runner mode reads SALU_FAKE_LIMIT_UNTIL', () => {
+    process.env.SALU_FAKE_LIMIT_UNTIL = String(Date.now() + 60_000);
     expect(fakeProbe({ pause: { kind: 'session', models: [] } }).status).toBe('closed');
-    process.env.TICKET_FAKE_LIMIT_UNTIL = String(Date.now() - 60_000);
+    process.env.SALU_FAKE_LIMIT_UNTIL = String(Date.now() - 60_000);
     expect(fakeProbe().status).toBe('open');
-    delete process.env.TICKET_FAKE_LIMIT_UNTIL;
+    delete process.env.SALU_FAKE_LIMIT_UNTIL;
     expect(fakeProbe().status).toBe('open');
   });
 });
@@ -507,7 +507,7 @@ describe('waitUntilOpen', () => {
     expect(r!.confirmedBy).toBe('probe');
     expect(calls).toBe(2);
   });
-  test('ticket resume while waiting returns manual', async () => {
+  test('salu resume while waiting returns manual', async () => {
     const d = db();
     enterPause(d, sessionHit(Date.now() + 10 * H));
     setTimeout(() => clearPause(d), 40);

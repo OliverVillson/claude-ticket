@@ -10,7 +10,7 @@ A Claude subscription meters Claude Code in a rolling 5-hour window, a 7-day win
 2. The orchestrator marks the ticket `paused` (keeping its session) and calls `enterPause(db, hit)`.
 3. Before each claim, `gateFor(db, model)` says whether that model may run. A pause on `opus` holds only Opus tickets.
 4. Once `paused_until` (reset time + 60 s) has passed, `resumeIfDue(db, { probe })` runs one probe. Open: the pause is cleared and paused tickets resume with `resume: session_id`. Closed: the pause is pushed to the reset time the probe reports, or backed off 10, 20, 40, then 60 minutes. Inconclusive three times in a row (a closed probe resets the count): resume anyway, and a worker re-enters the pause if the window is still closed.
-5. A manual pause (`ticket pause`) is never cleared by a probe. `clearLimitPause` keeps it.
+5. A manual pause (`salu pause`) is never cleared by a probe. `clearLimitPause` keeps it.
 
 ## Signals (verified against @anthropic-ai/claude-agent-sdk 0.3.285)
 
@@ -32,12 +32,12 @@ The limit-line prefixes are the SDK's own `USAGE_LIMIT_ERROR_PREFIXES`; a test c
 
 ## State keys (in the core's `state` table)
 
-Core keys, also read by `ticket status`, `ticket pause/resume` and the TUI: `paused_until`, `pause_reason`, `pause_kind`, `pause_models`, `manual_pause`. Own keys: `usage_paused_since`, `usage_pause_source`, `usage_probe_attempts`, `usage_probe_unknown`, `usage_last_hit`, `usage_last_resume`.
+Core keys, also read by `salu status`, `salu pause/resume` and the TUI: `paused_until`, `pause_reason`, `pause_kind`, `pause_models`, `manual_pause`. Own keys: `usage_paused_since`, `usage_pause_source`, `usage_probe_attempts`, `usage_probe_unknown`, `usage_last_hit`, `usage_last_resume`.
 
 ## Knobs
 
-- `TICKET_WORKER=fake`: `probeWindow` never calls the SDK. `TICKET_FAKE_LIMIT_UNTIL=<epoch ms>` or a file `fake-limit-until` in `TICKET_HOME` keeps the window closed until then.
-- `TICKET_RESUME_MARGIN_MS`: read by the orchestrator's gate; shortens the 60 s margin in tests.
+- `SALU_WORKER=fake`: `probeWindow` never calls the SDK. `SALU_FAKE_LIMIT_UNTIL=<epoch ms>` or a file `fake-limit-until` in `SALU_HOME` keeps the window closed until then.
+- `SALU_RESUME_MARGIN_MS`: read by the orchestrator's gate; shortens the 60 s margin in tests.
 
 ## Tests
 

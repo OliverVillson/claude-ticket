@@ -5,12 +5,12 @@ import { resolveProject } from '../../core/resolve.ts';
 import { helpIf, isTTY } from './_shared.ts';
 import { applyAuthPolicy } from '../../core/env.ts';
 
-const HELP = `ticket run [project] [--concurrency N] [--detach] [--plain]
+const HELP = `salu run [project] [--concurrency N] [--detach] [--plain]
 
 Starts the orchestrator: claims tickets by priority then age, runs each as its own Claude
 Code session (up to the concurrency cap, default 2), pauses on a rate limit and resumes
 when the window resets. Foreground by default with a live view; --plain logs lines
-instead; --detach runs it in the background (ticket stop ends it).`;
+instead; --detach runs it in the background (salu stop ends it).`;
 
 export async function run(p: Parsed): Promise<number> {
   if (helpIf(p, HELP)) return 0;

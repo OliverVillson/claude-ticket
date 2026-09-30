@@ -5,7 +5,7 @@ import { clearPause, enterManualPause } from '../usage/index.ts';
 import { parseTags, validatePriority } from '../core/tags.ts';
 import { CliError } from '../core/errors.ts';
 
-/** What the add/edit form collects. `tags` is the same string `ticket add` takes. */
+/** What the add/edit form collects. `tags` is the same string `salu add` takes. */
 export interface TicketInput {
   projectId: number;
   name: string;

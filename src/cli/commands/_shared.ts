@@ -22,5 +22,5 @@ export function helpIf(p: Parsed, text: string): boolean {
 }
 
 export function isTTY(): boolean {
-  return !!process.stdout.isTTY && !!process.stdin.isTTY && !process.env.TICKET_NO_TUI;
+  return !!process.stdout.isTTY && !!process.stdin.isTTY && !process.env.SALU_NO_TUI;
 }

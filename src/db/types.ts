@@ -78,6 +78,6 @@ export const STATE = {
   pauseReason: 'pause_reason', // human text
   pauseKind: 'pause_kind', // 'session' | 'weekly' | 'opus' | 'manual' | 'unknown'
   pauseModels: 'pause_models', // '' (all) or comma list of model prefixes, e.g. 'opus'
-  manualPause: 'manual_pause', // '1' when `ticket pause` was used
+  manualPause: 'manual_pause', // '1' when `salu pause` was used
   concurrency: 'concurrency', // global cap override
 } as const;

@@ -21,7 +21,7 @@ export interface AppProps {
   db: Database;
   /** project to start on; null = all projects */
   projectId: number | null;
-  /** only these statuses (`ticket list --status`) */
+  /** only these statuses (`salu list --status`) */
   statuses?: TicketStatus[];
   actions: TuiActions;
   /** database poll interval; the view only re-renders when something changed */
@@ -29,7 +29,7 @@ export interface AppProps {
   /** first snapshot, loaded before Ink mounts so the first frame paints at once */
   initial?: Snapshot;
   /**
-   * Open straight into the add/edit form and exit when it closes (`ticket change "name"`
+   * Open straight into the add/edit form and exit when it closes (`salu change "name"`
    * with no flags). The app exits with the saved ticket, or null when cancelled.
    */
   form?: { ticketId?: number; projectId?: number };
@@ -194,7 +194,7 @@ export function App(p: AppProps) {
     if (!form) return;
     const projectId = formProjectId();
     if (projectId == null) {
-      setFormError('no projects yet: run `ticket add project "name"` first');
+      setFormError('no projects yet: run `salu add project "name"` first');
       return;
     }
     try {
@@ -229,7 +229,7 @@ export function App(p: AppProps) {
     }
     try {
       actions.runNow(t);
-      say(snapshot.status.alive ? `"${t.name}" runs next` : `"${t.name}" runs next · start the orchestrator with: ticket run`, snapshot.status.alive ? 'ok' : 'info');
+      say(snapshot.status.alive ? `"${t.name}" runs next` : `"${t.name}" runs next · start the orchestrator with: salu run`, snapshot.status.alive ? 'ok' : 'info');
     } catch (e: any) {
       say(String(e?.message ?? e), 'err');
     }

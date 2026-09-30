@@ -1,5 +1,5 @@
 /**
- * Foreground views for `ticket run`, with no Ink dependency so the orchestrator stays light.
+ * Foreground views for `salu run`, with no Ink dependency so the orchestrator stays light.
  *
  * `attachPlainView` prints one line per event (logs, `--plain`, `--detach`).
  * `attachLiveView` keeps a small panel at the bottom of the terminal and redraws it in place, so
@@ -27,7 +27,7 @@ interface PauseLike {
 }
 
 export function describePause(p: PauseLike, now = Date.now()): string {
-  if (p.manual) return 'paused by hand — `ticket resume` continues';
+  if (p.manual) return 'paused by hand — `salu resume` continues';
   const label = labelForKind((p.kind ?? 'unknown') as LimitKind, p.models);
   const scope = p.models.length ? ` for ${p.models[0]} tickets` : '';
   if (p.until == null) return `${label} reached${scope}`;
@@ -68,7 +68,7 @@ export function formatEvent(e: OrchestratorEvent): string | null {
     case 'probe':
       return `${e.ok ? green('✓') : magenta('…')} window check: ${e.ok ? 'open' : 'still closed'}${e.detail ? dim(` — ${truncate(e.detail, 120)}`) : ''}`;
     case 'idle':
-      return dim('○ queue empty, waiting for tickets (ticket add …)');
+      return dim('○ queue empty, waiting for tickets (salu add …)');
     case 'log':
       return e.level === 'error' ? `${red('!')} ${e.message}` : e.level === 'warn' ? `${yellow('!')} ${e.message}` : dim(e.message);
     case 'stop':
@@ -115,12 +115,12 @@ export function attachLiveView(orch: Orchestrator, db: Database, out: NodeJS.Wri
       const detail = [w.live.model ?? '', formatDuration(now - w.startedAt).padStart(7), `${w.live.turns} turn${w.live.turns === 1 ? '' : 's'}`.padStart(9), w.live.lastTool ?? w.live.lastText ?? ''].filter(Boolean).join('  ');
       lines.push(truncate(`  ${cyan('●')} ${bold(w.ticket.name.padEnd(24))} ${dim(detail)}`, width()));
     }
-    if (workers.length === 0 && !stopped) lines.push(dim(counts.todo + counts.paused ? '  starting workers…' : '  no tickets waiting — ticket add "name" "query" "tags"'));
+    if (workers.length === 0 && !stopped) lines.push(dim(counts.todo + counts.paused ? '  starting workers…' : '  no tickets waiting — salu add "name" "query" "tags"'));
     if (recent.length) {
       lines.push(dim('  recent'));
       for (const r of recent) lines.push(truncate(`  ${r}`, width()));
     }
-    lines.push(dim(stopped ? '' : '  q or Ctrl-C stops; running tickets resume on the next `ticket run`'));
+    lines.push(dim(stopped ? '' : '  q or Ctrl-C stops; running tickets resume on the next `salu run`'));
 
     let buf = '';
     if (drawn) buf += `\u001b[${drawn}A`; // back to the top of the last panel

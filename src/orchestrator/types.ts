@@ -60,7 +60,7 @@ export interface WorkerInput {
 
 /**
  * Something that runs one ticket as a stream of Agent-SDK-shaped messages, and can check whether
- * the usage window is open. `sdkRunner` is the real one; `fakeRunner` (TICKET_WORKER=fake) is for tests.
+ * the usage window is open. `sdkRunner` is the real one; `fakeRunner` (SALU_WORKER=fake) is for tests.
  */
 export interface WorkerRunner {
   readonly name: 'sdk' | 'fake';

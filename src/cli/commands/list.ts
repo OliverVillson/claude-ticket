@@ -10,7 +10,7 @@ import { dim } from '../../core/ansi.ts';
 import { formatAgo, formatCost, statusColor, statusIcon, table } from '../../core/format.ts';
 import { helpIf, isTTY } from './_shared.ts';
 
-const HELP = `ticket list [project] [--plain] [--status S[,S]] [--all] [--projects] [--json]
+const HELP = `salu list [project] [--plain] [--status S[,S]] [--all] [--projects] [--json]
 
 Opens the interactive list (arrow keys move, Enter opens a ticket, a/e/d/r add, edit,
 delete, run; p pauses; / filters; Tab switches project; q quits). --plain prints a table
@@ -29,7 +29,7 @@ export async function list(p: Parsed): Promise<number> {
       return 0;
     }
     if (!projects.length) {
-      console.log(dim('no projects yet: ticket add project "name" [path]'));
+      console.log(dim('no projects yet: salu add project "name" [path]'));
       return 0;
     }
     console.log(
@@ -86,7 +86,7 @@ export async function list(p: Parsed): Promise<number> {
     return 0;
   }
   if (!tickets.length) {
-    console.log(dim(project ? `no tickets in ${project.name}` : 'no tickets yet: ticket add "name" "query" ["tags"]'));
+    console.log(dim(project ? `no tickets in ${project.name}` : 'no tickets yet: salu add "name" "query" ["tags"]'));
     return 0;
   }
   const now = Date.now();

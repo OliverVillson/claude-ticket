@@ -17,7 +17,7 @@ import type { LimitHit, LimitKind, RateLimitType } from './types.ts';
 
 /**
  * Mirrors USAGE_LIMIT_ERROR_PREFIXES exported by @anthropic-ai/claude-agent-sdk 0.3.285. Copied so
- * that `ticket status` never has to load the SDK; test/usage.test.ts checks the copy against the
+ * that `salu status` never has to load the SDK; test/usage.test.ts checks the copy against the
  * SDK export.
  */
 export const LIMIT_TEXT_PREFIXES: readonly string[] = [

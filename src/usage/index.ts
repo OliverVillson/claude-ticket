@@ -5,7 +5,7 @@
  *
  * Flow: `detectLimit(msg)` on every worker message → `enterPause(db, hit)` → `gateFor(db, model)`
  * before each dispatch → `await waitUntilOpen(db, { signal })` (or `resumeIfDue` from a loop) →
- * dispatch again. `ticket pause` / `ticket resume` are `enterManualPause` / `clearPause`.
+ * dispatch again. `salu pause` / `salu resume` are `enterManualPause` / `clearPause`.
  */
 export type { LimitHit, LimitKind, LimitSource, PauseState, GateResult, ProbeResult, RateLimitType, ResumeInfo } from './types.ts';
 export {
