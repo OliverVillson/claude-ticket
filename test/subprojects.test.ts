@@ -26,7 +26,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'salu-sub-'));
   db = openDb(join(dir, 't.db'));
 });
-const tk = (project_id: number, name: string) => createTicket(db, { project_id, name, query: 'q', tags: {}, labels: [], priority: 3 });
+const tk = (project_id: number, name: string) => createTicket(db, { status: 'todo', project_id, name, query: 'q', tags: {}, labels: [], priority: 3 });
 
 describe('subprojects', () => {
   test('an old database migrates with every project top level', () => {

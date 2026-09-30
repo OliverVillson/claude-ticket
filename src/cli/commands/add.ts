@@ -11,8 +11,12 @@ import { CliError } from '../../core/errors.ts';
 import { dim, green } from '../../core/ansi.ts';
 import { helpIf } from './_shared.ts';
 
-const HELP = `salu add project "name" [path] [--in parent] [--model M] [--effort E] [--tools T] [--concurrency N] [--default]
+const HELP = `salu add "name" ["query"] ["tags"] [--queue]
+salu add project "name" [path] [--in parent] [--model M] [--effort E] [--tools T] [--concurrency N] [--default]
 salu add "name" "query" ["tags"] [--project P] [--priority N] [--tags T]
+
+A new ticket is only saved (status backlog): it does not run until you start it with salu queue "name",
+salu run, or r in the TUI. --queue saves and queues it in one go.
 
 Adds a ticket. "query" is optional: when left out, the name is the instruction.
 The project is taken from the project=<name> tag or --project (created if it does not exist),
@@ -76,7 +80,8 @@ export async function add(p: Parsed): Promise<number> {
     tags: parsed.tags,
     labels: parsed.labels,
     priority,
+    status: flagBool(p, 'queue') ? 'todo' : 'backlog',
   });
-  console.log(`${green('✓')} #${t.id} ${t.name} ${dim(`in ${project.name}, priority ${t.priority}`)}`);
+  console.log(`${green('✓')} #${t.id} ${t.name} ${dim(`in ${project.name}, priority ${t.priority}, ${t.status === 'todo' ? 'queued' : 'saved: `salu queue` or `salu run` starts it'}`)}`);
   return 0;
 }

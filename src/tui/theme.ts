@@ -28,14 +28,15 @@ export interface StatusStyle {
 export const STATUS_STYLE: Record<TicketStatus, StatusStyle> = {
   running: { glyph: GLYPHS.running, tone: 'accent', label: 'running' },
   paused: { glyph: GLYPHS.paused, tone: 'magenta', label: 'paused' },
-  todo: { glyph: GLYPHS.todo, tone: 'plain', dim: true, label: 'todo' },
+  backlog: { glyph: GLYPHS.backlog, tone: 'plain', dim: true, label: 'backlog' },
+  todo: { glyph: GLYPHS.todo, tone: 'plain', dim: true, label: 'queued' },
   blocked: { glyph: GLYPHS.blocked, tone: 'yellow', label: 'blocked' },
   failed: { glyph: GLYPHS.failed, tone: 'red', label: 'failed' },
   done: { glyph: GLYPHS.done, tone: 'green', label: 'done' },
 };
 
 /** Order statuses appear in summaries (mirrors the list sort order). */
-export const STATUS_ORDER: TicketStatus[] = ['running', 'paused', 'todo', 'blocked', 'failed', 'done'];
+export const STATUS_ORDER: TicketStatus[] = ['running', 'paused', 'todo', 'backlog', 'blocked', 'failed', 'done'];
 
 /** Colour `text` with a tone, optionally dimmed and/or bold. */
 export function paint(st: Style, tone: Tone, text: string, o: { dim?: boolean; bold?: boolean } = {}): string {

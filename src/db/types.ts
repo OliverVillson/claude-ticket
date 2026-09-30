@@ -1,5 +1,6 @@
-export type TicketStatus = 'todo' | 'running' | 'done' | 'failed' | 'blocked' | 'paused';
-export const TICKET_STATUSES: TicketStatus[] = ['todo', 'running', 'done', 'failed', 'blocked', 'paused'];
+/** backlog = saved, never runs by itself; todo = queued (eligible to run); the rest are as named. */
+export type TicketStatus = 'backlog' | 'todo' | 'running' | 'done' | 'failed' | 'blocked' | 'paused';
+export const TICKET_STATUSES: TicketStatus[] = ['backlog', 'todo', 'running', 'done', 'failed', 'blocked', 'paused'];
 
 export type RunOutcome = 'done' | 'failed' | 'blocked' | 'rate_limited' | 'killed';
 

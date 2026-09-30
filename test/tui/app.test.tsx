@@ -333,7 +333,7 @@ describe('add and edit form', () => {
     expect(JSON.parse(t.tags)).toEqual({ model: 'opus', effort: 'high' });
     expect(JSON.parse(t.labels)).toEqual(['docs']);
     expect(t.priority).toBe(1);
-    expect(t.status).toBe('todo');
+    expect(t.status).toBe('backlog');
   });
 
   test('priority "now" is accepted', async () => {
