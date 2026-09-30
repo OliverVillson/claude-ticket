@@ -41,6 +41,8 @@ export interface WorkerResult {
   resumable: boolean;
   /** The worker's final report without the TICKET: trailer (done tickets). */
   summary?: string | null;
+  /** The worker's whole final message, kept as the reply on the ticket (the trailer line is stripped). */
+  text?: string;
   /** Tool uses the session was refused (no approval surface), each with the rule that would allow it. */
   denials?: Denial[];
 }
@@ -62,6 +64,10 @@ export interface WorkerInput {
   resume: string | null;
   /** Why the session is resumed, for the resume prompt. */
   resumeReason?: string;
+  /** Messages you sent on the ticket after its last reply; resumes the session with them instead of the interrupted-run prompt. */
+  followUp?: string[];
+  /** The earlier conversation, used only when there is no session to resume (a failed run started clean). */
+  history?: Array<{ role: 'user' | 'assistant'; body: string }>;
   abort: AbortController;
 }
 

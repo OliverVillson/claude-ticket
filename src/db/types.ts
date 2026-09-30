@@ -60,6 +60,19 @@ export interface Run {
   log_path: string | null;
 }
 
+/**
+ * One message on a ticket after the first prompt. `user` turns are follow-ups (delivered = 0 until a
+ * worker has been given them), `assistant` turns are the worker's final reply of a run.
+ */
+export interface Turn {
+  id: number;
+  ticket_id: number;
+  role: 'user' | 'assistant';
+  body: string;
+  delivered: number; // 0 | 1
+  created_at: number;
+}
+
 /** A ticket joined with its project name, as most views want it. */
 export interface TicketView extends Ticket {
   project: string;

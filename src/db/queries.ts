@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import type { Project, ProjectNode, Run, RunOutcome, Ticket, TicketStatus, TicketView } from './types.ts';
+import type { Project, ProjectNode, Run, RunOutcome, Ticket, TicketStatus, TicketView, Turn } from './types.ts';
 import { CliError } from '../core/errors.ts';
 import { appendFileSync } from 'node:fs';
 import { DEFAULT_MODEL } from '../core/tags.ts';
@@ -497,4 +497,44 @@ export function getAllState(db: Database): Record<string, string> {
   const out: Record<string, string> = {};
   for (const r of db.query<{ key: string; value: string }, []>('SELECT key, value FROM state').all()) out[r.key] = r.value;
   return out;
+}
+
+// -------------------------------------------------------------------------------------------------
+// Turns: the conversation on a ticket after its first prompt
+// -------------------------------------------------------------------------------------------------
+
+export function listTurns(db: Database, ticketId: number): Turn[] {
+  return db.query<Turn, [number]>('SELECT * FROM turns WHERE ticket_id = ? ORDER BY id').all(ticketId);
+}
+
+/** Follow-ups no worker has been given yet, oldest first. */
+export function pendingFollowUps(db: Database, ticketId: number): Turn[] {
+  return db.query<Turn, [number]>("SELECT * FROM turns WHERE ticket_id = ? AND role = 'user' AND delivered = 0 ORDER BY id").all(ticketId);
+}
+
+export function addTurn(db: Database, ticketId: number, role: Turn['role'], body: string, delivered = true): void {
+  db.run('INSERT INTO turns (ticket_id, role, body, delivered, created_at) VALUES (?, ?, ?, ?, ?)', [ticketId, role, body, delivered ? 1 : 0, now()]);
+}
+
+export function markFollowUpsDelivered(db: Database, ticketId: number): void {
+  db.run("UPDATE turns SET delivered = 1 WHERE ticket_id = ? AND role = 'user' AND delivered = 0", [ticketId]);
+}
+
+/**
+ * Send a follow-up message on a ticket. A finished ticket (done, blocked, failed) is queued again and
+ * resumes its session with the message, so the worker keeps everything it learned. On a running
+ * ticket the message waits and becomes the next turn once the current one ends. A backlog ticket
+ * has not had its first prompt yet, so there is nothing to follow up on.
+ */
+export function replyToTicket(db: Database, id: number, message: string, o: { now?: boolean } = {}): TicketView {
+  const body = message.trim();
+  if (!body) throw new CliError('the message is empty');
+  const t = getTicketById(db, id);
+  if (!t) throw new CliError(`no ticket with id ${id}`);
+  if (t.status === 'backlog') throw new CliError(`"${t.name}" has not run yet: queue it (\`salu queue\`) or edit its query instead`);
+  addTurn(db, id, 'user', body, false);
+  if (t.status === 'done' || t.status === 'blocked' || t.status === 'failed') return queueTicket(db, id, { now: o.now });
+  if (o.now && t.status === 'todo') return queueTicket(db, id, { now: true });
+  wakeOrchestrator();
+  return t;
 }

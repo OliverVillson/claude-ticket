@@ -512,6 +512,27 @@ describe('ticket detail', () => {
     expect(term.lastFrame()).not.toEqual(first);
   });
 
+  test('r on a done ticket opens a reply prompt; Enter sends it and queues the ticket', async () => {
+    const { db } = seedDb(6);
+    const done = listTickets(db).find((t) => t.status === 'done')!;
+    const { addTurn, listTurns } = await import('../../src/db/queries.ts');
+    addTurn(db, done.id, 'assistant', 'I changed the thing.');
+    const { term } = mountApp({ db });
+    await term.waitFor((s) => s.includes('1/6'));
+    await term.press('/');
+    await term.press(done.name);
+    await term.press(KEY.enter);
+    await term.press(KEY.enter);
+    await term.waitFor((s) => s.includes('I changed the thing.'), 'the worker reply in the detail view');
+    await term.press('r');
+    await term.waitFor((s) => s.includes('your message'), 'reply prompt');
+    await term.press('now add tests');
+    await term.press(KEY.enter);
+    await term.waitFor((s) => s.includes('queued it'), 'sent message');
+    expect(getTicketById(db, done.id)!.status).toBe('todo');
+    expect(listTurns(db, done.id).at(-1)).toMatchObject({ role: 'user', body: 'now add tests', delivered: 0 });
+  });
+
   test('deleting from the detail view returns to the list', async () => {
     const { db } = seedDb(6);
     const { term } = mountApp({ db });
