@@ -1283,6 +1283,67 @@ describe('backlog and queue', () => {
   });
 });
 
+describe('permission-blocked tickets', () => {
+  const block = (db: any, id: number) =>
+    updateTicket(db, id, {
+      status: 'blocked',
+      error: 'needs permission: Bash(git clone *)',
+      denied: JSON.stringify([{ tool: 'Bash', input: 'git clone https://x/y', rule: 'Bash(git clone *)' }]),
+    });
+
+  const pick = async (term: any) => {
+    await term.press('/');
+    await term.press('ticket 001');
+    await term.press(KEY.enter);
+  };
+
+  test('a on the list asks, y allows the rule and queues the ticket again', async () => {
+    const { db, ids } = seedDb(3);
+    block(db, ids[0]!);
+    const { term } = mountApp({ db });
+    await term.waitFor((s) => s.includes('ticket 001'));
+    await pick(term);
+    await term.press('a');
+    await term.waitFor((s) => s.includes('Allow Bash(git clone *)') && s.includes('queue it again?'), 'confirm line');
+    await term.press('y');
+    await term.waitFor((s) => s.includes('queued again'), 'done message');
+    const t = getTicketById(db, ids[0]!)!;
+    expect(t.status).toBe('todo');
+    expect(t.denied ?? null).toBeNull();
+    expect(t.tags).toContain('also:Bash(git clone *)');
+  });
+
+  test('n cancels; a ticket without denials ignores a', async () => {
+    const { db, ids } = seedDb(3);
+    block(db, ids[0]!);
+    const { term } = mountApp({ db });
+    await term.waitFor((s) => s.includes('ticket 001'));
+    await pick(term);
+    await term.press('a');
+    await term.waitFor((s) => s.includes('queue it again?'));
+    await term.press('n');
+    await Bun.sleep(50);
+    expect(getTicketById(db, ids[0]!)!.status).toBe('blocked');
+  });
+
+  test('the output view lists what was refused and a allows it', async () => {
+    const { db, ids } = seedDb(3);
+    block(db, ids[0]!);
+    createRun(db, ids[0]!, null as any);
+    const { term } = mountApp({ db });
+    await term.waitFor((s) => s.includes('ticket 001'));
+    await pick(term);
+    await term.press(KEY.right);
+    const v = await term.waitFor((s) => s.includes('needs permission'), 'denials block');
+    expect(v).toContain('git clone https://x/y');
+    await term.press('a');
+    await term.waitFor((s) => s.includes('for this ticket and queue it again?'));
+    await term.press('y');
+    await Bun.sleep(100);
+    expect(getTicketById(db, ids[0]!)!.status).toBe('todo');
+  });
+});
+
 describe('the arrow for "deeper" on the selected row', () => {
   function seedTree() {
     const { db, home } = seedDb(0);

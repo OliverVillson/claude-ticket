@@ -9,7 +9,8 @@ import { ago, fmtCost, fmtDuration, priorityText } from '../format.ts';
 import { style as st } from '../style.ts';
 import { PRIORITY_CHOICES, joinTags, labelOf, splitTags, type Choice } from '../tagGroups.ts';
 import { applyTagKey, groupRows } from '../tagRows.ts';
-import { Frame, hintsText, titleText } from './Frame.tsx';
+import { Frame, confirmText, hintsText, titleText } from './Frame.tsx';
+import { ticketDenials } from '../../core/allow.ts';
 import { EditList, type EditRow } from './EditList.tsx';
 
 export interface PropsViewProps {
@@ -23,6 +24,8 @@ export interface PropsViewProps {
   loadRuns: (ticketId: number) => Run[];
   /** save one property through the `salu change` handlers; resolves to an error message or null */
   onSave: (flag: string, value: string) => Promise<string | null>;
+  /** allow the denied rules and queue the ticket again; resolves to an error message or null */
+  onAllow: () => string | null;
   onClose: () => void;
 }
 
@@ -60,7 +63,11 @@ export function PropsView(p: PropsViewProps) {
   const [section, setSection] = useState<'props' | 'output'>(() => (statusHasOutput(t.status) && runs.length > 0 ? 'output' : 'props'));
   const [runIdx, setRunIdx] = useState(0);
   const [top, setTop] = useState(0);
+  const [asking, setAsking] = useState(false); // the allow-and-queue confirm line
+  const [note, setNote] = useState<string | null>(null);
   const [custom, setCustom] = useState(false); // `custom` with empty lists writes no tag: remember the pick
+  const denials = statusHasOutput(t.status) ? ticketDenials(t) : [];
+  const needs = [...new Set(denials.map((d) => d.rule))];
   const parts = splitTags(formatTags(ticketTags(t), ticketLabels(t)));
   if (custom && parts.toolset === '') parts.toolset = 'custom';
 
@@ -75,6 +82,7 @@ export function PropsView(p: PropsViewProps) {
     ...groupRows('tools', parts),
     { key: 'priority', label: 'priority', kind: 'pick', choices: PRIORITY_CHOICES, raw: String(t.priority), value: labelOf(PRIORITY_CHOICES, String(t.priority)) === String(t.priority) ? priorityText(t.priority) : labelOf(PRIORITY_CHOICES, String(t.priority)) },
     ...groupRows('other', parts),
+    ...(needs.length ? [{ key: 'needs', label: 'needs', kind: 'readonly' as const, value: `permission: ${needs.join(', ')} (press a to allow)` }] : []),
     { key: 'created', label: 'created', kind: 'readonly', value: ago(t.created_at, p.now) },
     { key: 'updated', label: 'updated', kind: 'readonly', value: ago(t.updated_at, p.now) },
     {
@@ -118,6 +126,16 @@ export function PropsView(p: PropsViewProps) {
   const at = Math.min(top, maxTop);
 
   useInput((input, key) => {
+    if (asking) {
+      if (input === 'y' || input === 'Y' || key.return) setNote(p.onAllow());
+      setAsking(false);
+      return;
+    }
+    if (input === 'a' && !editing && needs.length) {
+      setNote(null);
+      setAsking(true);
+      return;
+    }
     if (section === 'props') {
       if (input === 'o' && !editing) {
         setTop(0);
@@ -140,12 +158,17 @@ export function PropsView(p: PropsViewProps) {
     } else if (input === 'p' || key.leftArrow || key.escape) setSection('props');
   });
 
+  const footerLeft = (hints: Array<[string, string]>) => {
+    if (asking) return confirmText(`Allow ${needs.join(', ')} for this ticket and queue it again?`);
+    if (note) return st.red(note);
+    return hintsText(needs.length && !editing ? [['a', 'allow'], ...hints] : hints, p.columns - 2);
+  };
   const crumbs = [t.project, t.name.length > 40 ? t.name.slice(0, 39) + '…' : t.name, section === 'output' ? 'output' : 'properties'];
   const scrollInfo = outRows.length > height ? st.dim(`${at + 1}-${Math.min(outRows.length, at + height)}/${outRows.length}  #${t.id}`) : st.dim(`#${t.id}`);
   if (section === 'output') {
     const hints = runs.length > 1 ? OUTPUT_HINTS : OUTPUT_HINTS.filter(([k]) => k !== '[ ]');
     return (
-      <Frame columns={p.columns} header={{ left: titleText(crumbs), right: scrollInfo }} footer={{ left: hintsText(hints, p.columns - 2) }}>
+      <Frame columns={p.columns} header={{ left: titleText(crumbs), right: scrollInfo }} footer={{ left: footerLeft(hints) }}>
         {outRows.slice(at, at + height).map((l, i) => (
           <Text key={i} wrap="truncate-end">
             {st.base(l || ' ')}
@@ -156,7 +179,7 @@ export function PropsView(p: PropsViewProps) {
   }
   const hasRuns = runs.length > 0;
   return (
-    <Frame columns={p.columns} header={{ left: titleText(crumbs), right: st.dim(`#${t.id}`) }} footer={{ left: hintsText(editing ? EDIT_HINTS : hasRuns ? PROPS_OUT_HINTS : HINTS, p.columns - 2) }}>
+    <Frame columns={p.columns} header={{ left: titleText(crumbs), right: st.dim(`#${t.id}`) }} footer={{ left: footerLeft(editing ? EDIT_HINTS : hasRuns ? PROPS_OUT_HINTS : HINTS) }}>
       <EditList columns={p.columns} rows={rows} onSet={onSet} onBack={p.onClose} onEditing={setEditing} />
     </Frame>
   );

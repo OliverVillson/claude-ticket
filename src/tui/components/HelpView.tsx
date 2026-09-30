@@ -11,6 +11,7 @@ const KEYS: Array<[string, string]> = [
   ['a', 'add a ticket (name, query, tags)'],
   ['e', 'edit the selected ticket'],
   ['d', 'delete the selected ticket (asks y/n)'],
+  ['a', 'on a ticket blocked by a permission: allow what it was refused and queue it again'],
   ['u', 'queue the selected ticket (saved tickets stay in the backlog until then), or take a queued one back'],
   ['r', 'run the selected ticket next, ahead of the queue'],
   ['p', 'pause or resume the orchestrator'],
