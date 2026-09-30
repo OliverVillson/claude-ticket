@@ -160,6 +160,11 @@ folder. The orchestrator sees the Claude login but no SSH keys; the sync service
 but no Claude login. If the sandbox then fails to start on your VPS, `sudo salu runner setup --no-harden` drops
 the confinement (the worker sandbox still applies).
 
+On a box, always run projects through the runner (above), not a foreground `salu run` in a shell. The scrub that
+hides your tokens from agents cleans salu's own process, but the shell a foreground run starts from still holds
+whatever you exported there, and a same-user agent could read it. If you do run in the foreground, do not export
+tokens or keys into that shell.
+
 ## 8. On your Mac: connect the project and send a ticket
 
 ```sh
