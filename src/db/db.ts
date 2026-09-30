@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { dbPath, ensureHome } from '../core/paths.ts';
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -81,6 +81,10 @@ function migrate(db: Database) {
   }
   if (version < 3) {
     db.exec('ALTER TABLE projects ADD COLUMN default_tools TEXT;');
+  }
+  if (version < 4) {
+    // Tool uses the worker was refused (JSON array), so a blocked ticket can say what permission it needs.
+    db.exec('ALTER TABLE tickets ADD COLUMN denied TEXT;');
   }
   if (version < SCHEMA_VERSION) db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
 }

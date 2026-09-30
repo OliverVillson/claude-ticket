@@ -17,6 +17,7 @@ Usage   (salu ?  |  salu help  |  salu --help  shows this list; quote the ? in z
   salu list [project] [--plain] [--status S] [--projects] [--json]
   salu queue "name"... | --all [project]     queue saved tickets to run (add only saves; nothing runs by itself)
   salu unqueue "name"                        take a queued ticket back to the backlog
+  salu allow "name" [--tool 'Bash(git clone *)']   unblock a ticket that needs a permission, and queue it again
   salu run [project|"name"...] [--concurrency N] [--detach] [--plain]
                                              queue everything saved (or just the named tickets) and start
   salu pause | salu resume | salu stop
@@ -71,6 +72,8 @@ export async function dispatch(argv: string[]): Promise<number> {
       return (await import('./commands/queue.ts')).queue(sub);
     case 'unqueue':
       return (await import('./commands/queue.ts')).unqueue(sub);
+    case 'allow':
+      return (await import('./commands/allow.ts')).allow(sub);
     case 'pause':
       return (await import('./commands/pause.ts')).pause(sub);
     case 'resume':

@@ -11,6 +11,7 @@ import type { OrchestratorEvent } from '../src/orchestrator/types.ts';
 import { clearPause, getPause } from '../src/usage/index.ts';
 import { readStatus } from '../src/orchestrator/status.ts';
 import { dispatch } from '../src/cli/dispatch.ts';
+import { allowTicket, ticketDenials } from '../src/core/allow.ts';
 import { claimNextTicket, createTicket as rawCreate, queueAll, queueTicket, unqueueTicket } from '../src/db/queries.ts';
 
 let home: string;
@@ -520,5 +521,58 @@ describe('saving does not start work', () => {
       console.error = err;
     }
     expect([status(a.id).status, status(b.id).status]).toEqual(['done', 'backlog']);
+  });
+});
+
+describe('permission-blocked tickets', () => {
+  const refused = {
+    name: 'refused',
+    async *run(): AsyncGenerator<any> {
+      yield { type: 'system', subtype: 'init', session_id: 's1', model: 'haiku' };
+      yield {
+        type: 'result', subtype: 'success', is_error: false, num_turns: 2, total_cost_usd: 0, session_id: 's1',
+        result: 'I cannot clone without approval.\nTICKET: blocked git clone needs approval',
+        permission_denials: [{ tool_name: 'Bash', tool_use_id: 'x', tool_input: { command: 'git clone https://github.com/OliverVillson/salu 2>&1' } }],
+      };
+    },
+    async probe() {
+      return 'ok' as const;
+    },
+  };
+
+  test('a refused tool use is recorded and shown as the block reason; salu allow fixes it in one step', async () => {
+    const t = ticket('needs-clone', 'x');
+    const orch = new Orchestrator({ db, concurrency: 1, exitWhenEmpty: true, heartbeatMs: 100, runner: refused as any });
+    await orch.start();
+    const b = status(t.id);
+    expect(b.status).toBe('blocked');
+    expect(b.error).toContain('needs permission: Bash(git clone *)');
+    expect(ticketDenials(b).map((d) => d.rule)).toEqual(['Bash(git clone *)']);
+
+    const log = console.log;
+    const lines: string[] = [];
+    console.log = (...a: any[]) => lines.push(a.join(' '));
+    try {
+      expect(await dispatch(['list', '--plain'])).toBe(0);
+      expect(lines.join('\n')).toContain('needs permission Bash(git clone *)');
+      lines.length = 0;
+      expect(await dispatch(['allow', 'needs-clone'])).toBe(0);
+      expect(lines.join('\n')).toContain('Bash(git clone *)');
+    } finally {
+      console.log = log;
+    }
+    const f = status(t.id);
+    expect(f.status).toBe('todo');
+    expect(f.attempts).toBe(0);
+    expect(f.denied ?? null).toBeNull();
+    expect(JSON.parse(f.tags).tools).toBe('standard;also:Bash(git clone *)');
+  });
+
+  test('allowTicket with an explicit rule, and a helpful error when nothing was denied', () => {
+    const t = ticket('plain', 'x');
+    expect(() => allowTicket(db, t.id)).toThrow(/no recorded permission denial/);
+    const r = allowTicket(db, t.id, ['Bash(make *)']);
+    expect(r.ticket.status).toBe('todo');
+    expect(JSON.parse(status(t.id).tags).tools).toBe('standard;also:Bash(make *)');
   });
 });

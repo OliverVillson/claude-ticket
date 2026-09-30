@@ -7,7 +7,9 @@ import { CliError } from './errors.ts';
  *   tools=readonly|edit|none            a preset (see TOOL_PRESETS)
  *   tools=allow:Read,Grep,Bash(git *)   only these tools, rules allowed without asking
  *   tools=deny:Bash(rm *)               the standard toolset minus these
- *   tools="allow:Read,Edit;deny:Bash"   both, separated by `;`
+ *   tools=also:Bash(git clone *)        the standard toolset, and these rules allowed without asking too
+ *   tools="allow:Read,Edit;deny:Bash"   clauses are separated by `;` (a preset name may come first:
+ *                                       `edit;also:Bash(npm test *)`)
  *
  * Other modules only need `TOOL_PRESETS`, `KNOWN_TOOLS`, `validateTools`, `describeTools` and `toolsToSdk`.
  */
@@ -22,6 +24,8 @@ export const DEFAULT_TOOLS = 'standard';
 export const DEFAULT_ALLOWED_TOOLS = [
   'Bash(git status:*)', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)', 'Bash(git branch:*)',
   'Bash(git checkout:*)', 'Bash(git switch:*)', 'Bash(git add:*)', 'Bash(git commit:*)', 'Bash(git stash:*)',
+  // Read-only network git: fetching code into the project is safe (it runs nothing and sends nothing).
+  'Bash(git clone:*)', 'Bash(git fetch:*)', 'Bash(git ls-remote:*)',
 ];
 export const DEFAULT_DISALLOWED_TOOLS = ['Bash(git push:*)', 'Bash(git remote:*)', 'Bash(git config:*)'];
 
@@ -53,6 +57,8 @@ export interface ToolsSpec {
   preset?: string;
   allow?: string[];
   deny?: string[];
+  /** extra rules allowed without asking, on top of the base set */
+  also?: string[];
 }
 
 /** Split on commas that are not inside parentheses. */
@@ -86,9 +92,6 @@ function checkEntry(e: string, where: string): string {
 export function parseTools(input: string): ToolsSpec {
   const v = input.trim();
   if (!v) throw new CliError('tools needs a value: standard, readonly, edit, none or allow:Read,Grep');
-  const preset = TOOL_PRESETS.find((p) => p.name === v.toLowerCase());
-  if (preset) return { text: preset.name, preset: preset.name };
-  const spec: ToolsSpec = { text: '' };
   const parts: string[] = [];
   let depth = 0;
   let cur = '';
@@ -102,18 +105,27 @@ export function parseTools(input: string): ToolsSpec {
   }
   parts.push(cur);
   if (depth !== 0) throw new CliError(`tools: unbalanced parentheses in "${v}"`);
-  for (const raw of parts) {
+  const spec: ToolsSpec = { text: '' };
+  parts.forEach((raw, i) => {
     const part = raw.trim();
-    const m = /^(allow|deny):(.*)$/i.exec(part);
+    const preset = i === 0 ? TOOL_PRESETS.find((p) => p.name === part.toLowerCase()) : undefined;
+    if (preset) {
+      spec.preset = preset.name;
+      return;
+    }
+    const m = /^(allow|deny|also):(.*)$/i.exec(part);
     if (!m) {
       const names = TOOL_PRESETS.map((p) => p.name).join(', ');
-      throw new CliError(`tools must be ${names}, or allow:Tool,Tool / deny:Tool (";" between the two), got "${v}"`);
+      throw new CliError(`tools must be ${names}, or allow:Tool,Tool / deny:Tool / also:Rule (";" between clauses), got "${v}"`);
     }
-    const kind = m[1]!.toLowerCase() as 'allow' | 'deny';
+    const kind = m[1]!.toLowerCase() as 'allow' | 'deny' | 'also';
     if (spec[kind]) throw new CliError(`tools: "${kind}:" given twice`);
     spec[kind] = splitList(m[2]!).map((e) => checkEntry(e, `${kind}:`));
-  }
-  spec.text = [spec.allow && `allow:${spec.allow.join(',')}`, spec.deny && `deny:${spec.deny.join(',')}`].filter(Boolean).join(';');
+  });
+  if (spec.preset && spec.allow) throw new CliError('tools: a preset and allow: cannot be combined (allow: lists the tools itself)');
+  spec.text = [spec.preset, spec.allow && `allow:${spec.allow.join(',')}`, spec.deny && `deny:${spec.deny.join(',')}`, spec.also && `also:${spec.also.join(',')}`]
+    .filter(Boolean)
+    .join(';');
   return spec;
 }
 
@@ -126,10 +138,11 @@ export function validateTools(v: string): string {
 export function describeTools(v: string | null | undefined): string {
   if (!v) return TOOL_PRESETS[0]!.description;
   const spec = parseTools(v);
-  if (spec.preset) return TOOL_PRESETS.find((p) => p.name === spec.preset)!.description;
   const bits: string[] = [];
+  if (spec.preset) bits.push(TOOL_PRESETS.find((p) => p.name === spec.preset)!.description);
   if (spec.allow) bits.push(`only ${spec.allow.join(', ')}`);
-  if (spec.deny) bits.push(`${spec.allow ? 'never' : 'standard tools except'} ${spec.deny.join(', ')}`);
+  if (spec.deny) bits.push(`${spec.allow || spec.preset ? 'never' : 'standard tools except'} ${spec.deny.join(', ')}`);
+  if (spec.also) bits.push(`${spec.preset || spec.allow ? 'also' : 'standard tools, also'} allows ${spec.also.join(', ')}`);
   return bits.join('; ');
 }
 
@@ -163,6 +176,11 @@ export function toolsToSdk(value: string | null | undefined, permission: string)
   } else {
     allow = DEFAULT_ALLOWED_TOOLS;
   }
+  if (spec.also) {
+    allow = uniq([...allow, ...spec.also]);
+    // A restricted tool list must contain the tool an extra rule is about (Bash for `Bash(git clone *)`).
+    if (out.tools) out.tools = uniq([...out.tools, ...spec.also.map(baseName)]);
+  }
   if (checked) {
     out.allowedTools = [...allow];
     out.disallowedTools = uniq([...DEFAULT_DISALLOWED_TOOLS, ...(spec.deny ?? [])]);
@@ -170,4 +188,65 @@ export function toolsToSdk(value: string | null | undefined, permission: string)
     out.disallowedTools = [...spec.deny];
   }
   return out;
+}
+
+/** The rules a tools value auto-allows on top of its base set (the `also:` entries). */
+export function alsoRules(value: string | null | undefined): string[] {
+  return value ? (parseTools(value).also ?? []) : [];
+}
+
+/** Add `also:` rules to a tools value (missing = standard) and return the new canonical value. */
+export function addAllowRules(value: string | null | undefined, rules: string[]): string {
+  const spec = parseTools(value || DEFAULT_TOOLS);
+  const checked = rules.map((r) => checkEntry(r.trim(), 'the rule'));
+  spec.also = uniq([...(spec.also ?? []), ...checked]);
+  const text = [spec.preset, spec.allow && `allow:${spec.allow.join(',')}`, spec.deny && `deny:${spec.deny.join(',')}`, `also:${spec.also.join(',')}`]
+    .filter(Boolean)
+    .join(';');
+  return parseTools(text).text;
+}
+
+/** One tool use the worker was refused, as kept on the ticket. */
+export interface Denial {
+  tool: string;
+  /** what it tried, short: the command, URL or path */
+  input: string;
+  /** the rule that would allow it */
+  rule: string;
+}
+
+const MULTI_WORD = new Set(['git', 'npm', 'pnpm', 'yarn', 'bun', 'cargo', 'go', 'docker', 'kubectl', 'pip', 'pip3', 'brew', 'gh', 'make', 'deno']);
+
+/** `Bash(<first words> *)` for each command of a shell line (split on && || ; |), deduplicated. */
+export function bashRules(command: string): string[] {
+  const out: string[] = [];
+  for (const seg of command.split(/&&|\|\||;|\|/)) {
+    const words = seg.trim().split(/\s+/).filter((w) => w && !/^[A-Za-z_]\w*=/.test(w));
+    if (!words.length || words[0] === 'cd') continue;
+    const head = MULTI_WORD.has(words[0]!) && words[1] && !words[1]!.startsWith('-') ? words.slice(0, 2) : words.slice(0, 1);
+    out.push(`Bash(${head.join(' ')} *)`);
+  }
+  return uniq(out);
+}
+
+/** Turn the SDK's `permission_denials` into short records with the rule that would allow each. */
+export function denialsFrom(raw: unknown): Denial[] {
+  if (!Array.isArray(raw)) return [];
+  const out: Denial[] = [];
+  for (const d of raw) {
+    const tool = String(d?.tool_name ?? '');
+    if (!tool) continue;
+    const input = d?.tool_input ?? {};
+    if (tool === 'Bash') {
+      const command = String(input.command ?? '').trim();
+      const rules = bashRules(command);
+      out.push({ tool, input: command.slice(0, 200), rule: rules[0] ?? 'Bash' });
+      for (const r of rules.slice(1)) out.push({ tool, input: command.slice(0, 200), rule: r });
+    } else {
+      const what = String(input.url ?? input.file_path ?? input.path ?? input.pattern ?? input.query ?? '').slice(0, 200);
+      out.push({ tool, input: what, rule: tool });
+    }
+  }
+  const seen = new Set<string>();
+  return out.filter((d) => (seen.has(d.rule) ? false : (seen.add(d.rule), true)));
 }

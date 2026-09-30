@@ -1,5 +1,6 @@
 import type { Project, RunOutcome, TicketStatus, TicketView } from '../db/types.ts';
 import type { LimitHit } from '../usage/types.ts';
+import type { Denial } from '../core/tools.ts';
 
 /**
  * Events the loop emits. The shape is the contract in INTERFACES.md (the TUI's run view
@@ -36,6 +37,8 @@ export interface WorkerResult {
   subtype: string | null;
   /** True when a retry should resume the same session (ran out of turns or budget). */
   resumable: boolean;
+  /** Tool uses the session was refused (no approval surface), each with the rule that would allow it. */
+  denials?: Denial[];
 }
 
 /** What the orchestrator knows about a running worker while it streams. */

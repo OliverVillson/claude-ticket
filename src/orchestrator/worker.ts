@@ -16,7 +16,7 @@ import { detectLimit, parseLimitText, probeWindow } from '../usage/index.ts';
 import type { LimitHit } from '../usage/types.ts';
 import { CLAUDE_MISSING, EnvironmentError, claudeExecutableOption, environmentProblem, runningCompiled } from '../core/claude-bin.ts';
 import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../core/tags.ts';
-import { DEFAULT_TOOLS, toolsToSdk } from '../core/tools.ts';
+import { DEFAULT_TOOLS, denialsFrom, toolsToSdk } from '../core/tools.ts';
 import { buildPrompt, buildResumePrompt, parseTrailer, systemAppend } from './prompt.ts';
 import type { WorkerInput, WorkerLive, WorkerResult, WorkerRunner } from './types.ts';
 
@@ -315,7 +315,7 @@ export async function runWorker(p: RunWorkerParams): Promise<WorkerResult> {
   }
 
   const sessionId = live.sessionId ?? p.resume ?? null;
-  const base = { sessionId, costUsd: Number(result?.total_cost_usd ?? 0) || 0, turns: Number(result?.num_turns ?? live.turns) || 0, limit: null as LimitHit | null, resumable: false };
+  const base = { sessionId, costUsd: Number(result?.total_cost_usd ?? 0) || 0, turns: Number(result?.num_turns ?? live.turns) || 0, limit: null as LimitHit | null, resumable: false, denials: denialsFrom(result?.permission_denials) };
 
   if (abort.signal.aborted) return { ...base, outcome: 'killed', message: 'stopped by the orchestrator', subtype: 'aborted' };
 

@@ -1,12 +1,13 @@
 import type { Parsed } from '../args.ts';
 import { flagBool, flagStr } from '../args.ts';
+import { ticketDenials } from '../../core/allow.ts';
 import { openDb } from '../../db/db.ts';
 import { countTickets, flattenProjectTree, listProjectTree, listProjects, listTickets } from '../../db/queries.ts';
 import { TICKET_STATUSES, ticketLabels, ticketTags, type TicketStatus } from '../../db/types.ts';
 import { formatTags } from '../../core/tags.ts';
 import { resolveProject } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
-import { dim } from '../../core/ansi.ts';
+import { dim, yellow } from '../../core/ansi.ts';
 import { formatAgo, formatCost, statusColor, statusIcon, table } from '../../core/format.ts';
 import { helpIf, isTTY } from './_shared.ts';
 
@@ -79,7 +80,7 @@ export async function list(p: Parsed): Promise<number> {
   if (json) {
     console.log(
       JSON.stringify(
-        tickets.map((t) => ({ ...t, tags: ticketTags(t), labels: ticketLabels(t) })),
+        tickets.map((t) => ({ ...t, tags: ticketTags(t), labels: ticketLabels(t), denied: ticketDenials(t) })),
         null,
         2,
       ),
@@ -116,5 +117,9 @@ export async function list(p: Parsed): Promise<number> {
       })),
     ),
   );
+  for (const t of tickets) {
+    const rules = t.status === 'blocked' ? [...new Set(ticketDenials(t).map((d) => d.rule))] : [];
+    if (rules.length) console.log(`${yellow('!')} ${t.name} is blocked: needs permission ${rules.join(', ')}  ${dim(`→ salu allow "${t.name}"`)}`);
+  }
   return 0;
 }
