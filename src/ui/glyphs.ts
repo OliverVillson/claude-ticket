@@ -30,6 +30,9 @@ export interface Glyphs {
   dot: string;
   crumb: string;
   ellipsis: string;
+  /** usage meter: filled and empty cell */
+  barFull: string;
+  barEmpty: string;
   /** the "thinking" spinner for running tickets */
   spinner: string[];
 }
@@ -52,6 +55,8 @@ export const UNICODE_GLYPHS: Glyphs = {
   dot: '·',
   crumb: '›',
   ellipsis: '…',
+  barFull: '▰',
+  barEmpty: '▱',
   spinner: ['·', '✢', '✶', '✻', '✽', '✻', '✶', '✢'],
 };
 
@@ -73,6 +78,8 @@ export const ASCII_GLYPHS: Glyphs = {
   dot: '-',
   crumb: '>',
   ellipsis: '...',
+  barFull: '#',
+  barEmpty: '-',
   spinner: ['-', '\\', '|', '/'],
 };
 

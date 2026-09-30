@@ -1097,3 +1097,47 @@ describe('ticket output (right arrow on a finished ticket)', () => {
     expect(g).not.toContain('transcript');
   });
 });
+
+describe('usage meter in the header', () => {
+  const win = (used: number) => ({ key: 'five_hour', label: '5-hour', usedPercent: used, status: 'ok' as const, resetsAt: Date.now() + 3_600_000 });
+  const source = (first: any) => {
+    let cb: ((s: any) => void) | null = null;
+    return {
+      get: () => first,
+      subscribe: (f: (s: any) => void) => {
+        cb = f;
+        return () => {
+          cb = null;
+        };
+      },
+      push: (s: any) => cb?.(s),
+    };
+  };
+
+  test('shows what is left, follows the data layer, and is absent without a source', async () => {
+    const { db } = seedDb(6);
+    const src = source({ available: true, stale: false, fetchedAt: Date.now(), windows: [win(62)] });
+    const { term } = mountApp({ db, usage: src }, [130, 34]);
+    let f = await term.waitFor((s) => s.includes('5h '), 'meter');
+    expect(f).toContain('38% left');
+    src.push({ available: true, stale: false, fetchedAt: Date.now(), windows: [win(90)] });
+    f = await term.waitFor((s) => s.includes('10% left'), 'updated');
+    src.push(null);
+    await term.waitFor((s) => s.includes('usage n/a'), 'n/a');
+    const { term: t2 } = mountApp({ db }, [130, 34]);
+    const g = await t2.waitFor((s) => s.includes('ticket 001'));
+    expect(g).not.toContain('usage');
+    expect(g).not.toContain('5h ');
+  });
+
+  test('on a narrow terminal it collapses and the counts stay', async () => {
+    const { db } = seedDb(6);
+    const src = source({ available: true, stale: false, fetchedAt: Date.now(), windows: [win(62)] });
+    const { term } = mountApp({ db, usage: src }, [90, 24]);
+    const f = await term.waitFor((s) => s.includes('ticket 001'));
+    const head = f.split('\n')[0]!;
+    expect(head).toContain('38%');
+    expect(head).not.toContain('resets');
+    expect(head).toContain('running');
+  });
+});
