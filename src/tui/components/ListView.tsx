@@ -6,6 +6,7 @@ import { displayWidth, truncate } from '../format.ts';
 import type { RowLayout } from '../layout.ts';
 import { messageText, type Message } from '../messages.ts';
 import { DOG_WIDTH, dogFrame } from '../dog/line.ts';
+import { drawPane, paneWidth } from '../panes.ts';
 import { renderRow } from '../rows.ts';
 import { style as st } from '../style.ts';
 import { STATUS_ORDER } from '../theme.ts';
@@ -136,12 +137,18 @@ export function ListView(p: ListViewProps) {
     }
   }
   let lines = right;
+  let bare = false;
   if (p.sidebar) {
+    // Two boxes side by side; the one with the focus gets the heavy bright border and a marker.
+    bare = true;
     const { width, lines: left } = p.sidebar;
-    const n = Math.max(left.length, right.length);
-    const blank = ' '.repeat(width);
-    lines = [];
-    for (let i = 0; i < n; i++) lines.push((left[i] ?? blank) + st.dim(' │ ') + (right[i] ?? ''));
+    const height = Math.max(left.length, right.length);
+    const rightInner = Math.max(10, cols - paneWidth(width) - 4);
+    const active = p.ticketFocus === false ? 'tree' : 'tickets';
+    const l = drawPane({ title: 'projects', lines: left, inner: width, active: active === 'tree', height }, st);
+    const padRight = right.map((r) => r + ' '.repeat(Math.max(0, rightInner - displayWidth(r))));
+    const r = drawPane({ title: 'tickets', lines: padRight, inner: rightInner, active: active === 'tickets', height }, st);
+    lines = l.map((x, i) => x + r[i]!);
   }
   const body = lines.map((l, i) => (
     <Text key={i} wrap="truncate-end">
@@ -150,7 +157,7 @@ export function ListView(p: ListViewProps) {
   ));
 
   return (
-    <Frame columns={cols} header={{ left: titleText(crumbs), right: headerRight }} footer={footer}>
+    <Frame columns={cols} header={{ left: titleText(crumbs), right: headerRight }} footer={footer} bare={bare}>
       {body}
     </Frame>
   );
