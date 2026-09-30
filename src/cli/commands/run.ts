@@ -3,7 +3,7 @@ import { flagBool, flagNum, flagStr } from '../args.ts';
 import { openDb } from '../../db/db.ts';
 import { subtreeIds } from '../../db/queries.ts';
 import { resolveProject } from '../../core/resolve.ts';
-import { preflightClaude } from '../../core/claude-bin.ts';
+import { checkClaude, loginProblem, preflightClaude } from '../../core/claude-bin.ts';
 import { CliError } from '../../core/errors.ts';
 import { helpIf, isTTY } from './_shared.ts';
 import { applyAuthPolicy } from '../../core/env.ts';
@@ -20,6 +20,11 @@ export async function run(p: Parsed): Promise<number> {
   const db = openDb();
   const missing = preflightClaude();
   if (missing) throw new CliError(missing);
+  if (process.env.SALU_WORKER !== 'fake') {
+    const c = checkClaude();
+    const logged = c.ok && c.path ? await loginProblem(c.path) : null;
+    if (logged) throw new CliError(logged);
+  }
   const auth = applyAuthPolicy();
   if (auth.warning) console.error(`warning: ${auth.warning}`);
   const projectName = p.positional[0] ?? flagStr(p, 'project');

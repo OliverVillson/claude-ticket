@@ -77,6 +77,7 @@ export async function change(p: Parsed): Promise<number> {
     if (!TICKET_STATUSES.includes(status as TicketStatus)) throw new CliError(`status must be one of ${TICKET_STATUSES.join(', ')}`);
     patch.status = status as TicketStatus;
     if (status === 'todo') {
+      patch.attempts = 0; // a manual re-queue gets a fresh set of attempts
       patch.error = null;
       patch.finished_at = null;
     }

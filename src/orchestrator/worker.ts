@@ -319,6 +319,15 @@ export async function runWorker(p: RunWorkerParams): Promise<WorkerResult> {
     return { ...base, outcome: 'rate_limited', message: firstLine(hit.raw, 200), limit: hit, subtype: result?.subtype ?? 'error', resumable: true };
   }
 
+  // Logged out, expired login, bad key: nothing the ticket can fix. The scheduler re-queues it and stops the run.
+  if (isError) {
+    const env = environmentProblem(`${lastApiError === 'authentication_failed' ? 'authentication_failed ' : ''}${text} ${crash ?? ''}`);
+    if (env) {
+      appendLogLine(p.logPath, { type: 'worker_error', ts: Date.now(), error: env, environment: true });
+      return { ...base, outcome: 'failed', message: env, subtype: 'environment', resumable: true };
+    }
+  }
+
   const trailer = parseTrailer(text);
   if (trailer?.kind === 'blocked') return { ...base, outcome: 'blocked', message: trailer.message || 'the worker needs a human decision', subtype: result?.subtype ?? null };
   if (trailer?.kind === 'failed') return { ...base, outcome: 'failed', message: trailer.message || 'the worker gave up', subtype: result?.subtype ?? null };

@@ -117,6 +117,19 @@ export function claudeExecutableOption(o: FindOptions & { compiled?: boolean } =
   return undefined;
 }
 
+export const LOGIN_PROBLEM = 'Claude Code login expired or missing: run `claude`, then /login, then `salu run`.';
+
+/** Text Claude Code gives when it cannot authenticate or be billed: the machine's problem, not the ticket's. */
+const AUTH_FAILURE = new RegExp(
+  [
+    'not logged in', 'please run /login', 'run /login', 'failed to authenticate', 'could not be refreshed',
+    'oauth (session|token).{0,30}(expired|invalid|revoked)', 'invalid api key', 'invalid x-api-key',
+    'authentication[_ ]error', 'authentication[_ ]failed', 'invalid[_ ]authentication', '\\b401\\b.{0,40}(unauthorized|authenticat)',
+    'credit balance is too low',
+  ].join('|'),
+  'i',
+);
+
 /**
  * Turn the SDK's or the shell's "can't start claude" errors into an EnvironmentError message;
  * null for anything that is the ticket's own problem.
@@ -125,9 +138,7 @@ export function environmentProblem(text: string | null | undefined): string | nu
   const s = String(text ?? '');
   if (!s) return null;
   if (/native cli binary for .* not found|pathToClaudeCodeExecutable|claude code (native )?(binary|executable) not found|spawn .*claude.* ENOENT|ENOENT.*claude|salu could not find claude code/i.test(s)) return CLAUDE_MISSING;
-  if (/not logged in|please run \/login|invalid api key|oauth token has expired|authentication_error/i.test(s)) {
-    return 'Claude Code is not logged in (or its login expired). Run `claude` once to log in, then try again.';
-  }
+  if (AUTH_FAILURE.test(s)) return LOGIN_PROBLEM;
   return null;
 }
 
@@ -141,4 +152,25 @@ export function preflightClaude(o: FindOptions & { compiled?: boolean } = {}): s
   if (!(o.compiled ?? runningCompiled()) && !env.SALU_CLAUDE_PATH) return null;
   const c = checkClaude(o);
   return c.ok ? null : c.problem ?? CLAUDE_MISSING;
+}
+
+/**
+ * Cheap login check: `claude auth status` costs no model turn. Returns the problem only when it
+ * clearly says logged out; an unclear answer is not a problem (the first ticket will tell).
+ */
+export async function loginProblem(claudePath: string, run?: (cmd: string[]) => Promise<{ ok: boolean; out: string }>): Promise<string | null> {
+  const exec = run ?? (async (cmd: string[]) => {
+    try {
+      const p = Bun.spawn(cmd, { stdout: 'pipe', stderr: 'pipe', env: process.env });
+      const timer = setTimeout(() => p.kill(), 8000);
+      const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
+      clearTimeout(timer);
+      return { ok: (await p.exited) === 0, out: `${out}\n${err}` };
+    } catch {
+      return { ok: true, out: '' };
+    }
+  });
+  const r = await exec([claudePath, 'auth', 'status']);
+  if (/"loggedIn"\s*:\s*false/i.test(r.out) || AUTH_FAILURE.test(r.out) || (!r.ok && /logged out|not authenticated/i.test(r.out))) return LOGIN_PROBLEM;
+  return null;
 }

@@ -226,7 +226,7 @@ describe('runWorker classification', () => {
   test('a logged-out Claude Code is an environment problem with the login fix', async () => {
     const r = await run(stream([init, { type: 'stderr', text: 'not logged in' }], { throwAfter: new Error('Claude Code process exited with code 1') }));
     expect(r).toMatchObject({ outcome: 'failed', subtype: 'environment' });
-    expect(r.message).toContain('`claude` once to log in');
+    expect(r.message).toContain('/login');
   });
   test('the typed rate limit event makes it rate_limited, keeping the session', async () => {
     const r = await run(stream([init, { type: 'rate_limit_event', rate_limit_info: { status: 'rejected', rateLimitType: 'five_hour', resetsAt: 1_900_000_000 } }, res({ is_error: true, result: "You've hit your session limit · resets 3:45pm" })]));

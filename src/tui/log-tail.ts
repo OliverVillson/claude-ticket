@@ -81,7 +81,7 @@ export function renderLogLine(line: string): LogLine[] {
     return out;
   }
   if (type === 'result') {
-    const sub = msg.subtype ?? (msg.is_error ? 'error' : 'done');
+    const sub = msg.is_error && (!msg.subtype || msg.subtype === 'success') ? 'error' : (msg.subtype ?? 'done');
     const parts = [String(sub)];
     if (msg.num_turns != null) parts.push(`${msg.num_turns} turns`);
     if (msg.total_cost_usd != null) parts.push(`$${Number(msg.total_cost_usd).toFixed(2)}`);

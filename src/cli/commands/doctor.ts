@@ -1,6 +1,7 @@
 import type { Parsed } from '../args.ts';
-import { checkClaude, runningCompiled } from '../../core/claude-bin.ts';
+import { checkClaude, environmentProblem, loginProblem, runningCompiled } from '../../core/claude-bin.ts';
 import { applyAuthPolicy } from '../../core/env.ts';
+import { probeWindow } from '../../usage/index.ts';
 import { ensureHome } from '../../core/paths.ts';
 import { dim, green, red } from '../../core/ansi.ts';
 import { VERSION } from '../dispatch.ts';
@@ -9,7 +10,7 @@ import { helpIf } from './_shared.ts';
 const HELP = `salu doctor
 
 Checks that salu can do its job on this machine: Claude Code is installed and reachable, you are
-logged in, and the data folder is writable. Exits with 1 when something needs fixing.`;
+logged in (it sends one tiny test request to check the login really works), and the data folder is writable. Exits with 1 when something needs fixing.`;
 
 async function run(cmd: string[]): Promise<{ ok: boolean; out: string }> {
   try {
@@ -43,8 +44,19 @@ export async function doctor(p: Parsed): Promise<number> {
     else {
       ok(`Claude Code ${v.out} at ${c.path} ${dim(`(${c.source})`)}`);
       const a = await run([c.path!, 'auth', 'status']);
-      if (a.ok) ok(`logged in ${dim(a.out)}`.trimEnd());
-      else console.log(`${dim('·')} could not confirm the login (${a.out || 'no answer'}). If tickets fail to start, run \`claude\` once to log in.`);
+      const out = await loginProblem(c.path!);
+      if (out) no('Claude Code is logged out', out);
+      else if (a.ok) ok(`logged in ${dim(a.out)}`.trimEnd());
+      else console.log(`${dim('·')} could not confirm the login (${a.out || 'no answer'}).`);
+      // The status command can say "logged in" for a login that has since expired: ask Claude for real.
+      if (!out && process.env.SALU_WORKER !== 'fake') {
+        const pr = await probeWindow({ model: 'haiku', cwd: process.env.TMPDIR || '/tmp' });
+        const env = pr.status === 'unknown' ? environmentProblem(pr.detail) : null;
+        if (env) no('Claude Code rejected a test request', env);
+        else if (pr.status === 'unknown') console.log(`${dim('·')} could not run a test request (${pr.detail ?? 'no answer'}).`);
+        else if (pr.status === 'closed') console.log(`${dim('·')} Claude Code answers, but a usage limit is in effect (${pr.detail ?? 'limit'}).`);
+        else ok('Claude Code answers a test request');
+      }
     }
   }
 
