@@ -113,6 +113,7 @@ export function workerSdkOptions(t: TicketView, project: Project | null, extra: 
     opts.sandbox = k.sandbox;
     opts.disallowedTools = [...(opts.disallowedTools ?? []), ...k.disallowedTools];
     opts.env = scrubSecrets(opts.env ?? {});
+    opts.hooks = { ...opts.hooks, ...k.hooks };
   }
   if (extra.resume) opts.resume = extra.resume;
   return opts;

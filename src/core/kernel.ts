@@ -1,7 +1,7 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
-import type { Options } from '@anthropic-ai/claude-agent-sdk';
+import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import type { HookCallback, Options } from '@anthropic-ai/claude-agent-sdk';
 import { CliError } from './errors.ts';
 import { folderSlug } from './resolve.ts';
 import { ticketHome } from './paths.ts';
@@ -34,8 +34,19 @@ export function insideWorker(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.SALU_KERNEL_WORKER === '1';
 }
 
+let ttyCheck: () => boolean = () => !!process.stdin.isTTY && !!process.stdout.isTTY;
+/** For tests only: replace the terminal check. Agents cannot call this; they only run shell commands. */
+export function setHumanTty(fn: (() => boolean) | null): void {
+  ttyCheck = fn ?? (() => !!process.stdin.isTTY && !!process.stdout.isTTY);
+}
+
+/**
+ * salu push/export are for a person at a terminal. Two checks: the worker marker (a hint, a worker can
+ * clear it), and a real terminal on stdin and stdout, which a worker's shell does not have.
+ * The real barrier is the OS sandbox: a sandboxed shell cannot write outside the kernel or read your logins.
+ */
 export function requireHuman(what: string): void {
-  if (insideWorker()) throw new CliError(`salu ${what} is for you, not for agents. Run it from your own terminal.`);
+  if (insideWorker() || !ttyCheck()) throw new CliError(`salu ${what} is for you, not for agents: run it yourself, from an interactive terminal.`);
 }
 
 const sh = (cwd: string, ...args: string[]) => Bun.spawnSync(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' });
@@ -79,19 +90,104 @@ export function allowedDomains(env: NodeJS.ProcessEnv = process.env): string[] {
   return list.length ? list : ['*'];
 }
 
-/** Places an agent's Read tool must never open (the OS sandbox only covers shell commands). */
+/** Extra belt-and-braces deny rules for secret paths; the real fence is the allow-list in fileToolGuard. */
 export function secretPaths(home = homedir()): string[] {
-  return ['.ssh', '.aws', '.gnupg', '.config/gh', '.config/git', '.gitconfig', '.git-credentials', '.netrc', '.npmrc', '.docker', '.kube', '.salu/tickets.db', '.salu/logs', '.claude/.credentials.json', '.claude.json']
+  return ['.ssh', '.aws', '.gnupg', '.config/gh', '.config/git', '.config/gcloud', '.config/op', '.azure', '.gitconfig', '.git-credentials', '.netrc', '.npmrc', '.pgpass', '.my.cnf', '.docker', '.kube', '.terraform.d', '.bash_history', '.zsh_history', '.zshenv', '.zshrc', '.bashrc', '.profile', '.salu/tickets.db', '.salu/logs', '.claude/.credentials.json', '.claude/settings.json', '.claude.json']
     .map((p) => join(home, p));
 }
 
-/** Variables that carry git or cloud logins; workers never get them. Claude's own auth variables are kept. */
-const SECRET_ENV = /^(GITHUB_TOKEN|GH_TOKEN|GH_ENTERPRISE_TOKEN|GITLAB_TOKEN|NPM_TOKEN|NODE_AUTH_TOKEN|SSH_AUTH_SOCK|GIT_ASKPASS|SSH_ASKPASS|AWS_.*|GOOGLE_APPLICATION_CREDENTIALS|AZURE_.*|DOCKER_.*|HF_TOKEN|OPENAI_API_KEY)$/;
+/**
+ * Environment allow-list: a worker gets what it needs to run and to log in to Claude, nothing else.
+ * (A deny-list of "secret-looking" names always misses one: DATABASE_URL, STRIPE_SECRET_KEY, ...)
+ * SALU_ENV_PASS=NAME,OTHER adds variables you want workers to have.
+ */
+const ENV_ALLOW = /^(PATH|HOME|USER|LOGNAME|SHELL|TERM|COLORTERM|NO_COLOR|FORCE_COLOR|LANG|LANGUAGE|LC_.*|TZ|TMPDIR|PWD|CI|EDITOR|VISUAL|XDG_.*|HTTPS?_PROXY|https?_proxy|NO_PROXY|no_proxy|ALL_PROXY|SSL_CERT_FILE|SSL_CERT_DIR|NODE_EXTRA_CA_CERTS|CURL_CA_BUNDLE|REQUESTS_CA_BUNDLE|ANTHROPIC_.*|CLAUDE_.*|SALU_.*|BUN_.*)$/;
 
-export function scrubSecrets(env: Record<string, string | undefined>): Record<string, string | undefined> {
+export function scrubSecrets(env: Record<string, string | undefined>, pass: string[] = (process.env.SALU_ENV_PASS ?? '').split(',').map((x) => x.trim()).filter(Boolean)): Record<string, string | undefined> {
   const out: Record<string, string | undefined> = {};
-  for (const [k, v] of Object.entries(env)) if (!SECRET_ENV.test(k)) out[k] = v;
+  for (const [k, v] of Object.entries(env)) if (ENV_ALLOW.test(k) || pass.includes(k)) out[k] = v;
+  out.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB = '1'; // ask Claude Code to strip its own credentials from the commands it runs
   return out;
+}
+
+/** Real path of `p`, following symlinks in the part that exists (so a link inside the kernel cannot lead out). */
+function canon(p: string, cwd: string, home: string): string {
+  const expanded = p === '~' ? home : p.startsWith('~/') ? join(home, p.slice(2)) : p;
+  let cur = resolve(isAbsolute(expanded) ? expanded : join(cwd, expanded));
+  const rest: string[] = [];
+  for (let guard = 0; guard < 64; guard++) {
+    try {
+      return join(realpathSync(cur), ...rest.reverse());
+    } catch {
+      const up = dirname(cur);
+      if (up === cur) break;
+      rest.push(cur.slice(up.length).replace(/^[/\\]/, ''));
+      cur = up;
+    }
+  }
+  return resolve(p);
+}
+
+const within = (p: string, dir: string) => p === dir || p.startsWith(dir.endsWith(sep) ? dir : dir + sep);
+const SYSTEM_READ = ['/usr', '/bin', '/sbin', '/lib', '/lib64', '/opt', '/nix', '/System', '/Library', '/Applications', '/etc/ssl', '/etc/os-release', '/etc/alternatives', '/private/etc/ssl', '/dev/null', '/dev/urandom'];
+
+/** Paths inside the kernel that a worker can read but never change: they run code or change settings later. */
+function protectedInKernel(rel: string): boolean {
+  return /^(\.git\/(hooks|config)(\/|$)|\.claude(\/|$)|\.mcp\.json$|\.gitconfig$|\.gitmodules$)/.test(rel);
+}
+
+/** Big command output is saved by Claude Code under ~/.claude/projects/<project>/<session>/tool-results and read back with Read. */
+const toolResult = (real: string, home: string) => within(real, join(home, '.claude', 'projects')) && /\/tool-results\/[^/]+$/.test(real);
+
+const PATH_FIELDS = ['file_path', 'notebook_path', 'path', 'directory'];
+
+/**
+ * The fence for the file tools (Read, Edit, Write, NotebookEdit, Glob, Grep), which the OS sandbox does
+ * not cover. An allow-list on real paths: writes only inside the kernel folder (and temp), reads only
+ * the kernel, temp, runtime folders and system libraries. Returns the reason to refuse, or null.
+ */
+export function fileToolGuard(dir: string, o: { home?: string; tmp?: string } = {}): (tool: string, input: unknown) => string | null {
+  const home = o.home ?? homedir();
+  const kernel = canon(dir, dir, home);
+  const tmps = [...new Set((o.tmp ? [o.tmp] : [process.env.TMPDIR ?? tmpdir(), '/tmp', '/private/tmp']).map((t) => canon(t, kernel, home)))];
+  const readable = [kernel, ...tmps, ...toolDirs(home).map((d) => canon(d, kernel, home)), ...SYSTEM_READ];
+  return (tool, input) => {
+    if (!input || typeof input !== 'object') return null;
+    const inp = input as Record<string, unknown>;
+    const writes = tool !== 'Read' && tool !== 'Glob' && tool !== 'Grep' && tool !== 'LS' && tool !== 'NotebookRead';
+    const paths: string[] = [];
+    for (const f of PATH_FIELDS) if (typeof inp[f] === 'string') paths.push(inp[f] as string);
+    // Search patterns can climb out with `..` or start at the root.
+    for (const f of ['pattern', 'glob']) {
+      const v = inp[f];
+      if ((tool === 'Glob' || (tool === 'Grep' && f === 'glob')) && typeof v === 'string' && (isAbsolute(v) || v.startsWith('~') || v.split(/[\\/]/).includes('..'))) return `${tool} pattern "${v}" leaves the kernel folder`;
+    }
+    for (const raw of paths) {
+      const real = canon(raw, kernel, home);
+      if (writes) {
+        const ok = within(real, kernel) ? !protectedInKernel(real.slice(kernel.length + 1)) : tmps.some((t) => within(real, t));
+        if (!ok) return `${tool} may only change files inside the kernel folder ${kernel} (not ${real})`;
+      } else if (!readable.some((r) => within(real, r)) && !toolResult(real, home)) {
+        return `${tool} may only read inside the kernel folder ${kernel} (not ${real})`;
+      }
+    }
+    return null;
+  };
+}
+
+/** The SDK hook that applies fileToolGuard to every tool call, denying on any error. */
+export function fileToolHook(dir: string, o: { home?: string; tmp?: string } = {}): HookCallback {
+  const guard = fileToolGuard(dir, o);
+  return async (input) => {
+    if (input.hook_event_name !== 'PreToolUse') return {};
+    let reason: string | null;
+    try {
+      reason = guard(input.tool_name, input.tool_input);
+    } catch (e: any) {
+      reason = `could not check ${input.tool_name}: ${e?.message ?? e}`;
+    }
+    return reason ? { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: `salu kernel: ${reason}` } } : {};
+  };
 }
 
 /** Tool directories under home that shell commands still need to read (compilers, runtimes). */
@@ -103,6 +199,7 @@ function toolDirs(home: string): string[] {
 export interface KernelOptions {
   sandbox: NonNullable<Options['sandbox']>;
   disallowedTools: string[];
+  hooks: NonNullable<Options['hooks']>;
 }
 
 /** The SDK settings that put a worker in the kernel folder `dir`. */
@@ -115,10 +212,11 @@ export function kernelOptions(dir: string, o: { home?: string; env?: NodeJS.Proc
       failIfUnavailable: true, // a sandbox that cannot start stops the ticket instead of running unprotected
       autoAllowBashIfSandboxed: true,
       allowUnsandboxedCommands: false,
-      filesystem: { allowWrite: [dir], denyRead: [home], allowRead: [dir, ...toolDirs(home)] },
+      filesystem: { allowWrite: [dir], denyRead: [...new Set([home, kernelRoot()])], allowRead: [dir, ...toolDirs(home)] },
       network: { allowedDomains: allowedDomains(o.env), strictAllowlist: allowedDomains(o.env)[0] !== '*' },
     },
-    disallowedTools: secrets.flatMap((p) => [`Read(${p})`, `Read(${p}/**)`, `Edit(${p})`, `Edit(${p}/**)`]),
+    disallowedTools: secrets.flatMap((p) => ['Read', 'Edit', 'Write'].flatMap((t) => [`${t}(${p})`, `${t}(${p}/**)`])),
+    hooks: { PreToolUse: [{ hooks: [fileToolHook(dir, { home })] }] },
   };
 }
 

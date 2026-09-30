@@ -123,9 +123,14 @@ project's workers in a kernel:
 - Shell commands run in Claude Code's OS sandbox (Seatbelt on macOS, bubblewrap on Linux, see `salu doctor`).
   They can write only in the kernel folder, cannot read your home folder (SSH keys, git login, other projects),
   and can reach any site. `SALU_SANDBOX_DOMAINS=github.com,*.npmjs.org` limits them to a list instead.
-- Secret paths are closed to the agents' file tools, tokens (`GITHUB_TOKEN`, `SSH_AUTH_SOCK`, `AWS_*`, ...) are
-  removed from their environment, and a sandbox that cannot start stops the ticket instead of running unprotected.
-- Nothing reaches your real project until you run, yourself (agents cannot):
+- The agents' file tools (Read, Edit, Write, Glob, Grep), which the OS sandbox does not cover, go through a
+  check on real paths (symlinks and `..` resolved): they can change files only inside the kernel folder (and
+  temp, never its `.git/hooks`, `.git/config` or `.claude`) and read only the kernel, temp, runtime folders
+  and system libraries. Other projects' kernels, your real project folder and your home folder are closed.
+- Agents get an allow-list environment (PATH, locale, proxy and CA settings, Claude/Anthropic variables), not
+  your tokens or database URLs. `SALU_ENV_PASS=NAME,OTHER` lets chosen variables through.
+- A sandbox that cannot start stops the ticket instead of running unprotected.
+- Nothing reaches your real project until you run, yourself, from a terminal (agents have none, and cannot write outside the kernel anyway):
   - `salu push [project] [--branch B] [--to url] [--dry-run]` pushes the `salu/*` branches to the project's git remote.
   - `salu export <folder> [project] [--git] [--force]` copies the files to a folder.
 

@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { allowedDomains, kernelOptions, prepareKernel, sandboxSupport, scrubSecrets, requireHuman } from '../src/core/kernel.ts';
+import { allowedDomains, fileToolGuard, fileToolHook, kernelOptions, prepareKernel, sandboxSupport, scrubSecrets, requireHuman, setHumanTty } from '../src/core/kernel.ts';
 import { workerEnv, workerSdkOptions } from '../src/orchestrator/worker.ts';
 import { dispatch } from '../src/cli/dispatch.ts';
 
@@ -12,9 +12,11 @@ let root: string;
 beforeAll(() => {
   root = mkdtempSync(join(tmpdir(), 'salu-kernel-'));
   process.env.SALU_KERNEL = join(root, 'kernel');
+  setHumanTty(() => true);
 });
 afterAll(() => {
   delete process.env.SALU_KERNEL;
+  setHumanTty(null);
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -52,7 +54,8 @@ describe('kernel', () => {
     expect(k.sandbox.failIfUnavailable).toBe(true);
     expect(k.sandbox.allowUnsandboxedCommands).toBe(false);
     expect(k.sandbox.filesystem?.allowWrite).toEqual(['/k/web']);
-    expect(k.sandbox.filesystem?.denyRead).toEqual(['/h']);
+    expect(k.sandbox.filesystem?.denyRead).toContain('/h');
+    expect(k.sandbox.filesystem?.denyRead).toContain(join(root, 'kernel')); // other projects' kernels
     expect(k.sandbox.filesystem?.allowRead).toContain('/k/web');
     expect(k.disallowedTools).toContain('Read(/h/.ssh/**)');
     expect(k.disallowedTools).toContain('Edit(/h/.gitconfig)');
@@ -67,7 +70,13 @@ describe('kernel', () => {
 
   test('secrets leave the worker environment but Claude auth stays', () => {
     const env = scrubSecrets({ GITHUB_TOKEN: 'x', GH_TOKEN: 'x', SSH_AUTH_SOCK: '/s', AWS_SECRET_ACCESS_KEY: 'x', ANTHROPIC_API_KEY: 'k', PATH: '/bin', CLAUDE_CODE_OAUTH_TOKEN: 't' });
-    expect(Object.keys(env).sort()).toEqual(['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'PATH']);
+    expect(Object.keys(env).sort()).toEqual(['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB', 'PATH']);
+  });
+
+  test('the environment is an allow-list: unnamed secrets never get through', () => {
+    const env = scrubSecrets({ PATH: '/bin', HOME: '/h', DATABASE_URL: 'x', PGPASSWORD: 'x', STRIPE_SECRET_KEY: 'x', SLACK_BOT_TOKEN: 'x', VERCEL_TOKEN: 'x', CLOUDFLARE_API_TOKEN: 'x', SENTRY_AUTH_TOKEN: 'x', GEMINI_API_KEY: 'x', MY_APP_SECRET: 'x', TF_VAR_password: 'x', LANG: 'C', HTTPS_PROXY: 'p' }, []);
+    expect(Object.keys(env).sort()).toEqual(['CLAUDE_CODE_SUBPROCESS_ENV_SCRUB', 'HOME', 'HTTPS_PROXY', 'LANG', 'PATH']);
+    expect(scrubSecrets({ DATABASE_URL: 'x' }, ['DATABASE_URL']).DATABASE_URL).toBe('x'); // SALU_ENV_PASS
   });
 
   test('worker options only get the sandbox when a kernel is given', () => {
@@ -78,6 +87,79 @@ describe('kernel', () => {
     expect(o.cwd).toBe('/k/web');
     expect(o.sandbox?.enabled).toBe(true);
     expect(o.disallowedTools).toContain('Bash(git push:*)'); // still there
+  });
+
+  test('file tools: writes only in the kernel, reads only kernel and system folders', () => {
+    const home = join(root, 'fakehome');
+    const k = join(home, '.salu', 'kernel', 'web');
+    const other = join(home, '.salu', 'kernel', 'other');
+    const real = join(home, 'code', 'web');
+    for (const d of [k, other, real, join(home, '.ssh'), join(k, '.git', 'hooks')]) mkdirSync(d, { recursive: true });
+    writeFileSync(join(home, '.ssh', 'id_rsa'), 'KEY');
+    symlinkSync(join(home, '.ssh'), join(k, 'link'));
+    const g = fileToolGuard(k, { home, tmp: join(root, 'tmp') });
+    // writes
+    expect(g('Write', { file_path: join(k, 'ok.txt') })).toBeNull();
+    expect(g('Write', { file_path: 'src/new/deep.ts' })).toBeNull(); // relative, inside
+    expect(g('Write', { file_path: join(real, 'a.txt') })).toContain('inside the kernel');
+    expect(g('Write', { file_path: join(home, '.zshenv') })).toContain('inside the kernel');
+    expect(g('Edit', { file_path: '~/.claude/settings.json' })).toContain('inside the kernel');
+    expect(g('Write', { file_path: join(k, '..', '..', '..', 'code', 'web', 'a.txt') })).toContain('inside the kernel'); // ../
+    expect(g('Write', { file_path: join(k, 'link', 'x') })).toContain('inside the kernel'); // symlink out
+    expect(g('Write', { file_path: join(k, '.git', 'hooks', 'pre-push') })).toContain('inside the kernel');
+    expect(g('Write', { file_path: join(k, '.git', 'config') })).toContain('inside the kernel');
+    expect(g('NotebookEdit', { notebook_path: join(real, 'n.ipynb') })).toContain('inside the kernel');
+    // reads
+    expect(g('Read', { file_path: join(k, 'a.txt') })).toBeNull();
+    expect(g('Read', { file_path: '/usr/lib/x' })).toBeNull();
+    expect(g('Read', { file_path: join(home, '.ssh', 'id_rsa') })).toContain('only read');
+    expect(g('Read', { file_path: join(home, '.claude', 'projects', 'p', 's', 'tool-results', 'out.txt') })).toBeNull(); // saved command output
+    expect(g('Read', { file_path: join(home, '.claude', 'projects', 'p', 's.jsonl') })).toContain('only read');
+    expect(g('Read', { file_path: join(home, '.config', 'gcloud', 'credentials.db') })).toContain('only read');
+    expect(g('Read', { file_path: join(home, '.bash_history') })).toContain('only read');
+    expect(g('Read', { file_path: join(other, 'src.ts') })).toContain('only read'); // another project's kernel
+    expect(g('Read', { file_path: '../../../.ssh/id_rsa' })).toContain('only read');
+    expect(g('Read', { file_path: join(k, 'link', 'id_rsa') })).toContain('only read');
+    expect(g('Grep', { pattern: 'KEY', path: join(home, '.ssh') })).toContain('only read');
+    expect(g('Glob', { pattern: '../../../.ssh/*' })).toContain('leaves the kernel');
+    expect(g('Glob', { pattern: '/etc/*' })).toContain('leaves the kernel');
+    expect(g('Grep', { pattern: 'x', glob: '../*' })).toContain('leaves the kernel');
+    expect(g('Grep', { pattern: 'x' })).toBeNull();
+    expect(g('Bash', { command: 'ls' })).toBeNull();
+  });
+
+  test('the hook denies with a reason, and denies when the check itself breaks', async () => {
+    const hook = fileToolHook(join(root, 'kernel', 'web'), { home: join(root, 'fakehome') });
+    const base: any = { hook_event_name: 'PreToolUse', tool_use_id: 't' };
+    const denied: any = await hook({ ...base, tool_name: 'Write', tool_input: { file_path: '/etc/passwd' } }, undefined, { signal: new AbortController().signal });
+    expect(denied.hookSpecificOutput.permissionDecision).toBe('deny');
+    const ok: any = await hook({ ...base, tool_name: 'Read', tool_input: { file_path: join(root, 'kernel', 'web', 'a') } }, undefined, { signal: new AbortController().signal });
+    expect(ok).toEqual({});
+    const weird: any = await hook({ ...base, tool_name: 'Read', tool_input: { file_path: 'a\0b' } }, undefined, { signal: new AbortController().signal });
+    expect(weird.hookSpecificOutput?.permissionDecision ?? 'deny').toBe('deny');
+  });
+
+  test('worker options carry the hook and the allow-listed environment', () => {
+    const t: any = { id: 1, name: 't', query: 'q', tags: '{}', labels: '[]', priority: 3, status: 'todo', attempts: 0, project: 'web', project_path: '/real', project_id: 1 };
+    process.env.STRIPE_SECRET_KEY = 'x';
+    try {
+      const o = workerSdkOptions(t, null, { kernel: '/k/web' });
+      expect(o.hooks?.PreToolUse?.length).toBe(1);
+      expect(o.env?.STRIPE_SECRET_KEY).toBeUndefined();
+      expect(o.env?.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB).toBe('1');
+    } finally {
+      delete process.env.STRIPE_SECRET_KEY;
+    }
+  });
+
+  test('push/export need a real terminal, and never run for a worker', async () => {
+    setHumanTty(() => false);
+    try {
+      await expect(dispatch(['push'])).rejects.toThrow('not for agents');
+      await expect(dispatch(['export', join(root, 'out2')])).rejects.toThrow('not for agents');
+    } finally {
+      setHumanTty(() => true);
+    }
   });
 
   test('every worker is marked, and push/export refuse to run for them', async () => {
