@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # salu installer — macOS and Linux.
 #
-#   curl -fsSL https://raw.githubusercontent.com/OliverVillson/claude-ticket/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/OliverVillson/salu/main/scripts/install.sh | bash
 #
 # Usage (pass args after `bash -s --` when piping):
 #   install.sh                 install or update to the latest release
@@ -10,13 +10,15 @@
 #
 # Environment:
 #   SALU_INSTALL_DIR     where the binary goes            (default: ~/.local/bin)
-#   SALU_REPO            GitHub owner/repo to download from (default: OliverVillson/claude-ticket)
+#   SALU_REPO            GitHub owner/repo to download from (default: OliverVillson/salu)
 #   SALU_DOWNLOAD_BASE   override the download URL prefix (testing / mirrors)
 #   GITHUB_TOKEN         used for private repos (or be logged in with `gh auth login`)
 #   SALU_NO_MODIFY_PATH  set to 1 to leave shell rc files alone
 set -euo pipefail
 
-REPO="${SALU_REPO:-OliverVillson/claude-ticket}"
+REPO="${SALU_REPO:-OliverVillson/salu}"
+# Until the repository rename is everywhere, fall back to its old name when the new one has nothing.
+FALLBACK_REPO=""; [ -z "${SALU_REPO:-}" ] && FALLBACK_REPO="OliverVillson/claude-ticket"
 INSTALL_DIR="${SALU_INSTALL_DIR:-$HOME/.local/bin}"
 BIN="$INSTALL_DIR/salu"
 MARK_BEGIN="# >>> salu >>>"
@@ -85,16 +87,20 @@ fetch() { # url dest  (public)
   if have curl; then curl -fsSL --retry 3 -o "$2" "$1"; else wget -q -O "$2" "$1"; fi
 }
 
+download_base() { # $1 = owner/repo
+  if [ "$VERSION" = latest ]; then echo "https://github.com/$1/releases/latest/download"; else echo "https://github.com/$1/releases/download/$VERSION"; fi
+}
 if [ -n "${SALU_DOWNLOAD_BASE:-}" ]; then
   base="$SALU_DOWNLOAD_BASE"
-elif [ "$VERSION" = latest ]; then
-  base="https://github.com/$REPO/releases/latest/download"
 else
-  base="https://github.com/$REPO/releases/download/$VERSION"
+  base="$(download_base "$REPO")"
 fi
 
 say "${G}salu${Z} installing ($asset, $VERSION)…"
 if fetch "$base/$asset" "$tmp/salu" 2>/dev/null && fetch "$base/$asset.sha256" "$tmp/salu.sha256" 2>/dev/null; then
+  :
+elif [ -n "$FALLBACK_REPO" ] && [ -z "${SALU_DOWNLOAD_BASE:-}" ] \
+  && fetch "$(download_base "$FALLBACK_REPO")/$asset" "$tmp/salu" 2>/dev/null && fetch "$(download_base "$FALLBACK_REPO")/$asset.sha256" "$tmp/salu.sha256" 2>/dev/null; then
   :
 elif [ -n "${GITHUB_TOKEN:-}" ] || { have gh && gh auth status >/dev/null 2>&1; }; then
   # Private repo (or anonymous download blocked): go through the authenticated GitHub CLI.
