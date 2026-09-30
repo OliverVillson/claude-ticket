@@ -5,6 +5,7 @@ import type { OrchestratorStatus } from '../../orchestrator/status.ts';
 import { displayWidth, truncate } from '../format.ts';
 import type { RowLayout } from '../layout.ts';
 import { messageText, type Message } from '../messages.ts';
+import { endCell } from '../deeper.ts';
 import { usageText, type UsageSnapshot } from '../usage.ts';
 import { DOG_WIDTH, dogFrame } from '../dog/line.ts';
 import { drawPane, paneWidth } from '../panes.ts';
@@ -131,6 +132,7 @@ export function ListView(p: ListViewProps) {
     footer = { left: hintsText(p.hints ?? LIST_HINTS, Math.max(10, cols - 2 - displayWidth(position) - 3)), right: st.dim(position) };
   }
 
+  const rightInner = p.sidebar ? Math.max(10, cols - paneWidth(p.sidebar.width) - 4) : Math.max(10, cols - 4);
   // Ticket-pane lines as strings, so a sidebar can be joined on row by row (one Text per row).
   let right: string[];
   if (p.tickets.length === 0) {
@@ -143,7 +145,9 @@ export function ListView(p: ListViewProps) {
     right = [];
     for (let i = p.top; i < end; i++) {
       const t = p.tickets[i]!;
-      right.push(renderRow(t, { layout: p.layout, now: p.now, style: st, selected: p.ticketFocus !== false && i === p.cursor, spinner: t.status === 'running' ? p.spinner : undefined }));
+      const on = p.ticketFocus !== false && i === p.cursor;
+      const row = renderRow(t, { layout: p.layout, now: p.now, style: st, selected: on, spinner: t.status === 'running' ? p.spinner : undefined });
+      right.push(on ? endCell(row, rightInner, st, true) : row);
     }
     if (overflow) {
       const parts: string[] = [];
@@ -159,7 +163,6 @@ export function ListView(p: ListViewProps) {
   let lines: string[];
   if (p.sidebar) {
     const { width, lines: left } = p.sidebar;
-    const rightInner = Math.max(10, cols - paneWidth(width) - 4);
     const l = drawPane({ title: 'projects', lines: left, inner: width, active: !cmdFocus && p.ticketFocus === false, height }, st);
     const padRight = right.map((r) => r + ' '.repeat(Math.max(0, rightInner - displayWidth(r))));
     const r = drawPane({ title: 'tickets', lines: padRight, inner: rightInner, active: !cmdFocus && p.ticketFocus !== false, height }, st);

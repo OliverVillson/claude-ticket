@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { Text, useInput } from 'ink';
 import type { Choice } from '../tagGroups.ts';
-import { truncate } from '../format.ts';
+import { displayWidth, truncate } from '../format.ts';
+import { DEEPER_CELLS } from '../deeper.ts';
+import { GLYPHS } from '../../ui/glyphs.ts';
 import { style as st } from '../style.ts';
 import { inkColor } from '../../ui/theme.ts';
 import { TextField } from './TextField.tsx';
@@ -118,11 +120,15 @@ export function EditList(p: EditListProps) {
             </Text>
           );
         }
-        const val = truncate(r.value, Math.max(4, inner - LABEL_W - (r.kind === 'menu' || r.kind === 'pick' ? 2 : 0)));
-        const tail = r.kind === 'menu' ? ' →' : '';
+        // The last cell is reserved: the selected row shows an arrow there when → goes deeper.
+        const val = truncate(r.value, Math.max(4, inner - LABEL_W - DEEPER_CELLS));
+        const deeper = on && r.kind !== 'readonly';
+        const color = inkColor(on ? 'accent' : r.kind === 'readonly' ? 'chrome' : 'text');
+        const body = label + val;
         return (
-          <Text key={r.key} wrap="truncate-end" color={inkColor(on ? 'accent' : r.kind === 'readonly' ? 'chrome' : 'text')}>
-            {label + val + tail}
+          <Text key={r.key} wrap="truncate-end">
+            <Text color={color}>{body + ' '.repeat(Math.max(0, inner - 1 - displayWidth(body)))}</Text>
+            <Text color={inkColor('accent')}>{deeper ? GLYPHS.deeper : ' '}</Text>
           </Text>
         );
       })}

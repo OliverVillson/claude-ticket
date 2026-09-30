@@ -10,6 +10,7 @@ import { createProject, createRun, createTicket, getTicketById, listProjects, li
 import { STATE } from '../../src/db/types.ts';
 import { clearPause, readStatus, setPause, writeWorkerInfo } from '../../src/orchestrator/status.ts';
 import type { OrchestratorEvent } from '../../src/orchestrator/types.ts';
+import { displayWidth } from '../../src/tui/format.ts';
 import { KEY, fakeTerminal, seedDb, sleep } from './harness.ts';
 
 type Instance = ReturnType<typeof render>;
@@ -811,7 +812,7 @@ describe('two panes: project tree and tickets', () => {
     const { term } = mountApp({ db }, [90, 30]);
     const f = await term.waitFor((s) => s.includes('web root job'));
     expect(f).not.toContain(' │ ');
-    expect(f).not.toContain('▸');
+    expect(f).not.toContain('▾');
   });
 
   test('a adds a project through the command line, d removes the selected one after y', async () => {
@@ -1279,5 +1280,96 @@ describe('backlog and queue', () => {
     const { term } = mountApp({ db }, [130, 34]);
     const f = await term.waitFor((s) => s.includes('backlog'), 'count');
     expect(f.split('\n')[0]).toContain('1 backlog');
+  });
+});
+
+describe('the arrow for "deeper" on the selected row', () => {
+  function seedTree() {
+    const { db, home } = seedDb(0);
+    const web = listProjects(db).find((p) => p.name === 'web')!;
+    const ui = createProject(db, { name: 'web-ui', path: join(home, 'web', 'ui'), parentId: web.id });
+    const mk = (project_id: number, name: string) => createTicket(db, { project_id, name, query: name, tags: {}, labels: [], priority: 3 });
+    mk(web.id, 'web root job');
+    mk(ui.id, 'ui job');
+    return { db };
+  }
+  const arrows = (f: string) => (f.match(/▸/g) ?? []).length;
+
+  test('a ticket row shows it only when selected, at the right end, without moving columns', async () => {
+    const { db } = seedDb(6);
+    const { term } = mountApp({ db });
+    let f = await term.waitFor((s) => s.includes('ticket 001'));
+    const row = (s: string, n: string) => s.split('\n').find((l) => l.includes(n))!;
+    expect(arrows(f)).toBe(1);
+    expect(row(f, 'ticket 001').trimEnd().endsWith('▸ ┃') || row(f, 'ticket 001').trimEnd().endsWith('▸ │')).toBe(true);
+    const col = (s: string) => row(s, 'ticket 00').indexOf('running');
+    const before = col(f);
+    await term.press(KEY.down);
+    f = term.lastFrame();
+    expect(arrows(f)).toBe(1);
+    expect(row(f, 'ticket 001')).not.toContain('▸');
+    expect(row(f, 'ticket 007') || row(f, 'ticket 002')).toBeTruthy();
+    expect(col(f)).toBe(before);
+  });
+
+  test('narrow terminals keep every row inside the box, arrow or not', async () => {
+    const { db } = seedDb(6);
+    const { term } = mountApp({ db }, [50, 24]);
+    const f = await term.waitFor((s) => s.includes('ticket 001'));
+    for (const l of f.split('\n')) expect(displayWidth(l)).toBeLessThanOrEqual(50);
+    expect(arrows(f)).toBe(1);
+  });
+
+  test('project tree: only a selected project that has subprojects, and only while the tree has focus', async () => {
+    const { db } = seedTree();
+    const { term } = mountApp({ db }, [130, 30]);
+    let f = await term.waitFor((s) => s.includes('web root job'));
+    const treeRows = () => term.lastFrame().split('\n').map((l) => l.split('┃')[1] ?? '').filter((l) => l.includes('web') || l.includes('all projects'));
+    expect(treeRows().some((l) => l.includes('▸ ') && l.trimEnd().endsWith('▸'))).toBe(false); // "all projects" has nothing deeper
+    await term.press(KEY.down); // web (has subprojects)
+    f = term.lastFrame();
+    const web = f.split('\n').find((l) => (l.split('┃')[1] ?? '').includes('❯') && (l.split('┃')[1] ?? '').includes('web'))!;
+    expect(web.split('┃')[1]!.trimEnd().endsWith('▸')).toBe(true);
+    await term.press(KEY.tab); // focus moves to the tickets: the tree row loses its arrow
+    f = term.lastFrame();
+    const tree = f.split('\n').map((l) => l.split('┃')[1] ?? '').find((l) => /\bweb\b/.test(l) && l.includes('❯'));
+    expect((tree ?? '').trimEnd().endsWith('▸ ')).toBe(false);
+  });
+
+  test('form: the tags row and the pick-list rows show it, the plain text rows do not', async () => {
+    const { db } = seedDb(3);
+    const { term } = mountApp({ db });
+    await term.waitFor((s) => s.includes('1/3'));
+    await term.press('a');
+    let f = await term.waitFor((s) => s.includes('new ticket'));
+    expect(arrows(f)).toBe(0); // the name row is plain text
+    await term.press(KEY.tab);
+    await term.press(KEY.tab);
+    f = term.lastFrame();
+    expect(f.split('\n').find((l) => l.includes('tags'))!.includes('▸')).toBe(true);
+    await term.press(KEY.right);
+    f = term.lastFrame();
+    const groups = f.split('\n').filter((l) => /Model \/ effort|Tools|Other/.test(l));
+    expect(groups.length).toBe(3);
+    expect(groups.filter((l) => l.includes('▸')).length).toBe(1); // only the selected group
+  });
+
+  test('properties: the selected row has it, read-only rows never', async () => {
+    const { db } = seedDb(12);
+    const { term } = mountApp({ db });
+    await term.waitFor((s) => s.includes('ticket 001'));
+    await term.press(KEY.right);
+    let f = await term.waitFor((s) => s.includes('properties'));
+    expect(arrows(f)).toBe(1);
+    for (let i = 0; i < 13; i++) await term.press(KEY.down); // the last row is read-only
+    f = term.lastFrame();
+    expect(f.split('\n').find((l) => l.includes('last run'))).toContain('❯');
+    expect(arrows(f)).toBe(0);
+  });
+
+  test('ASCII glyph set uses > and colour-free output keeps the arrow', async () => {
+    const { ASCII_GLYPHS, UNICODE_GLYPHS } = await import('../../src/ui/glyphs.ts');
+    expect(ASCII_GLYPHS.deeper).toBe('>');
+    expect(UNICODE_GLYPHS.deeper).toBe('▸');
   });
 });
