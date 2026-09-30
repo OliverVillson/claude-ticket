@@ -109,7 +109,7 @@ export function DetailView(p: DetailViewProps) {
     <Frame columns={cols} header={{ left: titleText(crumbs), right: st.dim(idText) }} footer={footer}>
       {lines.map((l, i) => (
         <Text key={i} wrap="truncate-end">
-          {l || ' '}
+          {st.base(l || ' ')}
         </Text>
       ))}
     </Frame>

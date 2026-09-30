@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { Text, useInput } from 'ink';
 import { Frame, hintsText, titleText } from './Frame.tsx';
+import { style as st } from '../style.ts';
+import { inkColor } from '../../ui/theme.ts';
 import { TextField } from './TextField.tsx';
 
 export interface FormValues {
@@ -75,7 +77,7 @@ export function FormView(p: FormViewProps) {
     <Frame columns={cols} header={{ left: titleText(crumbs) }} footer={{ left: hintsText(FORM_HINTS, cols - 2) }}>
       {FIELDS.map((f, i) => (
         <Text key={f.key} wrap="truncate-end">
-          <Text color={i === focus ? '#D97757' : undefined} dimColor={i !== focus}>
+          <Text color={inkColor(i === focus ? 'accent' : 'chrome')}>
             {(i === focus ? '❯ ' : '  ') + f.label.padEnd(labelW - 2)}
           </Text>
           <TextField value={values[f.key]} onChange={set(f.key)} focus={i === focus} placeholder={f.placeholder} width={Math.max(10, Math.min(f.width ?? 999, cols - 4 - labelW))} />
@@ -83,13 +85,11 @@ export function FormView(p: FormViewProps) {
       ))}
       <Text> </Text>
       {p.error ? (
-        <Text color="red" wrap="truncate-end">
+        <Text color={inkColor('error')} wrap="truncate-end">
           {'✗ ' + p.error}
         </Text>
       ) : (
-        <Text dimColor wrap="truncate-end">
-          {help}
-        </Text>
+        <Text wrap="truncate-end">{st.dim(help)}</Text>
       )}
     </Frame>
   );
