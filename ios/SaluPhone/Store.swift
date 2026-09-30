@@ -132,9 +132,8 @@ final class Store: ObservableObject {
         let ref = t.id.hasPrefix("box:") ? nil : t.id  // tickets this phone sent are keyed by their file id
         do {
             try await c.send(SaluReply(id: id, project: t.project, ref: ref, name: t.name, body: body, now: now, at: ms))
-            replies.insert(SentReply(id: id, repo: repoKey, ticket: t.id, body: body, now: now, at: ms), at: 0)
+            replies.insert(SentReply(id: id, repo: repoKey, ticket: t.id, body: body, now: now, at: ms, after: t.messages.first?.id), at: 0)
             if replies.count > 500 { replies.removeLast(replies.count - 500) }
-            replyDrafts[t.id] = nil
             return nil
         } catch {
             return error.localizedDescription

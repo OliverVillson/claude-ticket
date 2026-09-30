@@ -33,6 +33,14 @@ struct SentReply: Codable, Identifiable, Hashable {
     var body: String
     var now: Bool
     var at: Double
+    var after: String? = nil  // newest message id the phone had for the ticket when it sent this
+
+    /// The box answers every reply: "Got your reply" (ticket.accepted) or a warning note.
+    func answered(by messages: [SaluMessage]) -> Bool {
+        messages.contains { m in
+            (m.type == "ticket.accepted" || (m.type == "note" && m.level == "warn")) && m.id > (after ?? "")
+        }
+    }
 
     var date: Date { Date(timeIntervalSince1970: at / 1000) }
 }
@@ -70,9 +78,8 @@ struct TicketSummary: Identifiable, Hashable {
     var conversation: [Turn] {
         var turns: [Turn] = []
         if let q = query, let at = sentAt { turns.append(Turn(id: "query", who: .you, text: q, date: at)) }
-        let lastBox = messages.first?.at ?? 0
         for r in replies {
-            turns.append(Turn(id: r.id, who: .you, text: r.body, date: r.date, pending: r.at > lastBox))
+            turns.append(Turn(id: r.id, who: .you, text: r.body, date: r.date, pending: !r.answered(by: messages)))
         }
         for m in messages {
             if let text = m.workerText { turns.append(Turn(id: m.id, who: .worker, text: text, date: m.date, type: m.type)) }
@@ -131,12 +138,12 @@ enum Tickets {
             byKey[key] = s
         }
 
-        // A reply newer than anything the box said puts the ticket back to "sent" until the box answers.
+        // A reply the box hasn't answered yet puts the ticket back to "sent" (a running one keeps running).
         for r in replies.sorted(by: { $0.at < $1.at }) {
             guard var s = byKey[r.ticket] else { continue }
             s.replies.append(r)
-            if r.at > (s.messages.first?.at ?? 0) {
-                s.state = .sent
+            if !r.answered(by: s.messages) {
+                if s.state != .running { s.state = .sent }
                 s.lastSent = r.date
                 s.updated = max(s.updated, r.date)
             }

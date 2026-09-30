@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Keep chatting on a ticket: one field, sent as a `salu reply` through salu/inbox. The worker
 /// resumes the same conversation, on the same branch. An unsent reply is kept per ticket.
@@ -7,15 +8,11 @@ struct ReplySheet: View {
     @Environment(\.dismiss) private var dismiss
     let ticketId: String
 
+    @State private var draft = ""  // kept in the store on close; typing here doesn't redraw every screen
     @State private var now = false
     @State private var sending = false
-    @State private var sentOK = false
     @State private var failure: String?
     @FocusState private var focused: Bool
-
-    private var draft: Binding<String> {
-        Binding(get: { store.replyDrafts[ticketId] ?? "" }, set: { store.replyDrafts[ticketId] = $0.isEmpty ? nil : $0 })
-    }
 
     var body: some View {
         NavigationStack {
@@ -42,15 +39,16 @@ struct ReplySheet: View {
                 }
             }
         }
-        .sensoryFeedback(.success, trigger: sentOK) { _, new in new }
         .sensoryFeedback(.error, trigger: failure) { _, new in new != nil }
+        .onAppear { draft = store.replyDrafts[ticketId] ?? "" }
+        .onDisappear { store.replyDrafts[ticketId] = draft.trimmed.isEmpty ? nil : draft }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
     }
 
     private var canSend: Bool {
         guard let t = store.ticket(ticketId) else { return false }
-        return t.canReply && !draft.wrappedValue.trimmed.isEmpty && !sending && store.configured
+        return t.canReply && !draft.trimmed.isEmpty && !sending && store.configured
     }
 
     private func form(_ t: TicketSummary) -> some View {
@@ -72,11 +70,12 @@ struct ReplySheet: View {
                 // the prompt box, as in the TUI's command line
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Text("❯").font(Salu.mono(.title3, weight: .heavy)).foregroundStyle(Salu.accent)
-                    TextField("", text: draft, prompt: Text("keep chatting…").foregroundStyle(Salu.chrome), axis: .vertical)
+                    TextField("", text: $draft, prompt: Text("keep chatting…").foregroundStyle(Salu.chrome), axis: .vertical)
                         .font(Salu.mono(.body))
                         .foregroundStyle(Salu.text)
                         .lineLimit(3...12)
                         .focused($focused)
+                        .disabled(sending)
                 }
                 .padding(16)
                 .background(RoundedRectangle(cornerRadius: 14).fill(Salu.surface))
@@ -121,14 +120,15 @@ struct ReplySheet: View {
         sending = true
         failure = nil
         focused = false
-        let text = draft.wrappedValue.trimmed
+        let text = draft.trimmed
         Task {
             let problem = await store.reply(to: t, body: text, now: now)
             sending = false
             if let problem {
                 failure = problem
             } else {
-                sentOK = true
+                draft = ""
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
                 dismiss()
             }
         }
@@ -155,7 +155,7 @@ struct TurnBubble: View {
     private var mine: Bool { turn.who == .you }
     private var look: Look {
         if mine { return Look(glyph: "❯", color: Salu.accent, label: turn.pending ? "you · waiting for the box" : "you") }
-        switch turn.type {
+        switch turn.type ?? "" {
         case "ticket.blocked": return Look(glyph: "?", color: Salu.warn, label: "salu · needs you")
         case "ticket.failed": return Look(glyph: "✗", color: Salu.error, label: "salu · failed")
         case "note": return Look(glyph: "!", color: Salu.warn, label: "box")
