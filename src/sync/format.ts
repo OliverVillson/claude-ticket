@@ -6,15 +6,18 @@
  * same time therefore never conflict: the loser fetches and pushes again.
  *
  *   salu-inbox/tickets/<id>.json    client -> box   a new ticket
+ *   salu-inbox/replies/<id>.json    client -> box   a follow-up message on a ticket that already has a reply
  *   salu-inbox/messages/<id>.json   box -> client   something the orchestrator wants you to know
  */
 import { randomBytes } from 'node:crypto';
 
 export const INBOX_BRANCH = 'salu/inbox';
 export const TICKETS_DIR = 'salu-inbox/tickets';
+export const REPLIES_DIR = 'salu-inbox/replies';
 export const MESSAGES_DIR = 'salu-inbox/messages';
 export const FORMAT_VERSION = 1;
 export const MAX_FILE_BYTES = 64 * 1024;
+export const REPLY_MAX = 16000;
 
 let lastMs = 0;
 /** `<13-digit epoch ms>-<8 hex>`: sorts by time (strictly increasing within a process), unique across machines. */
@@ -37,6 +40,18 @@ export interface TicketFile {
   labels: string[];
   priority: number;
   queue: boolean; // true: run it as soon as the box can; false: save it in the backlog
+  at: number;
+}
+
+/** A follow-up prompt on a ticket (`salu reply`), sent from your computer or phone to the box. */
+export interface ReplyFile {
+  v: 1;
+  id: string;
+  project: string;
+  ref?: string; // id of the ticket file the ticket was sent with (preferred)
+  name?: string; // else the ticket's name on the box
+  body: string;
+  now: boolean; // move the ticket to the front of the queue
   at: number;
 }
 
@@ -70,6 +85,7 @@ export interface MessageFile {
   };
   branch?: string; // the branch with the result (salu/<ticket>), when there is one
   question?: string; // blocked: what the ticket needs
+  reply?: string; // done/blocked/failed: the worker's whole final reply (clipped to REPLY_MAX), what a follow-up answers
   until?: number; // paused: epoch ms it resumes
 }
 
@@ -93,6 +109,23 @@ export function parseTicketFile(text: string): TicketFile | null {
   const labels = Array.isArray(o.labels) ? o.labels.filter((l: unknown): l is string => typeof l === 'string' && l.length <= 64).slice(0, 50) : [];
   const priority = Number.isInteger(o.priority) && o.priority >= 1 && o.priority <= 5 ? o.priority : 3;
   return { v: 1, id: o.id, project: str(o.project, 200) ?? '', name: name.trim(), query, tags, labels, priority, queue: o.queue !== false, at: Number.isFinite(o.at) ? o.at : 0 };
+}
+
+export function parseReplyFile(text: string): ReplyFile | null {
+  if (text.length > MAX_FILE_BYTES) return null;
+  let o: any;
+  try {
+    o = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!o || typeof o !== 'object' || o.v !== FORMAT_VERSION || !isId(o.id)) return null;
+  const body = str(o.body, 20000);
+  if (!body?.trim()) return null;
+  const ref = isId(o.ref) ? o.ref : undefined;
+  const name = str(o.name, 200)?.trim() || undefined;
+  if (!ref && !name) return null;
+  return { v: 1, id: o.id, project: str(o.project, 200) ?? '', ...(ref ? { ref } : {}), ...(name ? { name } : {}), body, now: o.now === true, at: Number.isFinite(o.at) ? o.at : 0 };
 }
 
 export function parseMessageFile(text: string): MessageFile | null {
@@ -126,6 +159,8 @@ export function parseMessageFile(text: string): MessageFile | null {
   if (branch) m.branch = branch;
   const question = str(o.question, 20000);
   if (question) m.question = question;
+  const reply = str(o.reply, 20000);
+  if (reply) m.reply = reply;
   if (Number.isFinite(o.until)) m.until = o.until;
   return m;
 }

@@ -75,6 +75,7 @@ salu log "fix login" --follow                  # worker transcript
 | `salu add project "name" [path] [--clone git-url]` | Registers a project. With no `path` it uses the current folder if that is a git repo, else creates `./<name>`. `--clone <url>` (with `--path folder`, default `./<repo name>`) has salu clone the repo there first; the folder must be new or empty. Works with `--in parent`. Flags: `--model`, `--effort`, `--concurrency`, `--default`. |
 | `salu add "name" "query" ["tags"] [--queue]` | Saves a ticket (status `backlog`); it never runs by itself. `query` is the prompt the worker gets. Tags are `key=value` pairs and bare labels. `--queue` saves and queues it. |
 | `salu queue "name"... \| --all [project]` | Queues saved tickets (status `todo`, shown as queued): a running orchestrator starts them at once. Also re-queues a done, failed or blocked ticket. `--now` goes to the front. |
+| `salu reply "name" ["message"] [--now]` | Keep chatting on a ticket after its reply: resumes the same worker session (same `salu/` branch) with your message, and answers a blocked ticket's question too. No message prints the conversation. In the TUI: open the ticket, press `r`. |
 | `salu allow "name" [--tool RULE]` | Unblocks a ticket that was refused a permission: adds the denied rule (or `--tool`) to its `tools` and queues it again. |
 | `salu unqueue "name"` | Takes a queued ticket that has not started back to the backlog. |
 | `salu remove "name" [--yes]` | Deletes a ticket; a running one is stopped first. `salu remove project "name"` deletes a project and its tickets. |
@@ -112,6 +113,14 @@ nothing but the `tools` restriction and any `deny:` still apply, and `plan` runs
 without asking (it can follow a preset: `edit;also:...`).
 
 Any other token (`bug`, `docs`, `team=core`) is stored as a label or custom tag for filtering.
+
+## Running on a box (git sync)
+
+`salu remote add web` (on your computer) and `salu remote add web <url> --box` plus `salu remote sync --watch`
+(on an always-on Linux box) run a project on the box with git as the only link: tickets you add go to the box,
+`salu reply "name" "text"` keeps the conversation going, and results (`salu/<ticket>` branches) and messages come
+back through the project's own git remote, on the branch `salu/inbox`. No server, no open port. Use a private
+repository: anyone who can push to it can send the box tickets. Format and details: INTERFACES.md ("Git sync transport").
 
 ## The kernel (sandbox, opt-in per project)
 

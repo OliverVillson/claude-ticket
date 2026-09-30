@@ -1,7 +1,8 @@
 import type { Database } from 'bun:sqlite';
 import type { OrchestratorEvent } from '../orchestrator/types.ts';
-import { getProjectById } from '../db/queries.ts';
+import { getProjectById, listTurns } from '../db/queries.ts';
 import { boxName } from './sync.ts';
+import { REPLY_MAX } from './format.ts';
 import { enqueueMessage, getRemote, remoteTicketForLocal } from './store.ts';
 
 const clip = (s: string | null | undefined, n: number) => (s && s.length > n ? s.slice(0, n - 1) + '…' : (s ?? ''));
@@ -19,15 +20,18 @@ export function recordRemoteEvent(db: Database, e: OrchestratorEvent): void {
       const project = getProjectById(db, t.project_id);
       if (!project) return;
       const ref = remoteTicketForLocal(db, t.id, 'in')?.uuid;
+      // The worker's whole final reply, so whoever reads the notification sees what they are answering.
+      const last = e.type === 'finish' ? [...listTurns(db, t.id)].reverse().find((x) => x.role === 'assistant')?.body : undefined;
+      const reply = last ? clip(last, REPLY_MAX) : undefined;
       const ticket = { ...(ref ? { ref } : {}), name: t.name, id: t.id };
       const send = (m: Parameters<typeof enqueueMessage>[4]) => enqueueMessage(db, project.id, project.name, boxName(), m);
       if (e.type === 'dispatch') {
         if (!e.resumed) send({ type: 'ticket.started', level: 'info', title: `Started "${t.name}"`, ticket });
         return;
       }
-      if (e.status === 'done') send({ type: 'ticket.done', level: 'success', title: `Done: "${t.name}"`, body: clip(t.error, 2000) || undefined, ticket });
-      else if (e.status === 'blocked') send({ type: 'ticket.blocked', level: 'warn', title: `"${t.name}" needs you`, question: clip(e.error ?? t.error, 2000) || undefined, ticket });
-      else if (e.status === 'failed') send({ type: 'ticket.failed', level: 'error', title: `Failed: "${t.name}"`, body: clip(e.error ?? t.error, 2000) || undefined, ticket });
+      if (e.status === 'done') send({ type: 'ticket.done', level: 'success', title: `Done: "${t.name}"`, body: clip(t.error, 2000) || undefined, reply, ticket });
+      else if (e.status === 'blocked') send({ type: 'ticket.blocked', level: 'warn', title: `"${t.name}" needs you`, question: clip(e.error ?? t.error, 2000) || undefined, reply, ticket });
+      else if (e.status === 'failed') send({ type: 'ticket.failed', level: 'error', title: `Failed: "${t.name}"`, body: clip(e.error ?? t.error, 2000) || undefined, reply, ticket });
       return;
     }
     if (e.type === 'pause' || e.type === 'resume') {

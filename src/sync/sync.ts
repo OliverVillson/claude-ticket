@@ -1,15 +1,21 @@
 import type { Database } from 'bun:sqlite';
 import { hostname } from 'node:os';
 import type { Project, TicketView } from '../db/types.ts';
-import { createTicket, getProjectById, getTicketById, updateTicket } from '../db/queries.ts';
+import { addTurn, createTicket, getProjectById, getTicketById, replyToTicket, updateTicket, listTickets } from '../db/queries.ts';
 import { ticketLabels, ticketTags } from '../db/types.ts';
 import { CliError } from '../core/errors.ts';
 import { kernelPath, isGitRepo } from '../core/kernel.ts';
 import { existsSync } from 'node:fs';
 import { git, gitProblem, inboxDir, exchange, readDir } from './git.ts';
-import { MESSAGES_DIR, REMOTE_FORBIDDEN_TAGS, TICKETS_DIR, newId, parseMessageFile, parseTicketFile, type MessageFile, type TicketFile } from './format.ts';
+import { MESSAGES_DIR, REMOTE_FORBIDDEN_TAGS, REPLIES_DIR, TICKETS_DIR, newId, parseMessageFile, parseReplyFile, parseTicketFile, type MessageFile, type ReplyFile, type TicketFile } from './format.ts';
 import {
+  addOutReply,
   addRemoteTicket,
+  knownReply,
+  markRepliesSent,
+  pendingOutReplies,
+  recordInReply,
+  remoteTicketForLocal,
   enqueueMessage,
   getRemote,
   knownMessage,
@@ -35,6 +41,30 @@ export function publishTicket(db: Database, project: Project, t: TicketView, o: 
   const uuid = newId();
   addRemoteTicket(db, { uuid, project_id: project.id, ticket_id: t.id, direction: 'out', queue: o.queue });
   return uuid;
+}
+
+/** Client: send a follow-up on a ticket that was sent to the box (the local turn is already recorded). Returns false when the ticket did not go through this project's remote. */
+export function publishReply(db: Database, project: Project, t: TicketView, body: string, o: { now?: boolean } = {}): boolean {
+  const rt = remoteTicketForLocal(db, t.id, 'out');
+  if (!rt || getRemote(db, project.id)?.role !== 'client') return false;
+  addOutReply(db, project.id, { ref: rt.uuid, name: t.name, body, now: o.now });
+  return true;
+}
+
+/** Box: apply a follow-up from the client. Returns a message for the client when it cannot be applied. */
+function applyReply(db: Database, project: Project, r: ReplyFile): void {
+  const say = (title: string, level: 'info' | 'warn', ticket?: { ref?: string; name: string; id: number }) => enqueueMessage(db, project.id, project.name, boxName(), { type: ticket && level === 'info' ? 'ticket.accepted' : 'note', level, title, ...(ticket ? { ticket } : {}) });
+  let id: number | null = r.ref ? (remoteTicketByUuid(db, r.ref)?.ticket_id ?? null) : null;
+  if (id === null && r.name) id = listTickets(db, { projectId: project.id, recursive: false }).find((x) => x.name === r.name)?.id ?? null;
+  const t = id === null ? null : getTicketById(db, id);
+  if (!t) return void say(`Could not find the ticket for your reply${r.name ? ` ("${r.name}")` : ''}`, 'warn');
+  const ticket = { ...(r.ref ? { ref: r.ref } : {}), name: t.name, id: t.id };
+  try {
+    replyToTicket(db, t.id, r.body, { now: r.now });
+    say(`Got your reply on "${t.name}"${t.status === 'running' ? ', it is the next turn' : ', queued to run'}`, 'info', ticket);
+  } catch (e: any) {
+    say(`Your reply on "${t.name}" was not applied: ${String(e?.message ?? e)}`, 'warn', ticket);
+  }
 }
 
 function ticketFile(db: Database, project: Project, uuid: string): TicketFile | null {
@@ -66,6 +96,8 @@ function applyMessage(db: Database, m: MessageFile): void {
   const ref = m.ticket?.ref;
   const rt = ref ? remoteTicketByUuid(db, ref) : null;
   if (!rt || rt.direction !== 'out' || !rt.ticket_id || !getTicketById(db, rt.ticket_id)) return;
+  // The worker's whole reply is what a follow-up answers: keep it as the ticket's latest turn.
+  if (m.reply && ['ticket.done', 'ticket.blocked', 'ticket.failed'].includes(m.type)) addTurn(db, rt.ticket_id, 'assistant', m.reply);
   switch (m.type) {
     case 'ticket.started':
       updateTicket(db, rt.ticket_id, { status: 'running', error: null });
@@ -87,6 +119,8 @@ export interface SyncSummary {
   role: 'client' | 'box';
   ticketsSent: number;
   ticketsReceived: number;
+  repliesSent: number;
+  repliesReceived: number;
   messagesSent: number;
   messagesReceived: number;
   branchesPushed: string[];
@@ -95,7 +129,7 @@ export interface SyncSummary {
 /** One round trip with the project's remote: send what is waiting, read what arrived, act on it. */
 export function syncProject(db: Database, project: Project, remote: Remote = getRemote(db, project.id)!): SyncSummary {
   if (!remote) throw new CliError(`project "${project.name}" has no remote (salu remote add "${project.name}" <git-url>)`);
-  const s: SyncSummary = { project: project.name, role: remote.role, ticketsSent: 0, ticketsReceived: 0, messagesSent: 0, messagesReceived: 0, branchesPushed: [] };
+  const s: SyncSummary = { project: project.name, role: remote.role, ticketsSent: 0, ticketsReceived: 0, repliesSent: 0, repliesReceived: 0, messagesSent: 0, messagesReceived: 0, branchesPushed: [] };
   const dir = inboxDir(project.name);
   try {
     // Round 1: push anything waiting, then read the branch.
@@ -105,11 +139,15 @@ export function syncProject(db: Database, project: Project, remote: Remote = get
       const f = ticketFile(db, project, rt.uuid);
       if (f) files[`${TICKETS_DIR}/${f.id}.json`] = JSON.stringify(f, null, 2) + '\n';
     }
+    const outReplies = remote.role === 'client' ? pendingOutReplies(db, project.id) : [];
+    for (const r of outReplies) files[`${REPLIES_DIR}/${r.id}.json`] = JSON.stringify({ ...r, project: project.name }, null, 2) + '\n';
     const outMessages = remote.role === 'box' ? pendingMessages(db, project.id) : [];
     for (const m of outMessages) files[`${MESSAGES_DIR}/${m.id}.json`] = JSON.stringify(JSON.parse(m.body), null, 2) + '\n';
     exchange(dir, remote.url, files);
     markTicketsSent(db, outTickets.map((t) => t.uuid));
     markMessagesPosted(db, outMessages.map((m) => m.id));
+    markRepliesSent(db, outReplies.map((r) => r.id));
+    s.repliesSent = outReplies.length;
     s.ticketsSent = outTickets.length;
     s.messagesSent = outMessages.length;
 
@@ -125,6 +163,14 @@ export function syncProject(db: Database, project: Project, remote: Remote = get
           title: `Got "${t.name}"${f.queue ? ', queued to run' : ', saved in the backlog'}`,
           ticket: { ref: f.id, name: t.name, id: t.id },
         });
+      }
+      // Replies come after tickets, so a reply can follow the ticket it is about in the same round.
+      for (const { text } of readDir(dir, REPLIES_DIR, () => true)) {
+        const r = parseReplyFile(text);
+        if (!r || knownReply(db, r.id)) continue;
+        recordInReply(db, project.id, r);
+        applyReply(db, project, r);
+        s.repliesReceived++;
       }
       // Round 2: the acknowledgements (and anything the orchestrator queued meanwhile).
       const more = pendingMessages(db, project.id);

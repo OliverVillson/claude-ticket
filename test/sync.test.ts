@@ -3,11 +3,11 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { openDb } from '../src/db/db.ts';
-import { claimNextTicket, createProject, createTicket, getTicketById, listTickets, updateTicket } from '../src/db/queries.ts';
+import { addTurn, listTurns, replyToTicket, claimNextTicket, createProject, createTicket, getTicketById, listTickets, updateTicket } from '../src/db/queries.ts';
 import { addRemoteTicket, enqueueMessage, listNotifications, markRead, setRemote, unreadCount } from '../src/sync/store.ts';
-import { publishTicket, syncProject } from '../src/sync/sync.ts';
+import { publishReply, publishTicket, syncProject } from '../src/sync/sync.ts';
 import { recordRemoteEvent } from '../src/sync/events.ts';
-import { parseMessageFile, parseTicketFile, newId } from '../src/sync/format.ts';
+import { parseReplyFile, parseMessageFile, parseTicketFile, newId } from '../src/sync/format.ts';
 import { git } from '../src/sync/git.ts';
 
 let root: string;
@@ -149,6 +149,64 @@ describe('git sync', () => {
     const s = sync(box);
     expect(s.branchesPushed).toEqual(['salu/fix-login']);
     expect(git(bare, ['branch', '--list', 'salu/fix-login']).out).toContain('salu/fix-login');
+  });
+});
+
+describe('replies', () => {
+  test('a follow-up reaches the box, resumes the ticket, and the answer comes back with the worker text', () => {
+    const { t } = sendTicket('chat');
+    sync(client);
+    sync(box);
+    const run = claimNextTicket(box.db)!;
+    addTurn(box.db, run.id, 'assistant', 'First answer: use option A.');
+    const done = updateTicket(box.db, run.id, { status: 'done' });
+    recordRemoteEvent(box.db, { type: 'finish', ticket: done, outcome: 'done', costUsd: 0, turns: 1, status: 'done' });
+    sync(box);
+    sync(client);
+    // The client sees the worker's reply as the ticket's latest turn.
+    expect(listTurns(client.db, t.id).map((x) => x.body)).toEqual(['First answer: use option A.']);
+    expect(listNotifications(client.db).find((n) => n.type === 'ticket.done')!.reply).toBe('First answer: use option A.');
+
+    // Reply from the client.
+    const local = getTicketById(client.db, t.id)!;
+    replyToTicket(client.db, t.id, 'and what about B?');
+    expect(publishReply(client.db, client.project, local, 'and what about B?', { now: true })).toBe(true);
+    expect(sync(client).repliesSent).toBe(1);
+    const s = sync(box);
+    expect(s.repliesReceived).toBe(1);
+    const onBox = getTicketById(box.db, run.id)!;
+    expect(onBox.status).toBe('todo');
+    expect(listTurns(box.db, run.id).at(-1)).toMatchObject({ role: 'user', body: 'and what about B?', delivered: 0 });
+    // Applied once, even if the box syncs again.
+    expect(sync(box).repliesReceived).toBe(0);
+    sync(client);
+    expect(listNotifications(client.db).at(-1)!.title).toContain('Got your reply');
+  });
+
+  test('a reply for a backlog or unknown ticket comes back as a warning', () => {
+    const { uuid } = sendTicket('later');
+    client.db.run('UPDATE remote_tickets SET queue = 0 WHERE uuid = ?', [uuid]);
+    sync(client);
+    // Box accepted it as backlog (queue false): replying is refused.
+    process.env.SALU_SYNC_DIR = box.sync;
+    client.db.run("UPDATE remote_tickets SET sent = 1");
+    sync(box);
+    expect(listTickets(box.db)[0]!.status).toBe('backlog');
+    const { addOutReply } = require('../src/sync/store.ts');
+    addOutReply(client.db, client.project.id, { ref: uuid, body: 'hello' });
+    addOutReply(client.db, client.project.id, { name: 'no such ticket', body: 'hello' });
+    sync(client);
+    expect(sync(box).repliesReceived).toBe(2);
+    sync(client);
+    const titles = listNotifications(client.db).map((n) => n.title);
+    expect(titles.some((x) => x.includes('not applied'))).toBe(true);
+    expect(titles.some((x) => x.includes('Could not find'))).toBe(true);
+  });
+
+  test('reply files are validated', () => {
+    expect(parseReplyFile(JSON.stringify({ v: 1, id: newId(), ref: newId(), body: 'hi' }))?.now).toBe(false);
+    expect(parseReplyFile(JSON.stringify({ v: 1, id: newId(), body: 'hi' }))).toBeNull(); // no ticket
+    expect(parseReplyFile(JSON.stringify({ v: 1, id: newId(), name: 'x', body: '  ' }))).toBeNull();
   });
 });
 
