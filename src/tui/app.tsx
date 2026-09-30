@@ -7,7 +7,8 @@ import { getProjectById, getTicketById, latestRun } from '../db/queries.ts';
 import { formatTags } from '../core/tags.ts';
 import type { TuiActions } from './actions.ts';
 import { applyFilter } from './filter.ts';
-import { priorityText, truncate } from './format.ts';
+import { displayWidth, priorityText, truncate } from './format.ts';
+import { blinkOn, withWritingCursor } from './blink.ts';
 import { clampCursor, computeLayout, scrollTop, viewportRows } from './layout.ts';
 import { activityLines, idleLines, pickTarget, visibleWindow } from './activity.ts';
 import { statSync } from 'node:fs';
@@ -626,6 +627,8 @@ export function App(p: AppProps) {
       lines = w.lines;
       back = w.back;
     }
+    // While the worker runs, a blinking cursor after its newest output (not when scrolled back).
+    if (target?.status === 'running' && back === 0) lines = withWritingCursor(lines, actInner, actH, blinkOn(frame), st, displayWidth);
     const keys = pinnedId != null ? 'f unpin' : 'f pin';
     const title = target ? `activity · ${truncate(target.name, 30)}${pinnedId != null ? ' (pinned)' : ''}${back ? ` · ↑${back}` : ''} · ${keys} · [ ] scroll` : 'activity';
     activity = { title: truncate(title, Math.max(8, actInner - 6)), lines, height: actH };

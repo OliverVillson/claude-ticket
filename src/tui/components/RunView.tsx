@@ -13,6 +13,7 @@ import { style as st } from '../style.ts';
 import { SPINNER_FRAMES, paint, type Tone } from '../theme.ts';
 import { Frame, hintsText, titleText, titleWidth } from './Frame.tsx';
 import { pauseText, statusBadge, statusText } from './Status.tsx';
+import { blinkOn } from '../blink.ts';
 
 export interface RunViewProps {
   db: Database;
@@ -183,7 +184,7 @@ export function RunView(p: RunViewProps) {
   const crumbs = ['run'];
   const badgeW = displayWidth(statusText(status, now));
   const summaryShown = truncate(summary, Math.max(0, columns - 1 - titleWidth(crumbs) - badgeW - 9));
-  const headerRight = st.dim(summaryShown + '  ·  ') + statusBadge(status, now);
+  const headerRight = st.dim(summaryShown + '  ·  ') + statusBadge(status, now, status.workers.length === 0 || blinkOn(frame));
 
   const lines: string[] = [];
   if (status.paused) {
