@@ -37,7 +37,7 @@ for run in range(5):
         os.execvpe(cmd[0], cmd, env)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 120, 0, 0))
     t0 = time.perf_counter()
-    buf, dt = read_until(fd, lambda b: '✻'.encode() in b and b'orchestrator' in b, 10)
+    buf, dt = read_until(fd, lambda b: '▌salu'.encode() in b and b'orchestrator' in b, 10)
     if dt is None:
         print('no first frame; output so far:', buf[-300:]); sys.exit(1)
     firsts.append(time.perf_counter() - t0)

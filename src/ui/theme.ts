@@ -1,0 +1,82 @@
+/**
+ * The salu palette: matrix green on black ("hackermode"). One module feeds both the TUI
+ * (tui/style.ts) and plain CLI output (core/ansi.ts), so every surface agrees.
+ *
+ * Roles, not colours, are the vocabulary. Each role has a truecolor RGB, a 256-colour index and
+ * a 16-colour SGR code, picked by the terminal's colour level.
+ */
+export type ColorLevel = 0 | 1 | 2 | 3; // none | 16 | 256 | truecolor
+
+export type Role = 'accent' | 'text' | 'ok' | 'chrome' | 'warn' | 'error' | 'paused';
+
+interface Swatch {
+  rgb: [number, number, number];
+  c256: number;
+  /** SGR foreground for 16-colour terminals */
+  c16: number;
+}
+
+export const PALETTE: Record<Role, Swatch> = {
+  /** focus: cursor, running, wordmark. Classic matrix bright green. */
+  accent: { rgb: [0, 255, 65], c256: 46, c16: 92 },
+  /** body text that should read as green rather than white */
+  text: { rgb: [143, 255, 170], c256: 121, c16: 92 },
+  /** success, done */
+  ok: { rgb: [0, 200, 83], c256: 41, c16: 32 },
+  /** chrome: borders, hints, secondary text */
+  chrome: { rgb: [30, 143, 60], c256: 29, c16: 32 },
+  /** warnings, blocked: amber, so it never blends into the greens */
+  warn: { rgb: [255, 176, 0], c256: 214, c16: 33 },
+  /** errors, failed */
+  error: { rgb: [255, 85, 85], c256: 203, c16: 91 },
+  /** paused by the usage window: cool teal, distinct from every green */
+  paused: { rgb: [64, 224, 208], c256: 80, c16: 36 },
+};
+
+export const hex = (r: Role) => '#' + PALETTE[r].rgb.map((n) => n.toString(16).padStart(2, '0')).join('');
+
+/**
+ * Terminal colour support. NO_COLOR and TERM=dumb disable it; FORCE_COLOR (0-3) overrides;
+ * otherwise COLORTERM/TERM decide. `isTTY` false (piped) means none unless forced.
+ */
+export function detectColorLevel(env: NodeJS.ProcessEnv = process.env, isTTY = !!process.stdout.isTTY): ColorLevel {
+  if (env.NO_COLOR !== undefined && env.NO_COLOR !== '') return 0;
+  const force = env.FORCE_COLOR;
+  if (force !== undefined) {
+    if (force === '0' || force === 'false') return 0;
+    if (force === '1') return 1;
+    if (force === '2') return 2;
+    if (force === '3') return 3;
+    // bare FORCE_COLOR / "true": fall through to detection, but as if it were a TTY
+    isTTY = true;
+  }
+  if (!isTTY) return 0;
+  if (env.TERM === 'dumb') return 0;
+  if (/truecolor|24bit/i.test(env.COLORTERM ?? '')) return 3;
+  if (env.WT_SESSION || env.TERM_PROGRAM === 'iTerm.app' || env.TERM_PROGRAM === 'vscode') return 3;
+  if (/256/.test(env.TERM ?? '') || env.TERM_PROGRAM === 'Apple_Terminal') return 2;
+  return 1;
+}
+
+/** SGR parameters that set a role's foreground at `level`; null when colour is off. */
+export function sgr(role: Role, level: ColorLevel): string | null {
+  if (level === 0) return null;
+  const s = PALETTE[role];
+  if (level === 3) return `38;2;${s.rgb.join(';')}`;
+  if (level === 2) return `38;5;${s.c256}`;
+  return String(s.c16);
+}
+
+export type Painter = (s: string) => string;
+
+/** A painter for `role` at `level`; identity when colour is off. */
+export function painter(role: Role, level: ColorLevel): Painter {
+  const open = sgr(role, level);
+  if (!open) return (s) => s;
+  const pre = `\u001b[${open}m`;
+  return (s) => (s ? pre + s + '\u001b[39m' : s);
+}
+
+export const WORDMARK = 'salu';
+/** Block cursor in front of the wordmark: the prompt you are about to type into. */
+export const MARK = '▌';

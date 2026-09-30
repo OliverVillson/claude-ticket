@@ -99,8 +99,10 @@ export function ListView(p: ListViewProps) {
   let body: React.ReactNode;
   if (p.tickets.length === 0) {
     body = (
-      <Text dimColor>
-        {p.total === 0 ? 'no tickets yet · press a to add one' : `nothing matches "${truncate(p.filter.trim(), 30)}" · esc clears the filter`}
+      <Text wrap="truncate-end">
+        {p.total === 0
+          ? st.accent('▌') + st.text(' no tickets yet') + st.dim(' · press ') + st.accent('a') + st.dim(' to add one')
+          : st.yellow(`nothing matches "${truncate(p.filter.trim(), 30)}"`) + st.dim(' · esc clears the filter')}
       </Text>
     );
   } else {
@@ -118,8 +120,8 @@ export function ListView(p: ListViewProps) {
       if (p.top) parts.push(`↑ ${p.top} more`);
       if (p.tickets.length - end > 0) parts.push(`↓ ${p.tickets.length - end} more`);
       lines.push(
-        <Text key="more" dimColor>
-          {'  ' + parts.join(' · ')}
+        <Text key="more" wrap="truncate-end">
+          {st.dim('  ' + parts.join(' · '))}
         </Text>,
       );
     }

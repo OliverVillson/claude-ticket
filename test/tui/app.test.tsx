@@ -42,7 +42,7 @@ describe('list view', () => {
     const { db } = seedDb(12);
     const { term } = mountApp({ db });
     const f = await term.waitFor((s) => s.includes('ticket 001'), 'first frame');
-    expect(f).toContain('✻ tickets › all projects');
+    expect(f).toContain('▌salu › all projects');
     expect(f).toContain('ticket 012');
     expect(f).toContain('running');
     expect(f).toContain('failed');
@@ -134,17 +134,17 @@ describe('list view', () => {
     const { term } = mountApp({ db });
     await term.waitFor((s) => s.includes('all projects'));
     await term.press(KEY.tab);
-    let f = await term.waitFor((s) => s.includes('tickets › web'), 'web');
+    let f = await term.waitFor((s) => s.includes('salu › web'), 'web');
     expect(f).toContain('ticket 001');
     expect(f).not.toContain('ticket 002');
     await term.press(KEY.tab);
-    f = await term.waitFor((s) => s.includes('tickets › api'), 'api');
+    f = await term.waitFor((s) => s.includes('salu › api'), 'api');
     expect(f).toContain('ticket 002');
     expect(f).not.toContain('ticket 001');
     await term.press(KEY.tab);
     await term.waitFor((s) => s.includes('all projects'), 'all again');
     await term.press(KEY.shiftTab);
-    await term.waitFor((s) => s.includes('tickets › api'), 'shift-tab goes back');
+    await term.waitFor((s) => s.includes('salu › api'), 'shift-tab goes back');
   });
 
   test('a status scope from --status shows in the header and limits rows', async () => {
@@ -282,7 +282,7 @@ describe('add and edit form', () => {
   test('a adds a ticket to the current project with tags and priority', async () => {
     const { db, web } = seedDb(3);
     const { term } = mountApp({ db, projectId: web.id });
-    await term.waitFor((s) => s.includes('tickets › web'));
+    await term.waitFor((s) => s.includes('salu › web'));
     await term.press('a');
     expect(term.lastFrame()).toContain('new ticket');
     await term.press('Ship the thing');
@@ -356,7 +356,7 @@ describe('add and edit form', () => {
   test('a duplicate name is reported by the database layer', async () => {
     const { db } = seedDb(3);
     const { term } = mountApp({ db, projectId: 1 });
-    await term.waitFor((s) => s.includes('tickets › web'));
+    await term.waitFor((s) => s.includes('salu › web'));
     await term.press('a');
     await term.press('ticket 001');
     await term.press(KEY.tab);
@@ -441,7 +441,7 @@ describe('ticket detail', () => {
     await term.waitFor((s) => s.includes('1/6'));
     await term.press(KEY.enter);
     const f = await term.waitFor((s) => s.includes('Read(src/auth.ts)'), 'log tail');
-    expect(f).toContain('tickets › all projects › ticket 001'.replace('all projects', 'web'));
+    expect(f).toContain('salu › all projects › ticket 001'.replace('all projects', 'web'));
     expect(f).toContain(t.query);
     expect(f).toContain('opus/high');
     expect(f).toContain('#bug');
@@ -522,7 +522,7 @@ describe('run view', () => {
     );
     open.push(inst);
     const f = await term.waitFor((s) => s.includes(running.name) && s.includes('Edit(src/a.ts)') && s.includes('next:'), 'worker row and queue');
-    expect(f).toContain('✻ tickets › run');
+    expect(f).toContain('▌salu › run');
     expect(f).toContain('1/2 workers');
     expect(f).toContain('7 turns');
     expect(f).toContain('1m');
