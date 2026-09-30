@@ -16,6 +16,7 @@ import { ancestorsOf, buildRows, pathNames, renderTreeRow, revealed, subtreeIds,
 import { tailLog, type LogLine } from './log-tail.ts';
 import { loadDetail, loadSnapshot, snapshotKey, type Snapshot, type TicketDetail } from './store.ts';
 import type { UsageSnapshot, UsageSource } from './usage.ts';
+import { DEEPER_CELLS } from './deeper.ts';
 import { PropsView } from './components/PropsView.tsx';
 import { DetailView } from './components/DetailView.tsx';
 import { FormView, type FormValues } from './components/FormView.tsx';
@@ -188,7 +189,7 @@ export function App(p: AppProps) {
   topRef.current = top;
   const leftW = twoPane ? Math.max(22, Math.min(32, Math.round(columns * 0.26))) : 0;
   const showProjectCol = scopeIds == null || scopeIds.size > 1;
-  const layout = useMemo(() => computeLayout(twoPane ? columns - leftW - 8 : listInnerWidth(columns), { showProject: showProjectCol }), [columns, twoPane, leftW, showProjectCol]);
+  const layout = useMemo(() => computeLayout((twoPane ? columns - leftW - 8 : listInnerWidth(columns)) - DEEPER_CELLS, { showProject: showProjectCol }), [columns, twoPane, leftW, showProjectCol]);
   const now = Date.now();
   const working = snapshot.status.workers.length > 0 || snapshot.tickets.some((t) => t.status === 'running');
   const anyRunningVisible = (mode === 'list' && working) || (mode === 'list' ? visible.slice(top, top + rows).some((t) => t.status === 'running') : mode === 'detail' && selected?.status === 'running');

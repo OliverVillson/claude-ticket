@@ -25,6 +25,8 @@ export interface Glyphs {
   toolResult: string;
   /** selected row */
   cursor: string;
+  /** end of the selected row: pressing → goes deeper (opens a menu, a project, the properties) */
+  deeper: string;
   /** block cursor in front of the wordmark */
   mark: string;
   /** separator in status lines and breadcrumbs */
@@ -53,6 +55,7 @@ export const UNICODE_GLYPHS: Glyphs = {
   say: '●',
   toolResult: '└',
   cursor: '❯',
+  deeper: '▸',
   mark: '▌',
   dot: '·',
   crumb: '›',
@@ -77,6 +80,7 @@ export const ASCII_GLYPHS: Glyphs = {
   say: '*',
   toolResult: '`',
   cursor: '>',
+  deeper: '>',
   mark: '|',
   dot: '-',
   crumb: '>',

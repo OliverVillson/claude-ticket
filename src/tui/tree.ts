@@ -1,3 +1,4 @@
+import { DEEPER_CELLS, endCell } from './deeper.ts';
 import { fit } from './format.ts';
 import type { Style } from './style.ts';
 
@@ -141,8 +142,9 @@ export function renderTreeRow(row: TreeRow, o: { st: Style; selected: boolean; f
   const twisty = row.hasChildren ? (row.expanded ? '▾' : '▸') : ' ';
   const count = row.id == null || o.count > 0 ? String(o.count) : '';
   const head = ' ' + marker + ' ' + '  '.repeat(Math.max(0, row.depth - (row.id == null ? 0 : 1)));
-  const room = Math.max(1, width - 5 - 2 * Math.max(0, row.depth - (row.id == null ? 0 : 1)) - (count ? count.length + 1 : 0));
+  const room = Math.max(1, width - 5 - DEEPER_CELLS - 2 * Math.max(0, row.depth - (row.id == null ? 0 : 1)) - (count ? count.length + 1 : 0));
   const label = fit(row.name, room);
   const name = o.selected ? (o.focused ? st.bold(st.accent(label)) : st.text(label)) : row.id == null ? st.dim(label) : st.text(label);
-  return st.base(head + st.dim(twisty) + ' ' + name + (count ? ' ' + st.dim(count.padStart(0)) : ''));
+  const line = head + st.dim(twisty) + ' ' + name + (count ? ' ' + st.dim(count) : '');
+  return st.base(endCell(line, width, st, o.selected && o.focused && row.hasChildren));
 }
