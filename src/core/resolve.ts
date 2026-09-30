@@ -1,6 +1,8 @@
 import type { Database } from 'bun:sqlite';
 import type { Project, TicketView } from '../db/types.ts';
-import { findProjectForCwd, findTicketsByName, getDefaultProject, getProjectByName, getTicket, getTicketById, listProjects } from '../db/queries.ts';
+import { join } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { createProject, findProjectForCwd, findTicketsByName, getDefaultProject, getProjectByName, getTicket, getTicketById, listProjects } from '../db/queries.ts';
 import { CliError } from './errors.ts';
 
 /**
@@ -17,8 +19,38 @@ export function resolveProject(db: Database, name?: string | null, cwd = process
   if (byCwd) return byCwd;
   const def = getDefaultProject(db);
   if (def) return def;
-  if (listProjects(db).length === 0) throw new CliError('no projects yet: run `salu add project "name" [path]` first');
+  if (listProjects(db).length === 0) throw new CliError('nothing here yet: run `salu add "what you want done"` and salu makes the project for you');
   throw new CliError('no default project: run `salu add project "name" [path]` or pass project=<name>');
+}
+
+/** `my ticket` -> `my-ticket`: a safe folder name. */
+export function folderSlug(name: string): string {
+  return name.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'project';
+}
+
+/**
+ * The project a new ticket goes to, without ever failing for lack of one.
+ * Order: explicit name (created when it does not exist yet) > the registered project whose folder
+ * contains cwd > a new project named `<ticket>-proj` with its own folder under cwd.
+ */
+export function projectForNewTicket(db: Database, ticketName: string, explicit?: string | null, cwd = process.cwd()): { project: Project; created: boolean } {
+  const name = explicit || undefined;
+  if (name) {
+    const p = getProjectByName(db, name);
+    return p ? { project: p, created: false } : { project: newProjectInFolder(db, name, cwd), created: true };
+  }
+  const byCwd = findProjectForCwd(db, cwd);
+  if (byCwd) return { project: byCwd, created: false };
+  const auto = `${folderSlug(ticketName)}-proj`;
+  const existing = getProjectByName(db, auto);
+  return existing ? { project: existing, created: false } : { project: newProjectInFolder(db, auto, cwd), created: true };
+}
+
+/** Creates a project whose folder is `<cwd>/<name>` (made if missing). */
+export function newProjectInFolder(db: Database, name: string, cwd = process.cwd()): Project {
+  const path = join(cwd, folderSlug(name));
+  mkdirSync(path, { recursive: true });
+  return createProject(db, { name, path });
 }
 
 /**

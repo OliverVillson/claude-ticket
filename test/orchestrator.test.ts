@@ -352,7 +352,7 @@ describe('control', () => {
     expect(d.resumed).toBe(true);
   });
 
-  test('a salu added while the orchestrator idles is picked up straight away', async () => {
+  test('a ticket added while the orchestrator idles is picked up straight away', async () => {
     const { orch, events } = make({ exitWhenEmpty: false });
     const run = orch.start();
     await until(() => events.some((e) => e.type === 'idle'));

@@ -12,7 +12,8 @@ const HELP = `salu — a fast ticket queue for Claude Code agents
 
 Usage   (salu ?  |  salu help  |  salu --help  shows this list; quote the ? in zsh: salu '?')
   salu add project "name" [path] [--model M] [--effort E] [--concurrency N] [--default]
-  salu add "name" "query" ["tags"]           tags: key=value pairs and bare labels
+  salu add "name" ["query"] ["tags"]           no project? one is made ("<name>-proj", in ./<name>-proj)
+                                               tags: key=value pairs and bare labels
   salu remove "name" [--yes]                 (also: salu remove project "name")
   salu change "name" [--name N] [--query Q] [--tags T] [--priority P] [--status S]
   salu change project "name" [--path P] [--model M] [--effort E] [--concurrency N] [--default]
@@ -25,6 +26,7 @@ Usage   (salu ?  |  salu help  |  salu --help  shows this list; quote the ? in z
 
 Tags
   project=<name>  model=opus|sonnet|haiku|<id>  effort=low|medium|high|xhigh|max
+  defaults: model claude-opus-5-5, effort medium (set per ticket, or per project with --model/--effort)
   priority=1..5 (1 highest, default 3)  max-turns=<n>  permission=plan|default|acceptEdits|bypass
   anything else (bug, docs, …) is a label
 

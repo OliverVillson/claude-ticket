@@ -6,6 +6,10 @@ export type Effort = (typeof EFFORTS)[number];
 export const PERMISSIONS = ['plan', 'default', 'acceptEdits', 'bypass', 'dontAsk'] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
+/** What workers run on, and how hard they think, when neither the ticket nor its project says. */
+export const DEFAULT_MODEL = 'claude-opus-5-5';
+export const DEFAULT_EFFORT = 'medium';
+
 export const MODEL_ALIASES = ['opus', 'sonnet', 'haiku'] as const;
 
 /** Tag keys the orchestrator reads. Anything else with `key=value` is kept as a custom tag. */

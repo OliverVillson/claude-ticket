@@ -401,7 +401,7 @@ export class Orchestrator {
       const t = getTicketById(this.db, id);
       if (!t || t.status !== 'running') {
         if (!a.abort.signal.aborted) {
-          this.log('info', `${a.ticket.name}: ${t ? `status changed to ${t.status}` : 'salu removed'}, stopping its worker`);
+          this.log('info', `${a.ticket.name}: ${t ? `status changed to ${t.status}` : 'ticket removed'}, stopping its worker`);
           a.abort.abort();
         }
       } else if (Date.now() - a.lastLiveWrite > this.heartbeatMs) this.writeLive(a, true);

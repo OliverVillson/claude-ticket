@@ -76,8 +76,8 @@ describe('SDK options', () => {
     expect(o.cwd).toBe('/work/web');
     expect(o.maxTurns).toBe(50);
     expect(o.permissionMode).toBe('acceptEdits');
-    expect(o.model).toBeUndefined();
-    expect(o.effort).toBeUndefined();
+    expect(o.model).toBe('claude-opus-5-5');
+    expect(o.effort).toBe('medium');
     expect(o.resume).toBeUndefined();
     expect(o.permissionPrompts).toBe('none');
     expect((o.systemPrompt as any).preset).toBe('claude_code');

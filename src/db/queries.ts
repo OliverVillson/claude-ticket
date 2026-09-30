@@ -2,6 +2,7 @@ import type { Database } from 'bun:sqlite';
 import type { Project, Run, RunOutcome, Ticket, TicketStatus, TicketView } from './types.ts';
 import { CliError } from '../core/errors.ts';
 import { appendFileSync } from 'node:fs';
+import { DEFAULT_MODEL } from '../core/tags.ts';
 import { wakeFile } from '../core/paths.ts';
 
 export const now = () => Date.now();
@@ -295,7 +296,7 @@ export function effectiveModel(db: Database, t: TicketView): string | null {
     /* ignore */
   }
   const p = getProjectById(db, t.project_id);
-  return p?.default_model ?? null;
+  return p?.default_model ?? DEFAULT_MODEL;
 }
 
 // ---------------------------------------------------------------------------
