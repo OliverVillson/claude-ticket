@@ -49,6 +49,12 @@ export interface ListViewProps {
   hints?: Array<[string, string]>;
   /** workers are running: the pixel dog runs in the header */
   working?: boolean;
+  /** live-activity box under the panes */
+  activity?: { title: string; lines: string[]; height: number };
+  /** the boxed command-line window, drawn under the panes and the activity area */
+  command?: React.ReactNode;
+  /** the command line has the focus: both panes look inactive */
+  commandFocus?: boolean;
 }
 
 export const LIST_HINTS: Array<[string, string]> = [
@@ -136,28 +142,36 @@ export function ListView(p: ListViewProps) {
       right.push(st.dim('  ' + parts.join(' · ')));
     }
   }
-  let lines = right;
-  let bare = false;
+  // Panes are always drawn as boxes so the focus indicator works with one pane or two. Height is
+  // fixed to the available rows so the activity area and the command line stay put.
+  const height = Math.max(1, p.rows);
+  const cmdFocus = !!p.commandFocus;
+  let lines: string[];
   if (p.sidebar) {
-    // Two boxes side by side; the one with the focus gets the heavy bright border and a marker.
-    bare = true;
     const { width, lines: left } = p.sidebar;
-    const height = Math.max(left.length, right.length);
     const rightInner = Math.max(10, cols - paneWidth(width) - 4);
-    const active = p.ticketFocus === false ? 'tree' : 'tickets';
-    const l = drawPane({ title: 'projects', lines: left, inner: width, active: active === 'tree', height }, st);
+    const l = drawPane({ title: 'projects', lines: left, inner: width, active: !cmdFocus && p.ticketFocus === false, height }, st);
     const padRight = right.map((r) => r + ' '.repeat(Math.max(0, rightInner - displayWidth(r))));
-    const r = drawPane({ title: 'tickets', lines: padRight, inner: rightInner, active: active === 'tickets', height }, st);
+    const r = drawPane({ title: 'tickets', lines: padRight, inner: rightInner, active: !cmdFocus && p.ticketFocus !== false, height }, st);
     lines = l.map((x, i) => x + r[i]!);
+  } else {
+    const inner = Math.max(10, cols - 4);
+    lines = drawPane({ title: 'tickets', lines: right.map((r) => r + ' '.repeat(Math.max(0, inner - displayWidth(r)))), inner, active: !cmdFocus, height }, st);
+  }
+  if (p.activity) {
+    const inner = Math.max(10, cols - 4);
+    const act = p.activity;
+    lines.push(...drawPane({ title: act.title, lines: act.lines.map((r) => r + ' '.repeat(Math.max(0, inner - displayWidth(r)))), inner, active: false, height: act.height, tone: 'text' }, st));
   }
   const body = lines.map((l, i) => (
     <Text key={i} wrap="truncate-end">
       {l || ' '}
     </Text>
   ));
+  if (p.command) body.push(<React.Fragment key="cmd">{p.command}</React.Fragment>);
 
   return (
-    <Frame columns={cols} header={{ left: titleText(crumbs), right: headerRight }} footer={footer} bare={bare}>
+    <Frame columns={cols} header={{ left: titleText(crumbs), right: headerRight }} footer={footer} bare>
       {body}
     </Frame>
   );

@@ -15,6 +15,8 @@ export interface PaneBox {
   active: boolean;
   /** number of content rows to draw (short panes are padded with blanks) */
   height: number;
+  /** title colour for a quiet box (the activity area names its ticket in light green) */
+  tone?: 'text';
 }
 
 export const paneWidth = (inner: number) => inner + 4;
@@ -25,7 +27,7 @@ export function drawPane(b: PaneBox, st: Style): string[] {
   const [tl, tr, bl, br, h, v] = b.active ? ['┏', '┓', '┗', '┛', '━', '┃'] : ['╭', '╮', '╰', '╯', '─', '│'];
   const label = b.active ? ` ▌${b.title} ` : ` ${b.title} `;
   const fill = Math.max(0, total - 2 - 1 - displayWidth(label));
-  const title = b.active ? st.bold(st.accent(label)) : st.dim(label);
+  const title = b.active ? st.bold(st.accent(label)) : b.tone === 'text' ? st.text(label) : st.dim(label);
   const out = [paint(tl + h) + title + paint(h.repeat(fill) + tr)];
   const blank = ' '.repeat(b.inner);
   for (let i = 0; i < b.height; i++) out.push(paint(v) + ' ' + (b.lines[i] ?? blank) + ' ' + paint(v));

@@ -1,6 +1,7 @@
 import React from 'react';
-import { Text } from 'ink';
+import { Box, Text } from 'ink';
 import { style as st } from '../style.ts';
+import { inkColor } from '../../ui/theme.ts';
 import { TextField } from './TextField.tsx';
 
 export interface CommandLineProps {
@@ -13,20 +14,30 @@ export interface CommandLineProps {
   nonce: number;
 }
 
-export const COMMAND_PLACEHOLDER = 'type : for a command, like add "fix login" or add project web';
+export const COMMAND_PLACEHOLDER = 'tab to type a command, like add "fix login" or add project web';
 
 /**
- * The prompt under the hint bar. Unfocused it is one dim line; focused it is a text field,
- * like the claude prompt. Commands are the same ones the shell accepts, with or without `salu`.
+ * The third window, at the bottom: a boxed prompt. Focused it has the heavy bright border and a
+ * `▌` marker (so it is clear without colour too) and takes plain typing; unfocused it is a light
+ * dim box with a hint. Commands are the same ones the shell accepts, with or without `salu`.
  */
 export function CommandLine(p: CommandLineProps) {
-  const width = Math.max(10, p.columns - 4);
-  if (p.busy) return <Text wrap="truncate-end">{' ' + st.accent('❯ ') + st.dim('running…')}</Text>;
-  if (!p.focused) return <Text wrap="truncate-end">{' ' + st.dim('❯ ' + COMMAND_PLACEHOLDER)}</Text>;
+  const width = Math.max(10, p.columns - 8);
+  const color = inkColor(p.focused ? 'accent' : 'chrome');
+  const border = color ? { borderColor: color } : { borderDimColor: !p.focused };
+  let content: React.ReactNode;
+  if (p.busy) content = <Text wrap="truncate-end">{st.accent('▌❯ ') + st.dim('running…')}</Text>;
+  else if (!p.focused) content = <Text wrap="truncate-end">{st.dim('❯ ' + COMMAND_PLACEHOLDER)}</Text>;
+  else
+    content = (
+      <Text wrap="truncate-end">
+        {st.accent('▌❯ ')}
+        <TextField key={p.nonce} value={p.value} onChange={p.onChange} focus width={width} placeholder='add "name"  ·  add project "name"  ·  ? lists everything' />
+      </Text>
+    );
   return (
-    <Text wrap="truncate-end">
-      {' ' + st.accent('❯ ')}
-      <TextField key={p.nonce} value={p.value} onChange={p.onChange} focus width={width} placeholder='add "name"  ·  add project "name"  ·  ? lists everything' />
-    </Text>
+    <Box borderStyle={p.focused ? 'bold' : 'round'} {...border} paddingX={1} width={p.columns}>
+      {content}
+    </Box>
   );
 }
