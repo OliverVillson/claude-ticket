@@ -91,3 +91,15 @@ Projects form a tree: `projects.parent_id` (NULL = top level; schema version 2 m
 - `ensureProjectChain(db, ["a", "b", "c"], cwd?): Project` (creates missing projects and folders)
 
 CLI: `salu add project "sub" --in parent` or `salu add project "parent/sub"`; `salu change project "x" --in parent|none`; `salu remove project "p"` asks first and names the tickets and subprojects it deletes (folders on disk are never touched); `salu run <project>` runs the whole subtree; `salu list --projects` shows the tree.
+
+## Follow-ups (multi-prompt tickets)
+
+`turns` table (schema v6): `id, ticket_id, role 'user'|'assistant', body, delivered 0|1, created_at`. The ticket's first prompt stays in `tickets.query`; everything after it is a turn. The scheduler stores the worker's final message (trailer line removed) as an `assistant` turn when a run ends `done` or `blocked`.
+
+`src/db/queries.ts`
+- `replyToTicket(db, ticketId, message, { now? }): TicketView` adds an undelivered `user` turn. A done, blocked or failed ticket is queued again; a running ticket keeps running and is queued again when it ends; a backlog ticket is refused.
+- `listTurns(db, ticketId)`, `pendingFollowUps(db, ticketId)`, `addTurn(...)`, `markFollowUpsDelivered(...)`.
+
+Scheduler: on dispatch, pending follow-ups go to the worker as `WorkerInput.followUp` (marked delivered). With a saved `session_id` the session is resumed with `buildFollowUpPrompt`; without one (a failed run started clean) `WorkerInput.history` is replayed in `buildFollowUpFreshPrompt`. `WorkerResult.text` carries the final message.
+
+CLI `salu reply "name" ["message"] [--now]`; TUI `r` in the detail view of a done, blocked or failed ticket (`TuiActions.reply`).
