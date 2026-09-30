@@ -45,6 +45,8 @@ export interface OpenListOptions extends CommonOptions {
   projectId?: number;
   /** show only these statuses (`--status`) */
   statuses?: TicketStatus[];
+  /** own the whole terminal (alternate screen), default true; ignored when stdout is not a TTY */
+  fullscreen?: boolean;
 }
 
 /** `salu list`: the interactive list. Resolves when the user quits. */
@@ -54,7 +56,7 @@ export async function openList(o: OpenListOptions = {}): Promise<void> {
   const initial = loadSnapshot(db, { projectId, statuses: o.statuses });
   await mount(
     <App db={db} projectId={projectId} statuses={o.statuses} actions={{ ...defaultActions(db), ...o.actions }} pollMs={o.pollMs} initial={initial} />,
-    { stdout: o.stdout, stdin: o.stdin },
+    { stdout: o.stdout, stdin: o.stdin, fullscreen: o.fullscreen ?? true },
   );
 }
 
