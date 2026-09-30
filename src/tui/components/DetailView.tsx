@@ -29,7 +29,7 @@ export const DETAIL_HINTS: Array<[string, string]> = [
   ['e', 'edit'],
   ['d', 'delete'],
   ['u', 'queue'],
-  ['r', 'run now'],
+  ['r', 'reply / run now'],
   ['q', 'quit'],
 ];
 
@@ -63,7 +63,7 @@ export function DetailView(p: DetailViewProps) {
   const hasTags = tagBits.length > 0;
   const hasError = !!t.error;
   const hasRun = !!run;
-  const fixed = 1 + (hasTags ? 1 : 0) + 1 + (hasError ? 1 : 0) + (hasRun ? 2 : 0);
+  const fixed = 1 + (hasTags ? 1 : 0) + 1 + (hasError ? 1 : 0) + (hasRun ? 2 : 0) + (p.detail.turns.length ? 3 : 0);
   const logBudget = Math.min(p.log.length, Math.max(0, Math.min(8, p.rows - fixed - 3)));
   const queryBudget = Math.max(2, p.rows - fixed - logBudget);
   const queryLines = wrapText(t.query, inner);
@@ -81,6 +81,21 @@ export function DetailView(p: DetailViewProps) {
     if (run.cost_usd) runBits.push(fmtCost(run.cost_usd));
   }
 
+  // The conversation after the first prompt: the newest few turns, each cut to a few lines.
+  const turnBudget = Math.max(0, Math.min(10, p.rows - fixed - logBudget - shownQuery.length - 1));
+  const turnLines: string[] = [];
+  if (p.detail.turns.length && turnBudget >= 2) {
+    const perTurn = Math.max(1, Math.floor((turnBudget - 1) / Math.min(2, p.detail.turns.length)));
+    for (const x of p.detail.turns.slice(-2)) {
+      const who = x.role === 'user' ? st.accent('you ›') : paint(st, 'green', 'worker ›');
+      const wrapped = wrapText(x.body.trim(), inner - 9);
+      const cut = wrapped.slice(0, perTurn);
+      if (wrapped.length > cut.length) cut[cut.length - 1] = truncate(cut[cut.length - 1]! + ' …', inner - 9);
+      turnLines.push(who + ' ' + cut[0] + (x.role === 'user' && !x.delivered ? st.dim('  (waiting for the worker)') : ''));
+      for (const l of cut.slice(1)) turnLines.push('         ' + l);
+    }
+  }
+
   const lines: string[] = [];
   lines.push(
     paintStatus(st, t.status, glyph + ' ' + info.label) +
@@ -94,6 +109,10 @@ export function DetailView(p: DetailViewProps) {
   if (hasTags) lines.push(st.dim(tagBits.join('   ')));
   lines.push('');
   for (const l of shownQuery) lines.push(l);
+  if (turnLines.length) {
+    lines.push('');
+    lines.push(...turnLines);
+  }
   if (hasError) lines.push(paint(st, 'red', '✗ ' + truncate(t.error!.replace(/\s+/g, ' '), inner - 2)));
   if (hasRun) {
     lines.push('');

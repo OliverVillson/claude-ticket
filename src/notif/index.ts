@@ -146,8 +146,11 @@ export function notifyProblem(db: Database, projectId: number, title: string, bo
     const project = getProjectById(db, projectId);
     if (!project) return;
     const m: NewMessage = { type: 'note', level: 'error', title: clip(title, 300)!, body: clip(body, 2000) };
-    if (getRemote(db, projectId)?.role === 'box') enqueueMessage(db, projectId, project.name, boxName(), m);
-    else postLocal(db, projectId, m);
+    if (getRemote(db, projectId)?.role === 'box') {
+      // The transport may already have queued "The box stopped: ..." for this (its environment event): once is enough.
+      const recent = db.query<{ c: number }, [number, number]>("SELECT COUNT(*) AS c FROM remote_messages WHERE direction = 'out' AND project_id = ? AND at > ? AND body LIKE '%\"title\":\"The box stopped:%'").get(projectId, Date.now() - 60_000)!.c;
+      if (!recent) enqueueMessage(db, projectId, project.name, boxName(), m);
+    } else postLocal(db, projectId, m);
   } catch {
     /* best effort */
   }

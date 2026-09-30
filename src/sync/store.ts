@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import type { MessageFile } from './format.ts';
+import type { MessageFile, ReplyFile } from './format.ts';
 import { newId } from './format.ts';
 
 export type RemoteRole = 'client' | 'box';
@@ -76,6 +76,47 @@ export function isRemoteOut(db: Database, ticketId: number): boolean {
 
 export function remoteTicketForLocal(db: Database, ticketId: number, direction: 'in' | 'out'): RemoteTicket | null {
   return db.query<RemoteTicket, [number, string]>('SELECT * FROM remote_tickets WHERE ticket_id = ? AND direction = ?').get(ticketId, direction) ?? null;
+}
+
+// --- replies -----------------------------------------------------------------------------
+
+interface ReplyRow {
+  id: string;
+  project_id: number;
+  direction: 'out' | 'in';
+  ref: string | null;
+  name: string | null;
+  body: string;
+  now: number;
+  at: number;
+  sent: number;
+}
+
+/** Client: queue a follow-up for the box (sent by the next sync). Returns the reply's id. */
+export function addOutReply(db: Database, projectId: number, r: { ref?: string; name?: string; body: string; now?: boolean }): string {
+  const id = newId();
+  db.run("INSERT INTO remote_replies (id, project_id, direction, ref, name, body, now, at, sent) VALUES (?, ?, 'out', ?, ?, ?, ?, ?, 0)", [id, projectId, r.ref ?? null, r.name ?? null, r.body, r.now ? 1 : 0, Number(id.slice(0, 13))]);
+  return id;
+}
+
+export function pendingOutReplies(db: Database, projectId: number): ReplyFile[] {
+  return db
+    .query<ReplyRow, [number]>("SELECT * FROM remote_replies WHERE project_id = ? AND direction = 'out' AND sent = 0 ORDER BY id")
+    .all(projectId)
+    .map((r) => ({ v: 1, id: r.id, project: '', ...(r.ref ? { ref: r.ref } : {}), ...(r.name ? { name: r.name } : {}), body: r.body, now: !!r.now, at: r.at }));
+}
+
+export function markRepliesSent(db: Database, ids: string[]): void {
+  for (const id of ids) db.run('UPDATE remote_replies SET sent = 1 WHERE id = ?', [id]);
+}
+
+export function knownReply(db: Database, id: string): boolean {
+  return !!db.query('SELECT 1 FROM remote_replies WHERE id = ?').get(id);
+}
+
+/** Box: remember a reply file has been handled, so it is applied once. */
+export function recordInReply(db: Database, projectId: number, r: ReplyFile): void {
+  db.run("INSERT OR IGNORE INTO remote_replies (id, project_id, direction, ref, name, body, now, at, sent) VALUES (?, ?, 'in', ?, ?, ?, ?, ?, 1)", [r.id, projectId, r.ref ?? null, r.name ?? null, r.body, r.now ? 1 : 0, r.at]);
 }
 
 // --- messages ----------------------------------------------------------------------------

@@ -108,6 +108,23 @@ describe('reading', () => {
   });
 });
 
+describe('the box stopped note', () => {
+  test('an error note from the transport reads sensibly in salu notif', async () => {
+    process.env.NO_COLOR = '1';
+    const { recordRemoteEvent } = await import('../src/sync/events.ts');
+    setRemote(db, { project_id: web.id, url: 'file:///x', role: 'box', name: 'vps' });
+    recordRemoteEvent(db, { type: 'environment', message: 'Claude Code is not logged in' } as any);
+    // what a client stores once synced
+    const row = db.query<{ id: string; body: string }, []>("SELECT id, body FROM remote_messages WHERE direction = 'out'").get()!;
+    storeIncomingMessage(db, web.id, { ...JSON.parse(row.body), id: newId() });
+    const n = listNotifs(db)[0]!;
+    expect(n).toMatchObject({ type: 'note', level: 'error' });
+    const out = (await cli('notif', '--plain', '--no-fetch')).out;
+    expect(out).toContain('The box stopped: Claude Code is not logged in');
+    expect(out).toContain('salu runner restart web');
+  });
+});
+
 describe('terminal escapes', () => {
   const OSC52 = '\u001b]52;c;ZXZpbA==\u0007';
   test('cleanText drops escapes and control characters, keeps newlines and tabs only for bodies', () => {

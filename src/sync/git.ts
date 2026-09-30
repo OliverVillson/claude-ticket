@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, linkSync, lstatSync, unlinkSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { dirname, join, sep } from 'node:path';
 import { CliError } from '../core/errors.ts';
 import { folderSlug } from '../core/resolve.ts';
 import { ticketHome } from '../core/paths.ts';
-import { INBOX_BRANCH } from './format.ts';
+import { INBOX_BRANCH, MAX_FILE_BYTES } from './format.ts';
 
 /** Working copy of the inbox branch for one project: ~/.salu/sync/<project>. */
 export function inboxDir(projectName: string): string {
@@ -89,9 +89,19 @@ export function exchange(dir: string, url: string, files: Record<string, string>
     const all: Record<string, string> = remoteHas ? { ...files } : { 'salu-inbox/README.md': README, ...files };
     for (const [name, text] of Object.entries(all)) {
       const p = join(dir, name);
-      if (existsSync(p)) continue;
-      mkdirSync(dirname(p), { recursive: true });
-      writeFileSync(p, text);
+      if (existsSync(p) || lstatOrNull(p)) continue;
+      assertInside(dir, dirname(p));
+      // Write to a temp name in the verified folder, then rename: never onto an existing file or link.
+      const tmp = join(dirname(p), `.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`);
+      writeFileSync(tmp, text, { flag: 'wx' });
+      try {
+        linkSync(tmp, p); // fails if p exists (even as a dangling link), unlike rename
+      } catch (e: any) {
+        if (e?.code !== 'EPERM' && e?.code !== 'ENOTSUP' && e?.code !== 'EXDEV') throw e;
+        writeFileSync(p, text, { flag: 'wx' }); // a file system without hard links
+      } finally {
+        unlinkSync(tmp);
+      }
       added.push(name);
     }
     if (!added.length) return { added };
@@ -106,14 +116,52 @@ export function exchange(dir: string, url: string, files: Record<string, string>
   throw new CliError(`could not push to ${url} after several tries: ${gitProblem(last, url)}`);
 }
 
+function lstatOrNull(p: string) {
+  try {
+    return lstatSync(p);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The remote controls the tree we check out, so a path inside it may be a symlink (git is run with
+ * core.symlinks=false, which turns them into plain files, and this checks again): create the folder
+ * step by step and refuse anything that is not a real directory inside `dir`.
+ */
+function assertInside(dir: string, target: string): void {
+  const root = realpathSync(dir);
+  const rel = target.slice(dir.length).split(sep).filter(Boolean);
+  let cur = dir;
+  for (const part of rel) {
+    cur = join(cur, part);
+    const st = lstatOrNull(cur);
+    if (!st) mkdirSync(cur);
+    else if (!st.isDirectory() || st.isSymbolicLink()) throw new CliError(`the inbox on the remote is not safe (${part} is not a plain folder); refusing to write into it`);
+  }
+  const real = realpathSync(target);
+  if (real !== root && !real.startsWith(root + sep)) throw new CliError('the inbox on the remote points outside the sync folder; refusing to write into it');
+}
+
+const MAX_FILES = 10000;
+
 /** Files in a directory of the working copy (name → text), for the ones `want` accepts. */
 export function readDir(dir: string, sub: string, want: (name: string) => boolean): Array<{ name: string; text: string }> {
   const d = join(dir, sub);
-  if (!existsSync(d)) return [];
-  return readdirSync(d)
-    .filter((n) => n.endsWith('.json') && want(n))
-    .sort()
-    .map((name) => ({ name, text: readFileSync(join(d, name), 'utf8') }));
+  const top = lstatOrNull(d);
+  if (!top || !top.isDirectory() || top.isSymbolicLink()) return [];
+  try {
+    assertInside(dir, d);
+  } catch {
+    return [];
+  }
+  const out: Array<{ name: string; text: string }> = [];
+  for (const name of readdirSync(d).filter((n) => n.endsWith('.json') && want(n)).sort().slice(-MAX_FILES)) {
+    const st = lstatOrNull(join(d, name));
+    if (!st || !st.isFile() || st.size > MAX_FILE_BYTES) continue; // never read a huge file or follow a link
+    out.push({ name, text: readFileSync(join(d, name), 'utf8') });
+  }
+  return out;
 }
 
 const README = `# salu inbox

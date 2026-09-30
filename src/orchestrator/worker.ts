@@ -18,7 +18,7 @@ import { CLAUDE_MISSING, EnvironmentError, claudeExecutableOption, environmentPr
 import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../core/tags.ts';
 import { kernelOptions, prepareKernel, sandboxOn, scrubSecrets } from '../core/kernel.ts';
 import { DEFAULT_TOOLS, denialsFrom, toolsToSdk } from '../core/tools.ts';
-import { buildPrompt, buildResumePrompt, parseTrailer, systemAppend } from './prompt.ts';
+import { TRAILER_RE, buildFollowUpFreshPrompt, buildFollowUpPrompt, buildPrompt, buildResumePrompt, parseTrailer, systemAppend } from './prompt.ts';
 import type { WorkerInput, WorkerLive, WorkerResult, WorkerRunner } from './types.ts';
 
 export const DEFAULT_MAX_TURNS = 50;
@@ -188,7 +188,20 @@ export function betterHit(current: LimitHit | null, next: LimitHit): boolean {
   return current.resetsAt == null && next.resetsAt != null;
 }
 
+/** The worker's final message without its `TICKET:` trailer line: what the human reads as the reply. */
+export function replyText(text: string): string {
+  const lines = text.trimEnd().split('\n');
+  for (let i = lines.length - 1; i >= 0 && i >= lines.length - 4; i--) {
+    if (TRAILER_RE.test(lines[i]!.trim())) {
+      lines.splice(i, 1);
+      break;
+    }
+  }
+  return lines.join('\n').trim();
+}
+
 export function promptFor(input: WorkerInput): string {
+  if (input.followUp?.length) return input.resume ? buildFollowUpPrompt(input.ticket, input.followUp) : buildFollowUpFreshPrompt(input.ticket, input.history ?? [], input.followUp);
   return input.resume ? buildResumePrompt(input.ticket, input.resumeReason ?? 'it was paused or the orchestrator restarted') : buildPrompt(input.ticket);
 }
 
@@ -327,11 +340,11 @@ export async function runWorker(p: RunWorkerParams): Promise<WorkerResult> {
   }
 
   const sessionId = live.sessionId ?? p.resume ?? null;
-  const base = { sessionId, costUsd: Number(result?.total_cost_usd ?? 0) || 0, turns: Number(result?.num_turns ?? live.turns) || 0, limit: null as LimitHit | null, resumable: false, denials: denialsFrom(result?.permission_denials) };
+  const text: string = result ? (result.subtype === 'success' ? String(result.result ?? '') : (result.errors ?? []).join('\n')) : '';
+  const base = { sessionId, text: replyText(text), costUsd: Number(result?.total_cost_usd ?? 0) || 0, turns: Number(result?.num_turns ?? live.turns) || 0, limit: null as LimitHit | null, resumable: false, denials: denialsFrom(result?.permission_denials) };
 
   if (abort.signal.aborted) return { ...base, outcome: 'killed', message: 'stopped by the orchestrator', subtype: 'aborted' };
 
-  const text: string = result ? (result.subtype === 'success' ? String(result.result ?? '') : (result.errors ?? []).join('\n')) : '';
   const isError = !result || result.is_error || result.subtype !== 'success';
 
   // A usage limit: the typed event, the limit text in the result or the crash, or a 429 the CLI gave up on.

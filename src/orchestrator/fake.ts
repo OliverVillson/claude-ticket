@@ -63,7 +63,9 @@ export const fakeRunner: WorkerRunner = {
     const t = input.ticket;
     const sessionId = input.resume ?? `fake-${t.id}-${Date.now().toString(36)}-${++counter}`;
     const base = { session_id: sessionId, uuid: `${sessionId}-${counter}-${Date.now()}` };
-    let script = t.query.trim();
+    // A follow-up is its own script when it starts with FAKE:, otherwise the worker just does it.
+    let script = input.followUp?.length ? input.followUp[input.followUp.length - 1]!.trim() : t.query.trim();
+    if (input.followUp?.length && !/^FAKE:/i.test(script)) script = `FAKE:done Follow-up done: ${script}`;
     yield { type: 'ticket_start', ts: Date.now(), ticket_id: t.id, name: t.name, project: t.project, resume: !!input.resume, runner: 'fake', options: { model: 'fake', cwd: t.project_path } };
     const sleep = /^FAKE:sleep\s+(\d+)\s+then\s+(.*)$/is.exec(script);
     if (sleep) {

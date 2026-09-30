@@ -6,8 +6,9 @@ import { resolveProject } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
 import { dim, green, red } from '../../core/ansi.ts';
 import { insideWorker, originUrl } from '../../core/kernel.ts';
+import { unsignedWarning } from '../../sync/format.ts';
 import { checkRemote } from '../../sync/git.ts';
-import { getRemote, listRemotes, pendingMessages, pendingOutTickets, removeRemote, setRemote, unreadCount } from '../../sync/store.ts';
+import { getRemote, listRemotes, pendingMessages, pendingOutReplies, pendingOutTickets, removeRemote, setRemote, unreadCount } from '../../sync/store.ts';
 import { boxName, syncAll, syncProject, type SyncSummary } from '../../sync/sync.ts';
 import { helpIf } from './_shared.ts';
 
@@ -37,11 +38,18 @@ function describe(s: SyncSummary): string {
   const bits: string[] = [];
   if (s.ticketsSent) bits.push(`sent ${s.ticketsSent} ticket${s.ticketsSent === 1 ? '' : 's'}`);
   if (s.ticketsReceived) bits.push(`got ${s.ticketsReceived} ticket${s.ticketsReceived === 1 ? '' : 's'}`);
+  if (s.repliesSent) bits.push(`sent ${s.repliesSent} repl${s.repliesSent === 1 ? 'y' : 'ies'}`);
+  if (s.repliesReceived) bits.push(`got ${s.repliesReceived} repl${s.repliesReceived === 1 ? 'y' : 'ies'}`);
   if (s.messagesSent) bits.push(`sent ${s.messagesSent} message${s.messagesSent === 1 ? '' : 's'}`);
   if (s.messagesReceived) bits.push(`${s.messagesReceived} new message${s.messagesReceived === 1 ? '' : 's'}`);
   if (s.branchesPushed.length) bits.push(`pushed ${s.branchesPushed.join(', ')}`);
   return bits.length ? bits.join(', ') : 'nothing new';
 }
+
+const warnUnsigned = () => {
+  const w = unsignedWarning();
+  if (w) console.error(`${red('!')} ${w}`);
+};
 
 export async function remote(p: Parsed): Promise<number> {
   if (helpIf(p, HELP)) return 0;
@@ -63,6 +71,7 @@ export async function remote(p: Parsed): Promise<number> {
       setRemote(db, { project_id: project.id, url, role, name: flagStr(p, 'name') ?? (role === 'box' ? boxName() : '') });
       console.log(`${green('✓')} ${project.name} ${dim(`→ ${url}`)} ${dim(role === 'box' ? '(this machine runs its tickets)' : '(tickets you add are sent to the box)')}`);
       if (role === 'box') console.log(dim('  keep it in sync with: salu remote sync --watch'));
+      warnUnsigned();
       return 0;
     }
     case 'list':
@@ -70,7 +79,7 @@ export async function remote(p: Parsed): Promise<number> {
     case undefined: {
       const rows = listRemotes(db).map((r) => {
         const project = getProjectById(db, r.project_id);
-        return { project: project?.name ?? `#${r.project_id}`, url: r.url, role: r.role, last_sync: r.last_sync, error: r.last_error, waiting: pendingOutTickets(db, r.project_id).length + pendingMessages(db, r.project_id).length };
+        return { project: project?.name ?? `#${r.project_id}`, url: r.url, role: r.role, last_sync: r.last_sync, error: r.last_error, waiting: pendingOutTickets(db, r.project_id).length + pendingOutReplies(db, r.project_id).length + pendingMessages(db, r.project_id).length };
       });
       if (flagBool(p, 'json')) {
         console.log(JSON.stringify({ remotes: rows, unread: unreadCount(db) }, null, 2));
@@ -100,6 +109,7 @@ export async function remote(p: Parsed): Promise<number> {
     case 'sync': {
       const only = rest[0] ? [resolveProject(db, rest[0]).id] : undefined;
       if (!listRemotes(db).length) throw new CliError('no remotes yet. Try: salu remote add <project> [git-url] [--box]');
+      warnUnsigned();
       const once = (): boolean => {
         let bad = false;
         for (const r of syncAll(db, only)) {

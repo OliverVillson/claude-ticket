@@ -21,6 +21,7 @@ import { ticketDenials } from '../core/allow.ts';
 import { PropsView } from './components/PropsView.tsx';
 import { DetailView } from './components/DetailView.tsx';
 import { FormView, type FormValues } from './components/FormView.tsx';
+import { ReplyView } from './components/ReplyView.tsx';
 import { HelpView } from './components/HelpView.tsx';
 import { style as st } from './style.ts';
 import { CommandLine } from './components/CommandLine.tsx';
@@ -58,7 +59,7 @@ export interface AppProps {
 
 export type FormResult = { action: 'added' | 'saved'; ticket: TicketView } | { action: 'cancelled' } | null;
 
-type Mode = 'list' | 'detail' | 'props' | 'form' | 'help' | 'result' | 'notif';
+type Mode = 'list' | 'detail' | 'props' | 'form' | 'help' | 'result' | 'reply' | 'notif';
 
 /** Lines around the panes: header, two border lines, the boxed command line (3), the hint bar, plus one spare. */
 const CHROME_LINES = 8;
@@ -133,6 +134,7 @@ export function App(p: AppProps) {
     const t = p.form.ticketId != null ? getTicketById(db, p.form.ticketId) : null;
     return { mode: t ? 'edit' : 'add', ticket: t ?? undefined, projectId: t?.project_id ?? p.form.projectId, initial: formValuesFor(t) };
   });
+  const [replyError, setReplyError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [message, setMessage] = useState<Message | null>(null);
   const [detail, setDetail] = useState<TicketDetail | null>(null);
@@ -275,7 +277,7 @@ export function App(p: AppProps) {
   // Detail: reload the ticket, its latest run and the log tail every second while open.
   const selectedId = selected?.id ?? null;
   useEffect(() => {
-    if ((mode !== 'detail' && mode !== 'props') || selectedId == null) return;
+    if ((mode !== 'detail' && mode !== 'props' && mode !== 'reply') || selectedId == null) return;
     const load = () => {
       const t = getTicketById(db, selectedId);
       if (!t) {
@@ -618,7 +620,10 @@ export function App(p: AppProps) {
         return;
       }
       if (input === 'r') {
-        if (selected) doRunNow(selected);
+        if (mode === 'detail' && selected && (selected.status === 'done' || selected.status === 'blocked' || selected.status === 'failed')) {
+          setReplyError(null);
+          setMode('reply');
+        } else if (selected) doRunNow(selected);
         return;
       }
       if (input === 'a' && mode === 'list' && selected && ticketDenials(selected).length) {
@@ -652,7 +657,7 @@ export function App(p: AppProps) {
         else exit();
       }
     },
-    { isActive: mode !== 'form' && mode !== 'props' && mode !== 'notif' },
+    { isActive: mode !== 'form' && mode !== 'props' && mode !== 'reply' && mode !== 'notif' },
   );
 
   // ----- render --------------------------------------------------------------------------
@@ -711,6 +716,29 @@ export function App(p: AppProps) {
         }}
       />
     );
+  if (mode === 'reply' && detail && selected && detail.ticket.id === selected.id) {
+    return (
+      <ReplyView
+        columns={columns}
+        rows={viewportRows(termRows, 4)}
+        ticket={selected}
+        turns={detail.turns}
+        error={replyError}
+        onChange={() => replyError && setReplyError(null)}
+        onCancel={() => setMode('detail')}
+        onSubmit={(msg) => {
+          try {
+            const t = actions.reply(selected, msg);
+            say(t.status === 'running' ? `sent to "${t.name}": the next turn` : `sent to "${t.name}" and queued it`);
+            setMode('detail');
+            refresh(true);
+          } catch (e: any) {
+            setReplyError(String(e?.message ?? e));
+          }
+        }}
+      />
+    );
+  }
   if (mode === 'help') return <HelpView columns={columns} scopeName={scopeName} />;
   if (mode === 'detail' && detail) {
     return (

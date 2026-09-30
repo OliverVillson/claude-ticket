@@ -14,6 +14,7 @@ const KEYS: Array<[string, string]> = [
   ['a', 'on a ticket blocked by a permission: allow what it was refused and queue it again'],
   ['u', 'queue the selected ticket (saved tickets stay in the backlog until then), or take a queued one back'],
   ['r', 'run the selected ticket next, ahead of the queue'],
+  ['r  (open ticket)', 'on a done, blocked or failed ticket: reply to it, the worker keeps the same session (answers a blocked ticket too)'],
   ['p', 'pause or resume the orchestrator'],
   ['n', 'notifications: messages from your project orchestrators (done, blocked, failed); rest the mouse on one, or press ⏎, to mark it read'],
   ['/', 'filter as you type: bug  #label  status:running  p1  p<=2  @project  model:opus  -done'],

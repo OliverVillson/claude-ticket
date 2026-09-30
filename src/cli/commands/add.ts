@@ -90,6 +90,7 @@ export async function add(p: Parsed): Promise<number> {
   const priority = priorityFlag !== undefined ? validatePriority(priorityFlag) : (parsed.priority ?? 3);
   const { project, created } = projectForNewTicket(db, name, flagStr(p, 'project') ?? parsed.project);
   if (created) console.log(`${green('✓')} project ${project.name} ${dim(`→ ${project.path}`)}`);
+  const boxClient = getRemote(db, project.id)?.role === 'client';
   const t = createTicket(db, {
     project_id: project.id,
     name,
@@ -97,7 +98,8 @@ export async function add(p: Parsed): Promise<number> {
     tags: parsed.tags,
     labels: parsed.labels,
     priority,
-    status: flagBool(p, 'queue') ? 'todo' : 'backlog',
+    // A ticket for a box is created unclaimable (backlog) and only shown as queued once it is published.
+    status: flagBool(p, 'queue') && !boxClient ? 'todo' : 'backlog',
   });
   const remote = getRemote(db, project.id);
   if (remote?.role === 'client') {

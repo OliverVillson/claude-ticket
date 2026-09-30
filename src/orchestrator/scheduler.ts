@@ -11,7 +11,8 @@ import { statSync, watch, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
 import { recordRemoteEvent } from '../sync/events.ts';
 import { notifyEvent, notifyProblem } from '../notif/index.ts';
-import { claimNextTicket, createRun, finishRun, getProjectById, getState, inheritedProject, getTicketById, listProjects, listTickets, setState, updateTicket, type TicketPatch } from '../db/queries.ts';
+import { isRemoteOut } from '../sync/store.ts';
+import { addTurn, claimNextTicket, createRun, listTurns, markFollowUpsDelivered, pendingFollowUps, finishRun, getProjectById, getState, inheritedProject, getTicketById, listProjects, listTickets, setState, updateTicket, type TicketPatch } from '../db/queries.ts';
 import { STATE, type Run, type TicketStatus, type TicketView } from '../db/types.ts';
 import { CliError } from '../core/errors.ts';
 import { logsDir, ticketHome, wakeFile } from '../core/paths.ts';
@@ -284,6 +285,9 @@ export class Orchestrator {
     db.run('UPDATE runs SET log_path = ? WHERE id = ?', [logPath, run.id]);
     run.log_path = logPath;
     const resumed = !!t.session_id;
+    const pending = pendingFollowUps(db, t.id);
+    const followUp = pending.length ? pending.map((x) => x.body) : undefined;
+    if (pending.length) markFollowUpsDelivered(db, t.id);
     const abort = new AbortController();
     const startedAt = Date.now();
     const live: WorkerLive = { turns: 0, lastTool: null, lastText: null, model: null, sessionId: t.session_id };
@@ -298,6 +302,8 @@ export class Orchestrator {
       logPath,
       runner: this.runner!,
       resume: resumed ? t.session_id : null,
+      followUp,
+      history: followUp && !resumed ? listTurns(db, t.id).filter((x) => x.delivered).map((x) => ({ role: x.role, body: x.body })) : undefined,
       resumeReason: t.error ? t.error : 'it was paused or the orchestrator restarted',
       abort,
       onRateLimit: (info) => recordRateLimitEvent(this.db, info),
@@ -330,6 +336,10 @@ export class Orchestrator {
     this.active.delete(t.id);
     clearWorkerInfo(db, t.id);
     const now = Date.now();
+    if (result.outcome === 'done' || result.outcome === 'blocked') {
+      const reply = (result.text ?? '').trim() || result.message?.trim();
+      if (reply) addTurn(db, t.id, 'assistant', reply);
+    }
     finishRun(db, entry.run.id, { outcome: result.outcome, turns: result.turns, cost_usd: result.costUsd });
 
     const fresh = getTicketById(db, t.id);
@@ -381,6 +391,12 @@ export class Orchestrator {
           patch.error = result.message;
           if (patch.status === 'failed') patch.denied = result.denials?.length ? JSON.stringify(result.denials) : null;
           break;
+      }
+      // A follow-up sent while the worker was busy: the ticket goes straight back to the queue.
+      if ((patch.status === 'done' || patch.status === 'blocked') && pendingFollowUps(db, t.id).length) {
+        patch.status = 'todo';
+        patch.attempts = 0;
+        patch.finished_at = null;
       }
       status = patch.status ?? null;
       updateTicket(db, t.id, patch);
@@ -450,7 +466,8 @@ export class Orchestrator {
   }
 
   private queuedCount(): number {
-    const rows = listTickets(this.db, { status: ['todo', 'paused'] });
+    // Tickets sent to a box (salu remote) only show as queued here; this machine never runs them.
+    const rows = listTickets(this.db, { status: ['todo', 'paused'] }).filter((r) => !isRemoteOut(this.db, r.id));
     return this.opts.projectIds ? rows.filter((r) => this.opts.projectIds!.includes(r.project_id)).length : rows.length;
   }
 
