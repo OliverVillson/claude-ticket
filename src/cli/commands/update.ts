@@ -31,17 +31,17 @@ export interface UpdateOptions {
   log: (line: string) => void;
 }
 
-/** "v1.2.3" / "1.2.3-rc.1" → [1,2,3]; anything unparsable → undefined. */
+/** "v1.2.3" / "1.2.3-rc.1" → [1,2,3,0]; a fourth number ("v0.2.2.1") is kept; anything unparsable → undefined. */
 export function parseVersion(v: string): number[] | undefined {
-  const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(v.trim());
-  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : undefined;
+  const m = /^v?(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?/.exec(v.trim());
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4] ?? 0)] : undefined;
 }
 
 /** Negative when a < b, 0 when equal, positive when a > b. */
 export function compareVersions(a: string, b: string): number {
-  const x = parseVersion(a) ?? [0, 0, 0];
-  const y = parseVersion(b) ?? [0, 0, 0];
-  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i]! - y[i]!;
+  const x = parseVersion(a) ?? [0, 0, 0, 0];
+  const y = parseVersion(b) ?? [0, 0, 0, 0];
+  for (let i = 0; i < 4; i++) if (x[i] !== y[i]) return x[i]! - y[i]!;
   return 0;
 }
 
