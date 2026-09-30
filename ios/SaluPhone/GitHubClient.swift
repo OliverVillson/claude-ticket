@@ -77,7 +77,8 @@ struct GitHubClient {
                 if seen.insert(m.id).inserted { out.append(m) }
                 continue
             }
-            let f = try JSONDecoder().decode(FileBody.self, from: try await request("contents/\(e.path)?ref=\(Self.branch)"))
+            let path = e.path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""  // a name from the remote: keep ? and # out of the URL
+            let f = try JSONDecoder().decode(FileBody.self, from: try await request("contents/\(path)?ref=\(Self.branch)"))
             let raw = Data(base64Encoded: f.content.replacingOccurrences(of: "\n", with: "")) ?? Data()
             if let m = try? JSONDecoder().decode(SaluMessage.self, from: raw), m.v == 1, seen.insert(m.id).inserted { out.append(m) }
         }

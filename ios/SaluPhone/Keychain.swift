@@ -26,7 +26,13 @@ enum Keychain {
         guard !value.isEmpty else { return }
         var add = query(account)
         add[kSecValueData as String] = Data(value.utf8)
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        // Readable only while the phone is unlocked, never synced to iCloud or restored onto another device.
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         SecItemAdd(add as CFDictionary, nil)
+    }
+
+    /// Items saved by earlier builds used AfterFirstUnlock (could move with a backup): write them again.
+    static func migrateAccessibility(_ account: String) {
+        if let value = get(account) { set(value, for: account) }
     }
 }

@@ -36,6 +36,10 @@ final class Store: ObservableObject {
             Keychain.set(old, for: "github-token")
         }
         defaults.removeObject(forKey: "token")
+        if !defaults.bool(forKey: "keychainThisDeviceOnly") {
+            Keychain.migrateAccessibility("github-token")
+            defaults.set(true, forKey: "keychainThisDeviceOnly")
+        }
         token = t
 
         var ids = Set(defaults.stringArray(forKey: "readIds") ?? [])
