@@ -147,3 +147,30 @@ describe('salu reply', () => {
     expect(getTicketById(db, t.id)!.status).toBe('todo');
   });
 });
+
+describe('terminal escapes in worker text', () => {
+  test('stripControl removes OSC 52, CSI and stray control bytes, keeps tabs and newlines', async () => {
+    const { stripControl } = await import('../src/core/ansi.ts');
+    expect(stripControl('a\u001b]52;c;ZXZpbA==\u0007b')).toBe('ab');
+    expect(stripControl('a\u001b]52;c;ZXZpbA==\u001b\\b')).toBe('ab');
+    expect(stripControl('\u001b[31mred\u001b[0m\u0000\u0008x')).toBe('redx');
+    expect(stripControl('l1\n\tl2\r\u009d52;c;x\u009c!')).toBe('l1\n\tl2!');
+  });
+  test('salu reply prints a hostile reply without its escapes', async () => {
+    const t = mk('evil', 'FAKE:done hi\u001b]52;c;ZXZpbA==\u0007there');
+    await run();
+    const out: string[] = [];
+    const log = console.log;
+    console.log = (...a: unknown[]) => void out.push(a.join(' '));
+    try {
+      await dispatch(['reply', 'evil']);
+    } finally {
+      console.log = log;
+    }
+    const text = out.join('\n');
+    expect(text).toContain('hithere');
+    expect(text).not.toContain('\u001b]');
+    expect(text).not.toContain('\u0007');
+    void t;
+  });
+});

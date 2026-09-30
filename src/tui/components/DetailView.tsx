@@ -9,6 +9,7 @@ import { messageText, type Message } from '../messages.ts';
 import { style as st } from '../style.ts';
 import { SPINNER_FRAMES, STATUS_STYLE, paint, paintPriority, paintStatus } from '../theme.ts';
 import { Frame, confirmText, hintsText, titleText } from './Frame.tsx';
+import { stripControl } from '../../core/ansi.ts';
 import { GLYPHS } from '../../ui/glyphs.ts';
 
 export interface DetailViewProps {
@@ -88,7 +89,7 @@ export function DetailView(p: DetailViewProps) {
     const perTurn = Math.max(1, Math.floor((turnBudget - 1) / Math.min(2, p.detail.turns.length)));
     for (const x of p.detail.turns.slice(-2)) {
       const who = x.role === 'user' ? st.accent('you ›') : paint(st, 'green', 'worker ›');
-      const wrapped = wrapText(x.body.trim(), inner - 9);
+      const wrapped = wrapText(stripControl(x.body).trim(), inner - 9);
       const cut = wrapped.slice(0, perTurn);
       if (wrapped.length > cut.length) cut[cut.length - 1] = truncate(cut[cut.length - 1]! + ' …', inner - 9);
       turnLines.push(who + ' ' + cut[0] + (x.role === 'user' && !x.delivered ? st.dim('  (waiting for the worker)') : ''));

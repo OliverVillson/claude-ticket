@@ -6,6 +6,7 @@ import { TextField } from './TextField.tsx';
 import { style as st } from '../style.ts';
 import { inkColor } from '../../ui/theme.ts';
 import { truncate, wrapText } from '../format.ts';
+import { stripControl } from '../../core/ansi.ts';
 
 export interface ReplyViewProps {
   columns: number;
@@ -28,7 +29,7 @@ export const REPLY_HINTS: Array<[string, string]> = [
 export function lastReplyLines(turns: Turn[], width: number, max: number): string[] {
   const last = [...turns].reverse().find((t) => t.role === 'assistant');
   if (!last || max < 1) return [];
-  const lines = wrapText(last.body.trim(), width);
+  const lines = wrapText(stripControl(last.body).trim(), width);
   if (lines.length <= max) return lines;
   const cut = lines.slice(0, max);
   cut[max - 1] = truncate(cut[max - 1]! + ` … (+${lines.length - max} lines)`, width);
@@ -47,12 +48,12 @@ export function ReplyView(p: ReplyViewProps) {
   const pendingNote = p.ticket.status === 'blocked' && p.ticket.error ? p.ticket.error : null;
   return (
     <Frame columns={p.columns} header={{ left: titleText([p.ticket.project, truncate(p.ticket.name, Math.max(8, p.columns - 30)), 'reply']) }} footer={{ left: hintsText(REPLY_HINTS, p.columns - 2) }}>
-      {(shown.length ? shown : wrapText(p.ticket.query.trim(), inner).slice(0, 3)).map((l, i) => (
+      {(shown.length ? shown : wrapText(stripControl(p.ticket.query).trim(), inner).slice(0, 3)).map((l, i) => (
         <Text key={i} wrap="truncate-end">
           {st.dim('  ') + st.text(l || ' ')}
         </Text>
       ))}
-      {pendingNote ? <Text wrap="truncate-end">{st.dim('  asked: ' + truncate(pendingNote.replace(/\s+/g, ' '), inner - 9))}</Text> : null}
+      {pendingNote ? <Text wrap="truncate-end">{st.dim('  asked: ' + truncate(stripControl(pendingNote).replace(/\s+/g, ' '), inner - 9))}</Text> : null}
       <Text> </Text>
       <Text wrap="truncate-end">
         <Text color={inkColor('accent')}>{'❯ '}</Text>
