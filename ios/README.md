@@ -13,6 +13,21 @@ private remote, the project name, and a fine-grained GitHub token with Contents 
 
 No Xcode-generator? File > New > Project > iOS App (SwiftUI, name SaluPhone), delete the template Swift files, drag in `SaluPhone/*.swift`.
 
+After pulling new Swift files, run `xcodegen generate` again so Xcode sees them.
+
+## Screens
+- **Inbox**: what the box said, newest first, by day. A green bar marks unread (swipe right to toggle); filter all /
+  unread / needs you. The header dog runs while a ticket runs and sleeps otherwise (tap it: it barks).
+- **Message**: blocked tickets show what they need and the `salu allow` command to copy; done ones their result branch.
+- **Tickets**: every ticket grouped by needs you / running / waiting / done, built from the messages plus the tickets
+  this phone sent (they show as "sent" until the box answers). A ticket opens its timeline.
+- **New ticket** (the green button at the bottom): type what it should do; the name comes from the first words unless
+  you give one. Run now or backlog, priority p1 to p5. The draft is kept if you close the sheet.
+- **Settings**: repo (owner/name or a pasted github.com link), project, token, and Test connection.
+
+Look: `Theme.swift` holds the palette from `src/ui/theme.ts` and the TUI glyphs; `Dog.swift` draws the TUI's dog
+sprites (`src/tui/dog/sprites.ts`).
+
 ## POC limits
-Token is stored in UserDefaults (use the Keychain before sharing). Refresh is manual (pull down / on launch); no push
-notifications yet. Written on Linux: not compiled here, so expect a small first-build fix or two.
+The token is in the Keychain. The inbox is checked every 30 s while the app is open and on pull-down; no push
+notifications yet. Messages are listed with the contents API, which stops at 1,000 files per folder. Written on Linux: not compiled here, so expect a small first-build fix or two.
