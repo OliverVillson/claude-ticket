@@ -16,6 +16,7 @@ const KEYS: Array<[string, string]> = [
   ['r', 'run the selected ticket next, ahead of the queue'],
   ['r  (open ticket)', 'on a done, blocked or failed ticket: reply to it, the worker keeps the same session (answers a blocked ticket too)'],
   ['p', 'pause or resume the orchestrator'],
+  ['n', 'notifications: messages from your project orchestrators (done, blocked, failed); rest the mouse on one, or press ⏎, to mark it read'],
   ['/', 'filter as you type: bug  #label  status:running  p1  p<=2  @project  model:opus  -done'],
   [':', 'command line (tab to it, or press :): any salu command, e.g. add "fix login"  add project web  run  status  (tab completes, ↑↓ history)'],
   ['←  →  (project tree)', 'inside the tree only: → opens a project or enters a subproject, ← collapses it or goes back up'],

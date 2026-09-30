@@ -85,6 +85,7 @@ salu log "fix login" --follow                  # worker transcript
 | `salu run [project\|"name"...] [--concurrency N] [--detach] [--plain]` | Queues every saved ticket (or only the named tickets, or those in the named project) and starts the orchestrator. If one is already running it just queues and lets it pick them up. |
 | `salu pause` / `salu resume` / `salu stop` | Pause dispatch after current workers finish; resume early; stop a detached orchestrator. |
 | `salu status [--json]` | One screen of state. |
+| `salu notif [--all] [--json]` | Messages from your project orchestrators: a ticket is done, blocked on a question, failed, or paused for the usage limit. In a terminal it opens the notification window; `--plain` (or a pipe) prints them. `salu notif read <id>... \| --all` marks them read from the shell. |
 | `salu log "name" [--follow] [--raw] [--run N]` | Worker transcript for a ticket. |
 | `salu plan "name" [--yes]` | Asks Claude to split a ticket into sub-tickets and adds them on approval. |
 
@@ -192,6 +193,7 @@ is stored in `/etc/salu/<project>.env` (root-readable, not on any command line).
 | r | Queue the selected ticket and run it now, ahead of the queue (a saved ticket never runs until queued) |
 | a | On a ticket blocked by a permission (list, properties or output): allow what it was refused and queue it again, after a confirm line |
 | p | Pause or resume the orchestrator |
+| n | Notifications (also `notif` on the command line): rest the mouse on a message, or press Enter, and it is marked read and goes away |
 | / | Filter by name, label or status |
 | Tab / Shift-Tab | The only keys that move between windows (projects, tickets, command line) |
 | → on a done, failed or blocked ticket | Its output: the result, the error, and the run transcript (↑↓ scroll, `[` `]` earlier runs, `p` properties, `o` back to output) |
@@ -199,6 +201,26 @@ is stored in `/etc/salu/<project>.env` (root-readable, not on any command line).
 | → on tags (new ticket) | Tag groups: Model / effort, Tools (`standard` = Claude Code's regular tools), Other |
 | < / > | Narrow terminals: switch project |
 | q / Esc | Quit, or close the open ticket |
+
+## Notifications (`salu notif`)
+
+An orchestrator tells you when a ticket needs a human: done, blocked (with its question), failed for
+good, or the orchestrator paused for the usage limit, or stopped because of a problem such as an
+expired login. Retries and interruptions stay silent. `salu notif` shows the unread messages, newest
+first; the list header and `salu status` show how many are waiting.
+
+Messages from a box come over the project's git remote (see `salu remote`, the format is in
+INTERFACES.md) and are kept on your computer; the window and `salu notif` fetch new ones (`--no-fetch`
+skips that, `SALU_NO_FETCH=1` turns background fetching off). An orchestrator running on this
+computer posts its messages the same way, so one window shows both.
+
+In the window, **resting the mouse on a message for about half a second marks it read and it goes
+away** (it does not repeat for the next one until the mouse moves). The keyboard does the same: ↑↓
+to a message, Enter marks it read, `a` marks all read, Esc closes. A click marks read at once and the
+wheel scrolls. Mouse reporting is only on while the window is open; `SALU_NO_MOUSE=1` keeps it off and
+the keyboard still does everything. `salu notif --all` keeps read messages in the list, dimmed.
+From the shell: `salu notif --plain` prints them (and leaves them unread), `salu notif read <id>... |
+--all` marks them read, `salu notif add "title" --project P` posts one by hand.
 
 ## How the orchestrator works
 
