@@ -24,7 +24,7 @@ export async function change(p: Parsed): Promise<number> {
     const name = p.positional[1];
     if (!name) throw new CliError('usage: salu change project "name" [--path P] ...');
     const project = resolveProjectRef(db, name);
-    const inFlag = flagStr(p, 'in');
+    const inFlag = flagStr(p, 'in') ?? flagStr(p, 'parent');
     if (inFlag !== undefined) {
       const parent = inFlag === '' || inFlag === 'none' || inFlag === 'top' ? null : resolveProjectRef(db, inFlag);
       moveProject(db, project.id, parent?.id ?? null);

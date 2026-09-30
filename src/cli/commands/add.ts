@@ -34,7 +34,7 @@ export async function add(p: Parsed): Promise<number> {
     if (!rawName) throw new CliError('usage: salu add project "name" [path] [--in parent]');
     const segs = rawName.split('/').map((x) => x.trim()).filter(Boolean);
     const name = segs[segs.length - 1]!;
-    const inFlag = flagStr(p, 'in');
+    const inFlag = flagStr(p, 'in') ?? flagStr(p, 'parent');
     const parent = inFlag ? resolveProjectRef(db, inFlag) : segs.length > 1 ? ensureProjectChain(db, segs.slice(0, -1)) : null;
     const given = p.positional[2];
     const path = parent
