@@ -4,6 +4,7 @@
 import { createInterface } from 'node:readline';
 import type { TicketView } from '../db/types.ts';
 import { openDb } from '../db/db.ts';
+import { claudeExecutableOption } from '../core/claude-bin.ts';
 import { createTicket, getProjectById, inheritedProject, getTicket, updateTicket } from '../db/queries.ts';
 import { CliError } from '../core/errors.ts';
 import { bold, cyan, dim, green, yellow } from '../core/ansi.ts';
@@ -87,7 +88,8 @@ async function askClaude(t: TicketView): Promise<PlannedTicket[]> {
   };
   if (s.model) options.model = s.model;
   if (s.effort) options.effort = s.effort;
-  if (process.env.SALU_CLAUDE_PATH) options.pathToClaudeCodeExecutable = process.env.SALU_CLAUDE_PATH;
+  const exe = claudeExecutableOption();
+  if (exe) options.pathToClaudeCodeExecutable = exe;
   let text = '';
   let failure = '';
   for await (const m of query({ prompt: plannerPrompt(t), options: options as any })) {

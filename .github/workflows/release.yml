@@ -42,6 +42,8 @@ jobs:
             (cd dist && sha256sum "salu-$t" > "salu-$t.sha256")
           done
           ls -lh dist
+      - name: Test the compiled linux-x64 binary end to end (stub claude on PATH, and none)
+        run: SALU_E2E_BIN=dist/salu-linux-x64 bun test test/e2e
       - name: Publish release
         run: |
           gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --generate-notes

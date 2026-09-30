@@ -14,6 +14,7 @@ import type { Effort, Permission } from '../core/tags.ts';
 import { workerEnv as scrubParentSession } from '../core/env.ts';
 import { detectLimit, parseLimitText, probeWindow } from '../usage/index.ts';
 import type { LimitHit } from '../usage/types.ts';
+import { CLAUDE_MISSING, EnvironmentError, claudeExecutableOption, environmentProblem, runningCompiled } from '../core/claude-bin.ts';
 import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../core/tags.ts';
 import { buildPrompt, buildResumePrompt, parseTrailer, systemAppend } from './prompt.ts';
 import type { WorkerInput, WorkerLive, WorkerResult, WorkerRunner } from './types.ts';
@@ -91,7 +92,8 @@ export function workerSdkOptions(t: TicketView, project: Project | null, extra: 
     title: `ticket #${t.id} ${t.name}`,
     env: workerEnv({ TICKET_ID: String(t.id), TICKET_NAME: t.name, TICKET_PROJECT: t.project }),
   };
-  if (process.env.SALU_CLAUDE_PATH) opts.pathToClaudeCodeExecutable = process.env.SALU_CLAUDE_PATH;
+  const exe = claudeExecutableOption();
+  if (exe) opts.pathToClaudeCodeExecutable = exe;
   if (s.model) opts.model = s.model;
   if (s.effort) opts.effort = s.effort;
   switch (s.permission) {
@@ -199,6 +201,8 @@ export function promptFor(input: WorkerInput): string {
 export const sdkRunner: WorkerRunner = {
   name: 'sdk',
   async *run(input) {
+    // The compiled binary has no claude of its own: fail with instructions, not the SDK's error.
+    if (runningCompiled() && !claudeExecutableOption()) throw new EnvironmentError(process.env.SALU_CLAUDE_PATH ? `SALU_CLAUDE_PATH points to ${process.env.SALU_CLAUDE_PATH}, which is not an executable file` : CLAUDE_MISSING);
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     const options = workerSdkOptions(input.ticket, input.project, { resume: input.resume, abort: input.abort });
     const stderr: string[] = [];
@@ -303,6 +307,11 @@ export async function runWorker(p: RunWorkerParams): Promise<WorkerResult> {
     }
   } catch (e: any) {
     const msg = String(e?.message ?? e).split('\n')[0]!;
+    const envProblem = abort.signal.aborted ? null : e instanceof EnvironmentError || e?.code === 'SALU_ENV' ? String(e.message) : environmentProblem(`${msg} ${lastStderr ?? ''}`);
+    if (envProblem) {
+      appendLogLine(p.logPath, { type: 'worker_error', ts: Date.now(), error: envProblem, environment: true });
+      return { sessionId: live.sessionId ?? p.resume ?? null, costUsd: 0, turns: live.turns, limit: null, resumable: true, outcome: 'failed', message: envProblem, subtype: 'environment' };
+    }
     crash = abort.signal.aborted ? 'aborted' : lastStderr && !msg.includes(lastStderr) ? `${msg}: ${lastStderr}` : msg;
     appendLogLine(p.logPath, { type: 'worker_error', ts: Date.now(), error: crash });
   }
