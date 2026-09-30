@@ -1,6 +1,6 @@
 import type { Database } from 'bun:sqlite';
 import type { Project, TicketView } from '../db/types.ts';
-import { createTicket, deleteTicket, queueTicket, getProjectByName, updateTicket, wakeOrchestrator } from '../db/queries.ts';
+import { createTicket, deleteTicket, queueTicket, unqueueTicket, getProjectByName, updateTicket, wakeOrchestrator } from '../db/queries.ts';
 import { clearPause, enterManualPause } from '../usage/index.ts';
 import { parseTags, validatePriority } from '../core/tags.ts';
 import { CliError } from '../core/errors.ts';
@@ -13,6 +13,8 @@ export interface TicketInput {
   tags: string;
   /** "1".."5", "now" (= 0) or empty (keep the ticket's priority, else `priority=` in tags, else 3) */
   priority?: string;
+  /** save and queue in one go (a new ticket is otherwise only saved to the backlog) */
+  queue?: boolean;
 }
 
 /** The "run now" priority: sorts ahead of 1..5, set by the `r` key, rendered as `now`. */
@@ -28,6 +30,8 @@ export interface TuiActions {
   remove(ticket: TicketView): void;
   /** Move a ticket to the front of the queue (priority 0); re-queues finished ones. */
   runNow(ticket: TicketView): void;
+  /** Queue a saved or finished ticket, or take a queued one back to the backlog. Returns what happened. */
+  toggleQueue(ticket: TicketView): 'queued' | 'unqueued';
   /** Pause dispatch, or resume it when `currentlyPaused`. */
   togglePause(currentlyPaused: boolean): void;
 }
@@ -63,18 +67,21 @@ export function defaultActions(db: Database): TuiActions {
   return {
     create(input) {
       const v = validateInput(input);
-      return createTicket(db, {
+      const t = createTicket(db, {
         project_id: resolveProjectId(db, input, v.project),
         name: v.name,
         query: v.query,
         tags: v.tags,
         labels: v.labels,
         priority: v.priority,
+        status: input.queue ? 'todo' : 'backlog',
       });
+      if (input.queue) wakeOrchestrator();
+      return t;
     },
     update(ticket, input) {
       const v = validateInput(input, ticket);
-      return updateTicket(db, ticket.id, {
+      const saved = updateTicket(db, ticket.id, {
         project_id: resolveProjectId(db, input, v.project),
         name: v.name,
         query: v.query,
@@ -82,6 +89,15 @@ export function defaultActions(db: Database): TuiActions {
         labels: JSON.stringify(v.labels),
         priority: v.priority,
       });
+      return input.queue && saved.status === 'backlog' ? queueTicket(db, saved.id) : saved;
+    },
+    toggleQueue(ticket) {
+      if (ticket.status === 'todo') {
+        unqueueTicket(db, ticket.id);
+        return 'unqueued';
+      }
+      queueTicket(db, ticket.id);
+      return 'queued';
     },
     remove(ticket) {
       deleteTicket(db, ticket.id);

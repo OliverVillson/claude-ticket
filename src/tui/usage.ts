@@ -2,6 +2,7 @@ import { formatClock, formatResetTime } from '../usage/format.ts';
 import { displayWidth } from './format.ts';
 import type { Style } from './style.ts';
 import { GLYPHS } from '../ui/glyphs.ts';
+import type { UsageSnapshot, UsageWindow } from '../usage/snapshot.ts';
 
 /**
  * The usage-left indicator in the header: how much of the 5-hour window (and the week) is left,
@@ -13,24 +14,7 @@ import { GLYPHS } from '../ui/glyphs.ts';
  *   5h 38%                                               narrow
  *   usage n/a                                            no data (API-key auth, offline)
  */
-export interface UsageWindow {
-  /** 'five_hour', 'weekly', 'weekly_opus', ... */
-  key: string;
-  label: string;
-  /** 0-100, null when the window is known but not measured */
-  usedPercent: number | null;
-  status: 'ok' | 'warning' | 'rejected' | 'unknown';
-  /** epoch ms */
-  resetsAt: number | null;
-}
-
-export interface UsageSnapshot {
-  available: boolean;
-  /** the numbers are older than the data layer wants: shown with a ~ */
-  stale: boolean;
-  fetchedAt: number;
-  windows: UsageWindow[];
-}
+export type { UsageSnapshot, UsageWindow };
 
 /** Where the App gets usage from; `subscribe` returns an unsubscribe. */
 export interface UsageSource {
@@ -40,13 +24,13 @@ export interface UsageSource {
 
 const BAR_CELLS = 5;
 
-export const percentLeft = (w: UsageWindow): number | null => (w.usedPercent == null ? null : Math.max(0, Math.min(100, Math.round(100 - w.usedPercent))));
+export const percentLeft = (w: UsageWindow): number | null => (w.percentUsed == null ? null : Math.max(0, Math.min(100, Math.round(100 - w.percentUsed))));
 
-export function windowOf(s: UsageSnapshot, key: 'five_hour' | 'weekly'): UsageWindow | undefined {
-  return s.windows.find((w) => w.key === key) ?? (key === 'five_hour' ? s.windows.find((w) => /5|five|session/i.test(w.key + w.label)) : s.windows.find((w) => /week/i.test(w.key + w.label) && !/opus|sonnet/i.test(w.key)));
+export function windowOf(s: UsageSnapshot, key: 'session' | 'weekly'): UsageWindow | undefined {
+  return s.windows.find((w) => w.id === key);
 }
 
-/** Colour by how close to the limit: greens, amber under 30% left, red under 10% or rejected. */
+/** Colour by how close to the limit: greens, amber under 30% left, red under 10% or when rejected. */
 export function tone(w: UsageWindow): 'ok' | 'warn' | 'error' {
   const left = percentLeft(w);
   if (w.status === 'rejected' || (left != null && left <= 10)) return 'error';
@@ -76,14 +60,14 @@ const FORMS: Form[] = [
 ];
 
 function render(s: UsageSnapshot, f: Form, st: Style, now: number): string {
-  const five = windowOf(s, 'five_hour');
+  const five = windowOf(s, 'session');
   const week = windowOf(s, 'weekly');
   const main = five ?? week;
   if (!main) return st.dim('usage n/a');
   const one = (w: UsageWindow, name: string, withReset: boolean) => {
     const left = percentLeft(w);
-    if (left == null) return st.dim(`${name} ?`);
     const t = tone(w);
+    if (left == null) return w.status === 'rejected' ? st.dim(name + ' ') + paint(st, t, 'limit reached') : st.dim(`${name} ?`);
     let out = st.dim(name + ' ');
     if (f.bar) out += paint(st, t, usageBar(left)) + ' ';
     out += paint(st, t, `${left}%${s.stale ? '~' : ''}`);

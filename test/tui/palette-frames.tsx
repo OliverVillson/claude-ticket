@@ -28,7 +28,7 @@ writeFileSync(
 createRun(db, ids[0]!, logPath);
 const frames: string[] = [];
 
-const usageOf = (used: number) => ({ get: () => ({ available: true, stale: false, fetchedAt: Date.now(), windows: [{ key: 'five_hour', label: '5h', usedPercent: used, status: 'ok' as const, resetsAt: Date.now() + 3_600_000 }, { key: 'weekly', label: 'wk', usedPercent: 30, status: 'ok' as const, resetsAt: Date.now() + 3 * 86_400_000 }] }), subscribe: () => () => {} });
+const usageOf = (used: number) => ({ get: () => ({ windows: [{ id: 'session', short: '5h', label: '5h', percentUsed: used, percentLeft: 100 - used, utilization: used / 100, status: 'allowed', resetsAt: Date.now() + 3_600_000, observedAt: Date.now(), source: 'usage' }, { id: 'weekly', short: 'week', label: 'wk', percentUsed: 30, percentLeft: 70, utilization: 0.3, status: 'allowed', resetsAt: Date.now() + 3 * 86_400_000, observedAt: Date.now(), source: 'usage' }], available: true, reason: null, reasonKind: null, plan: 'max', updatedAt: Date.now(), fetchedAt: Date.now(), stale: false, error: null } as any), subscribe: () => () => {} });
 
 async function run(width: number, steps: string[], usage?: number) {
   const term = fakeTerminal(width, 34);

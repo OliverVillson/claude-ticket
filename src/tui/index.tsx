@@ -20,6 +20,8 @@ import { defaultActions, type TuiActions } from './actions.ts';
 import { App, mount, type FormResult } from './app.tsx';
 import { RunView } from './components/RunView.tsx';
 import { loadSnapshot } from './store.ts';
+import type { UsageSource } from './usage.ts';
+import { peekUsageSnapshot, watchUsage } from '../usage/snapshot.ts';
 
 export type { TuiActions, TicketInput } from './actions.ts';
 export { defaultActions, PRIORITY_NOW } from './actions.ts';
@@ -40,6 +42,11 @@ interface CommonOptions {
   stdin?: NodeJS.ReadStream;
 }
 
+/** The cached usage snapshot and its refresher, for the header meter. */
+function usageSource(db: Database): UsageSource {
+  return { get: () => peekUsageSnapshot(db), subscribe: (cb) => watchUsage(db, cb) };
+}
+
 export interface OpenListOptions extends CommonOptions {
   /** start on this project; omitted = all projects (Tab cycles) */
   projectId?: number;
@@ -55,7 +62,7 @@ export async function openList(o: OpenListOptions = {}): Promise<void> {
   const projectId = o.projectId ?? null;
   const initial = loadSnapshot(db, { projectId: null, statuses: o.statuses });
   await mount(
-    <App db={db} projectId={projectId} statuses={o.statuses} actions={{ ...defaultActions(db), ...o.actions }} pollMs={o.pollMs} initial={initial} />,
+    <App db={db} projectId={projectId} statuses={o.statuses} actions={{ ...defaultActions(db), ...o.actions }} pollMs={o.pollMs} initial={initial} usage={usageSource(db)} />,
     { stdout: o.stdout, stdin: o.stdin, fullscreen: o.fullscreen ?? true },
   );
 }

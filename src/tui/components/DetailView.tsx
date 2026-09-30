@@ -28,6 +28,7 @@ export const DETAIL_HINTS: Array<[string, string]> = [
   ['↑↓', 'next ticket'],
   ['e', 'edit'],
   ['d', 'delete'],
+  ['u', 'queue'],
   ['r', 'run now'],
   ['q', 'quit'],
 ];
