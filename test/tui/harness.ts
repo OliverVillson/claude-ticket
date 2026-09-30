@@ -72,12 +72,12 @@ export function fakeTerminal(columns = 100, rows = 30) {
 }
 
 /**
- * A throwaway database with two projects and `n` tickets in mixed statuses. Sets TICKET_HOME so
- * `wakeOrchestrator()` and log paths never touch the real ~/.ticket.
+ * A throwaway database with two projects and `n` tickets in mixed statuses. Sets SALU_HOME so
+ * `wakeOrchestrator()` and log paths never touch the real ~/.salu.
  */
 export function seedDb(n = 12) {
   const home = mkdtempSync(join(tmpdir(), 'ticket-tui-test-'));
-  process.env.TICKET_HOME = home;
+  process.env.SALU_HOME = home;
   const db = openDb(join(home, 'tickets.db'));
   const web = createProject(db, { name: 'web', path: join(home, 'web') });
   const api = createProject(db, { name: 'api', path: join(home, 'api') });

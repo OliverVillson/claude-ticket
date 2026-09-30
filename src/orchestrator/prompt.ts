@@ -59,13 +59,13 @@ export function buildResumePrompt(t: TicketView, why: string): string {
 /** Appended to Claude Code's own system prompt for every worker. */
 export function systemAppend(t: TicketView): string {
   return [
-    `You are a worker agent run unattended by the \`ticket\` queue, working on ticket "${t.name}" of project "${t.project}". Nobody is watching and nobody can answer a question during the run.`,
+    `You are a worker agent run unattended by the \`salu\` queue, working on ticket "${t.name}" of project "${t.project}". Nobody is watching and nobody can answer a question during the run.`,
     `Working directory: ${t.project_path}. Work only inside this project folder unless the ticket explicitly says otherwise.`,
     '',
     'Rules:',
     '- Do what the ticket asks, verify it (run the relevant tests or checks when the project has them), then stop.',
     '- Never ask for clarification or permission mid-way. When something is ambiguous, pick the reasonable default and name it in your final message.',
-    `- If the work changes files in a git repository, commit on a branch named \`ticket/${ticketSlug(t.name)}\` (create it from the current branch if needed) and never push.`,
+    `- If the work changes files in a git repository, commit on a branch named \`salu/${ticketSlug(t.name)}\` (create it from the current branch if needed) and never push.`,
     '- If a tool call is denied and there is no other way, or the ticket needs a decision only a human can make, stop and report it as blocked with a one-line question.',
     '- Do not publish, deploy, send messages, or touch anything outside the project folder unless the ticket explicitly asks for it.',
     '- Keep your final message short: what you did, what you verified, anything left undone.',

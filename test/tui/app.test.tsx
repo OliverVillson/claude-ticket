@@ -216,7 +216,7 @@ describe('ticket actions from the list', () => {
     const after = getTicketById(db, target.id)!;
     expect(after.priority).toBe(0);
     expect(after.status).toBe('todo');
-    expect(term.lastFrame()).toContain('ticket run');
+    expect(term.lastFrame()).toContain('salu run');
     await term.waitFor((s) => /\bnow\b/.test(s.split('\n').find((l) => l.includes(target.name)) ?? ''), 'priority column reads now');
   });
 

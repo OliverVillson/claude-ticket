@@ -11,8 +11,8 @@ import { CliError } from '../../core/errors.ts';
 import { dim, green } from '../../core/ansi.ts';
 import { helpIf, isTTY } from './_shared.ts';
 
-const HELP = `ticket change "name" [--name N] [--query Q] [--tags T] [--priority P] [--status S] [--project P] [--id N]
-ticket change project "name" [--name N] [--path P] [--model M] [--effort E] [--concurrency N] [--default]
+const HELP = `salu change "name" [--name N] [--query Q] [--tags T] [--priority P] [--status S] [--project P] [--id N]
+salu change project "name" [--name N] [--path P] [--model M] [--effort E] [--concurrency N] [--default]
 
 Edits one or more fields. --tags replaces the whole tag string. With no flags the ticket
 opens in an inline editor. --status todo re-queues a done, failed or blocked ticket.`;
@@ -22,7 +22,7 @@ export async function change(p: Parsed): Promise<number> {
   const db = openDb();
   if (p.positional[0] === 'project') {
     const name = p.positional[1];
-    if (!name) throw new CliError('usage: ticket change project "name" [--path P] ...');
+    if (!name) throw new CliError('usage: salu change project "name" [--path P] ...');
     const project = getProjectByName(db, name);
     if (!project) throw new CliError(`no project named "${name}"`);
     const patch: Parameters<typeof updateProject>[2] = {};
@@ -47,7 +47,7 @@ export async function change(p: Parsed): Promise<number> {
   }
 
   const ref = p.positional[0];
-  if (!ref && !flagStr(p, 'id')) throw new CliError('usage: ticket change "name" [--name N] [--query Q] [--tags T] [--priority P]');
+  if (!ref && !flagStr(p, 'id')) throw new CliError('usage: salu change "name" [--name N] [--query Q] [--tags T] [--priority P]');
   const t = resolveTicket(db, ref ?? '', { project: flagStr(p, 'project'), id: flagStr(p, 'id') });
 
   const patch: TicketPatch = {};

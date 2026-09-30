@@ -5,7 +5,7 @@ import { makeStyle, type Style } from './style.ts';
 import type { Snapshot } from './store.ts';
 
 /**
- * `ticket list --plain`: the same columns as the interactive view, one line per ticket, no
+ * `salu list --plain`: the same columns as the interactive view, one line per ticket, no
  * cursor, no polling. Colour follows core/ansi (off when piped or NO_COLOR). Never imports
  * Ink or React.
  */

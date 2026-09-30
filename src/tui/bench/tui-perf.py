@@ -11,7 +11,7 @@ root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.a
 n = int(sys.argv[1]) if len(sys.argv) > 1 else 500
 cmd = sys.argv[2:] or ['bun', 'run', 'src/tui/bench/tui-perf-open.ts']
 home = tempfile.mkdtemp(prefix='ticket-perf-')
-env = dict(os.environ, TICKET_HOME=home, FORCE_COLOR='1', TERM='xterm-256color')
+env = dict(os.environ, SALU_HOME=home, FORCE_COLOR='1', TERM='xterm-256color')
 subprocess.run(['bun', 'run', 'src/tui/bench/tui-perf-seed.ts', str(n)], cwd=root, env=env, check=True, stdout=subprocess.DEVNULL)
 
 def read_until(fd, pred, timeout=5.0):

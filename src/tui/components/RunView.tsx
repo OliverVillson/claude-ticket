@@ -34,7 +34,7 @@ export const RUN_HINTS: Array<[string, string]> = [
 
 const clock = (ts: number) => new Date(ts).toLocaleTimeString(undefined, { hour12: false });
 
-/** One short line per orchestrator event, in the words `ticket run --plain` uses. */
+/** One short line per orchestrator event, in the words `salu run --plain` uses. */
 export function describeEvent(e: OrchestratorEvent): { text: string; tone: 'ok' | 'err' | 'warn' | 'dim' | 'accent' } | null {
   switch (e.type) {
     case 'start':
@@ -92,7 +92,7 @@ const TONE: Record<Activity['tone'], { tone: Tone; dim?: boolean }> = {
 };
 
 /**
- * `ticket run` foreground view: one row per active worker (name, elapsed, turns, last tool),
+ * `salu run` foreground view: one row per active worker (name, elapsed, turns, last tool),
  * the next queued tickets, and a short activity log fed by orchestrator events. Polls the
  * database twice a second; `q` asks the orchestrator to stop and the view closes on `stop`.
  */
@@ -194,7 +194,7 @@ export function RunView(p: RunViewProps) {
     lines.push(st.accent(SPINNER_FRAMES[frame % SPINNER_FRAMES.length]!) + ' ' + st.bold(fit(nameOf(w), nameW)) + st.dim('  ' + detail.join('  ')));
   }
   if (!workers.length) {
-    lines.push(st.dim(stopping ? 'stopping…' : status.alive ? (queued.length ? 'starting workers…' : 'no tickets waiting · ticket add "name" "query" "tags"') : 'orchestrator is not running'));
+    lines.push(st.dim(stopping ? 'stopping…' : status.alive ? (queued.length ? 'starting workers…' : 'no tickets waiting · salu add "name" "query" "tags"') : 'orchestrator is not running'));
   }
   if (queued.length) {
     const next = queued.map((t) => `${t.name} ${priorityText(t.priority)}${modelEffort(t) ? ' ' + modelEffort(t) : ''}`).join(' · ');

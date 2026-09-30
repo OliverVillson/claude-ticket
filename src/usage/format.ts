@@ -37,13 +37,13 @@ export function formatResetTime(at: number, now = Date.now()): string {
 }
 
 /**
- * One line for `ticket status` and the TUI header, e.g.
+ * One line for `salu status` and the TUI header, e.g.
  * "session limit · resumes 3:45pm (in 1h 12m)" or
  * "Opus limit · Opus tickets resume Mon 12:00am (in 2d 4h) · other models keep running".
  */
 export function formatPause(state: PauseState | null, now = Date.now()): string {
   if (!state) return 'running';
-  if (state.manual && !(state.until > 0)) return 'paused by hand · ticket resume to continue';
+  if (state.manual && !(state.until > 0)) return 'paused by hand · salu resume to continue';
   const left = state.until - now;
   const who = state.models.length ? `${state.models.map(cap).join('/')} tickets resume` : 'resumes';
   const when = left > 0 ? `${who} ${formatResetTime(state.until, now)} (in ${formatDuration(left)})` : 'checking whether the window is open';

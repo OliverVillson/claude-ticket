@@ -1,6 +1,6 @@
 /**
  * Renders a run's JSONL log (raw Agent SDK messages plus our own `ticket_start` / `stderr` /
- * `worker_error` lines) the way `ticket log` shows it, close to Claude Code's `-p` output:
+ * `worker_error` lines) the way `salu log` shows it, close to Claude Code's `-p` output:
  * assistant text, dimmed `⏺ Tool(args)` lines, a result line with cost and turns.
  */
 import { closeSync, existsSync, openSync, readSync, statSync } from 'node:fs';

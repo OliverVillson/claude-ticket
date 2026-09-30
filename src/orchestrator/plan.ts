@@ -1,5 +1,5 @@
 /**
- * `ticket plan "name"`: ask Claude to split one ticket into sub-tickets, show them, and add them on approval.
+ * `salu plan "name"`: ask Claude to split one ticket into sub-tickets, show them, and add them on approval.
  */
 import { createInterface } from 'node:readline';
 import type { TicketView } from '../db/types.ts';
@@ -62,7 +62,7 @@ export function parsePlan(text: string): PlannedTicket[] {
   return out.slice(0, MAX_SUBTICKETS);
 }
 
-/** Canned split for `TICKET_WORKER=fake`. */
+/** Canned split for `SALU_WORKER=fake`. */
 export function fakePlan(t: TicketView): PlannedTicket[] {
   return [
     { name: `${t.name} 1`, query: `FAKE:done first half of ${t.name}`, tags: '', priority: 3 },
@@ -86,7 +86,7 @@ async function askClaude(t: TicketView): Promise<PlannedTicket[]> {
   };
   if (s.model) options.model = s.model;
   if (s.effort) options.effort = s.effort;
-  if (process.env.TICKET_CLAUDE_PATH) options.pathToClaudeCodeExecutable = process.env.TICKET_CLAUDE_PATH;
+  if (process.env.SALU_CLAUDE_PATH) options.pathToClaudeCodeExecutable = process.env.SALU_CLAUDE_PATH;
   let text = '';
   let failure = '';
   for await (const m of query({ prompt: plannerPrompt(t), options: options as any })) {
@@ -107,10 +107,10 @@ async function confirm(question: string): Promise<boolean> {
   return /^y(es)?$/i.test(answer.trim());
 }
 
-/** Split `ticket`, print the sub-tickets, add them on approval and mark the original done. Returns the exit code. */
+/** Split `salu`, print the sub-tickets, add them on approval and mark the original done. Returns the exit code. */
 export async function planTicket(ticket: TicketView, o: { yes?: boolean } = {}): Promise<number> {
   const db = openDb();
-  const fake = process.env.TICKET_WORKER === 'fake';
+  const fake = process.env.SALU_WORKER === 'fake';
   console.log(dim(`asking Claude to split "${ticket.name}"…`));
   const plan = fake ? fakePlan(ticket) : await askClaude(ticket);
 

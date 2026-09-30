@@ -7,7 +7,7 @@
  * table, and resolves when the window is open again so the orchestrator can carry on.
  */
 
-/** Which limit closed the window. `model` is a per-model weekly window other than Opus/Sonnet. `manual` is `ticket pause`. */
+/** Which limit closed the window. `model` is a per-model weekly window other than Opus/Sonnet. `manual` is `salu pause`. */
 export type LimitKind = 'session' | 'weekly' | 'opus' | 'sonnet' | 'model' | 'overage' | 'manual' | 'unknown';
 
 /** The SDK's own name for the window (SDKRateLimitInfo.rateLimitType), kept for logs and the status view. */
@@ -30,7 +30,7 @@ export interface LimitHit {
   /** Model prefixes this limit applies to (lower case, e.g. `opus`); empty means every model. */
   models: string[];
   source: LimitSource;
-  /** The message text or event that was matched, for the log and `ticket status`. */
+  /** The message text or event that was matched, for the log and `salu status`. */
   raw: string;
   rateLimitType?: RateLimitType;
   /** Window utilization as reported, 0..1 (may exceed 1). */
@@ -46,7 +46,7 @@ export interface PauseState {
   until: number;
   /** Model prefixes that are paused; empty means all. */
   models: string[];
-  /** True when `ticket pause` was used (possibly on top of a limit pause). */
+  /** True when `salu pause` was used (possibly on top of a limit pause). */
   manual: boolean;
   /** When the pause started, epoch ms. */
   since: number;
@@ -75,7 +75,7 @@ export interface ResumeInfo {
   state: PauseState;
   /**
    * `probe`: a probe confirmed the window is open. `manual`: the pause was cleared elsewhere
-   * (`ticket resume`). `unconfirmed`: probes kept failing for reasons other than the limit, so
+   * (`salu resume`). `unconfirmed`: probes kept failing for reasons other than the limit, so
    * dispatch resumes anyway; a worker will re-enter the pause if the window is still closed.
    */
   confirmedBy: 'probe' | 'manual' | 'unconfirmed';

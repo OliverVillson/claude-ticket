@@ -59,7 +59,7 @@ export function readStatus(db: Database, now = Date.now()): OrchestratorStatus {
     manual || (until != null && until > now)
       ? {
           until: manual ? null : until,
-          reason: s[STATE.pauseReason] ?? (manual ? 'paused by `ticket pause`' : null),
+          reason: s[STATE.pauseReason] ?? (manual ? 'paused by `salu pause`' : null),
           kind: s[STATE.pauseKind] ?? (manual ? 'manual' : null),
           models: (s[STATE.pauseModels] ?? '').split(',').filter(Boolean),
           manual,

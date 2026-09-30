@@ -3,9 +3,9 @@
  * visual language. Three entry points, all lazy-loaded by the commands so `add`, `remove`
  * and `status` never pay for Ink:
  *
- *   openList({ projectId?, statuses? })            ticket list
- *   openTicketForm({ ticketId?, projectId? })      ticket change "name" (no flags), ticket add (no args)
- *   openRunView({ projectIds?, concurrency, stop, subscribe })   ticket run (foreground)
+ *   openList({ projectId?, statuses? })            salu list
+ *   openTicketForm({ ticketId?, projectId? })      salu change "name" (no flags), salu add (no args)
+ *   openRunView({ projectIds?, concurrency, stop, subscribe })   salu run (foreground)
  *
  * Every screen reads the database directly (`src/db/queries.ts`, `src/orchestrator/status.ts`)
  * and polls it, so it never drifts from what the orchestrator writes.
@@ -47,7 +47,7 @@ export interface OpenListOptions extends CommonOptions {
   statuses?: TicketStatus[];
 }
 
-/** `ticket list`: the interactive list. Resolves when the user quits. */
+/** `salu list`: the interactive list. Resolves when the user quits. */
 export async function openList(o: OpenListOptions = {}): Promise<void> {
   const db = o.db ?? openDb();
   const projectId = o.projectId ?? null;
@@ -68,7 +68,7 @@ export interface OpenTicketFormOptions extends CommonOptions {
 }
 
 /**
- * `ticket change "name"` with no flags (or `ticket add` with no arguments): the inline form
+ * `salu change "name"` with no flags (or `salu add` with no arguments): the inline form
  * on its own. Resolves with what happened once the form closes.
  */
 export async function openTicketForm(o: OpenTicketFormOptions = {}): Promise<FormResult> {
@@ -95,7 +95,7 @@ export interface OpenRunViewOptions extends CommonOptions {
   subscribe: (fn: (e: OrchestratorEvent) => void) => () => void;
 }
 
-/** `ticket run` foreground view. Resolves after the orchestrator reports `stop` (or q twice). */
+/** `salu run` foreground view. Resolves after the orchestrator reports `stop` (or q twice). */
 export async function openRunView(o: OpenRunViewOptions): Promise<void> {
   const db = o.db ?? openDb();
   await mount(

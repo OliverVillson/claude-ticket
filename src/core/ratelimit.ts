@@ -2,7 +2,7 @@
  * Rate-limit detection for Claude Code workers: compatibility surface over `src/usage/`.
  *
  * Same names and shapes as the first cut, implemented by src/usage/detect.ts, so
- * `ticket status`, `ticket pause`, `ticket resume` and the orchestrator keep working. New code
+ * `salu status`, `salu pause`, `salu resume` and the orchestrator keep working. New code
  * should import from '../usage/index.ts' directly (richer `LimitHit`, pause state, probe and
  * the wait loop live there).
  *

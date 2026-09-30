@@ -3,7 +3,7 @@
  *
  * The loop never decides on its own whether the 5-hour, weekly or per-model window is open. It
  * asks these three hooks; the defaults call the usage module, which keeps the pause in the
- * `state` table so `ticket pause` / `ticket resume`, `ticket status` and the TUI all see the same
+ * `state` table so `salu pause` / `salu resume`, `salu status` and the TUI all see the same
  * thing. Tests replace any hook to skip the probe or shorten the wait.
  */
 import type { Database } from 'bun:sqlite';
@@ -44,10 +44,10 @@ export function toPauseInfo(s: PauseState | null): PauseInfo | null {
   };
 }
 
-/** Grace after a reported reset before probing. Tests shorten it with TICKET_RESUME_MARGIN_MS. */
+/** Grace after a reported reset before probing. Tests shorten it with SALU_RESUME_MARGIN_MS. */
 function marginMs(): number | undefined {
-  const v = Number(process.env.TICKET_RESUME_MARGIN_MS);
-  return process.env.TICKET_RESUME_MARGIN_MS !== undefined && Number.isFinite(v) && v >= 0 ? v : undefined;
+  const v = Number(process.env.SALU_RESUME_MARGIN_MS);
+  return process.env.SALU_RESUME_MARGIN_MS !== undefined && Number.isFinite(v) && v >= 0 ? v : undefined;
 }
 
 export const defaultHooks: UsageHooks = {
@@ -79,7 +79,7 @@ export function resolveHooks(h?: Partial<UsageHooks>): UsageHooks {
   return { ...defaultHooks, ...(h ?? {}) };
 }
 
-/** Lift every pause (limit and manual). What `ticket resume` does; here for the loop's `resume()`. */
+/** Lift every pause (limit and manual). What `salu resume` does; here for the loop's `resume()`. */
 export function clearPause(db: Database): void {
   usageClearPause(db);
 }

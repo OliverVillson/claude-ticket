@@ -1,16 +1,16 @@
 {
-  "name": "claude-ticket",
+  "name": "salu",
   "version": "0.1.0",
   "description": "A fast ticket queue for Claude Code agents: projects, tickets, an orchestrator that runs them, and a Claude-Code-style TUI.",
   "type": "module",
   "bin": {
-    "ticket": "./src/index.ts"
+    "salu": "./src/index.ts"
   },
   "scripts": {
     "ticket": "bun run src/index.ts",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit",
-    "build": "bun build --compile --minify --splitting src/index.ts --outfile dist/ticket",
+    "build": "bun build --compile --minify --splitting src/index.ts --outfile dist/salu",
     "install-cli": "bun run scripts/install-cli.ts",
     "uninstall-cli": "bun run scripts/install-cli.ts --uninstall"
   },

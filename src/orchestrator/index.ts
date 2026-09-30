@@ -2,9 +2,9 @@
  * Public entry of the orchestrator module (the contract in INTERFACES.md).
  *
  *   runOrchestrator(opts)            run the dispatch loop in this process until stopped
- *   startOrchestratorCommand(o)      what `ticket run` calls: foreground view, --plain lines, or --detach
+ *   startOrchestratorCommand(o)      what `salu run` calls: foreground view, --plain lines, or --detach
  *
- * Kept free of Ink and React so `ticket run --plain` and the detached child start fast; the Ink run
+ * Kept free of Ink and React so `salu run --plain` and the detached child start fast; the Ink run
  * view is only imported when a TTY asks for it, and falls back to the built-in panel if it is absent.
  */
 import { spawn } from 'node:child_process';
@@ -47,15 +47,15 @@ export function selfCommand(args: string[]): string[] {
 }
 
 function projectIdsFromEnv(): number[] | undefined {
-  const raw = process.env.TICKET_PROJECT_IDS;
+  const raw = process.env.SALU_PROJECT_IDS;
   if (!raw) return undefined;
   const ids = raw.split(',').map(Number).filter((n) => Number.isInteger(n) && n > 0);
   return ids.length ? ids : undefined;
 }
 
 /**
- * `ticket run`. Returns the process exit code.
- *  detach → start a background `ticket run --plain` logging to orchestratorLogPath(), print its pid, return.
+ * `salu run`. Returns the process exit code.
+ *  detach → start a background `salu run --plain` logging to orchestratorLogPath(), print its pid, return.
  *  plain  → one line per event on stdout.
  *  else   → the run view (Ink if available, otherwise the built-in panel) alongside the loop.
  */
@@ -65,7 +65,7 @@ export async function startOrchestratorCommand(o: { projectIds?: number[]; concu
 
   const st = readStatus(db);
   if (st.alive && st.pid && st.pid !== process.pid) {
-    throw new CliError(`an orchestrator is already running (pid ${st.pid}); \`ticket stop\` ends it`);
+    throw new CliError(`an orchestrator is already running (pid ${st.pid}); \`salu stop\` ends it`);
   }
 
   if (o.detach) return detach({ projectIds, concurrency: o.concurrency });
@@ -124,7 +124,7 @@ function detach(o: { projectIds?: number[]; concurrency?: number }): number {
     const p = getProjectById(db, o.projectIds[0]!);
     if (p) args.push(p.name);
   } else if (o.projectIds?.length) {
-    env.TICKET_PROJECT_IDS = o.projectIds.join(',');
+    env.SALU_PROJECT_IDS = o.projectIds.join(',');
   }
   const logPath = orchestratorLogPath();
   const fd = openSync(logPath, 'a');
@@ -132,6 +132,6 @@ function detach(o: { projectIds?: number[]; concurrency?: number }): number {
   const child = spawn(cmd!, rest, { detached: true, stdio: ['ignore', fd, fd], env: env as NodeJS.ProcessEnv });
   child.unref();
   closeSync(fd);
-  console.log(`${green('✓')} orchestrator started in the background ${dim(`pid ${child.pid} · log ${logPath} · \`ticket stop\` ends it`)}`);
+  console.log(`${green('✓')} orchestrator started in the background ${dim(`pid ${child.pid} · log ${logPath} · \`salu stop\` ends it`)}`);
   return 0;
 }
