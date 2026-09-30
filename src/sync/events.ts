@@ -13,6 +13,17 @@ const clip = (s: string | null | undefined, n: number) => (s && s.length > n ? s
  */
 export function recordRemoteEvent(db: Database, e: OrchestratorEvent): void {
   try {
+    // The runner's `environment` event (the orchestrator stopped: dead login, missing tool). Matched by name so
+    // this works before that event exists in OrchestratorEvent.
+    const ev = e as { type: string; message?: unknown };
+    if (ev.type === 'environment') {
+      const reason = typeof ev.message === 'string' && ev.message.trim() ? ev.message.trim() : 'the environment is broken';
+      for (const r of db.query<{ project_id: number }, []>("SELECT project_id FROM remotes WHERE role = 'box'").all()) {
+        const project = getProjectById(db, r.project_id);
+        if (project) enqueueMessage(db, project.id, project.name, boxName(), { type: 'note', level: 'error', title: `The box stopped: ${clip(reason, 300)}`, body: `${clip(reason, 2000)}\nFix it on the box (for a dead login: run claude and /login), then run: salu runner restart ${project.name}`.trim() });
+      }
+      return;
+    }
     if (e.type === 'dispatch' || e.type === 'finish') {
       const t = e.ticket;
       const remote = getRemote(db, t.project_id);

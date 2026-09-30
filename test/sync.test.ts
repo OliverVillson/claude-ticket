@@ -211,6 +211,22 @@ describe('replies', () => {
   });
 });
 
+describe('runner events', () => {
+  test('an environment stop becomes an error note with the restart hint', () => {
+    recordRemoteEvent(box.db, { type: 'environment', message: 'Claude login expired' } as any);
+    sync(box);
+    sync(client);
+    const n = listNotifications(client.db).at(-1)!;
+    expect(n.type).toBe('note');
+    expect(n.level).toBe('error');
+    expect(n.title).toContain('Claude login expired');
+    expect(n.body).toContain('salu runner restart web');
+    // Ignored on a machine that is not a box.
+    recordRemoteEvent(client.db, { type: 'environment', message: 'x' } as any);
+    expect(sync(client).messagesSent).toBe(0);
+  });
+});
+
 describe('untrusted remote', () => {
   test('control characters are stripped from everything parsed', () => {
     const osc = '\x1b]52;c;ZXZpbA==\x07';
