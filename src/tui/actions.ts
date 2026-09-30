@@ -88,7 +88,7 @@ export function defaultActions(db: Database): TuiActions {
     },
     runNow(ticket) {
       if (ticket.status === 'running') return;
-      updateTicket(db, ticket.id, { status: 'todo', priority: PRIORITY_NOW, error: null, finished_at: null });
+      updateTicket(db, ticket.id, { status: 'todo', priority: PRIORITY_NOW, attempts: 0, error: null, finished_at: null });
     },
     togglePause(currentlyPaused) {
       if (currentlyPaused) clearPause(db);

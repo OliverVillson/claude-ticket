@@ -168,6 +168,37 @@ describe('environment problems', () => {
   });
 });
 
+describe('login failures', () => {
+  test('an expired login that arrives as an error result is an environment problem: no attempt burned, run stops', async () => {
+    const a = ticket('a', 'x');
+    const b = ticket('b', 'x');
+    const expired = {
+      name: 'expired',
+      async *run(): AsyncGenerator<any> {
+        yield { type: 'system', subtype: 'init', session_id: 's1', model: 'haiku' };
+        yield { type: 'assistant', error: 'authentication_failed', message: { id: 'm1', content: [{ type: 'text', text: 'Failed to authenticate: OAuth session expired and could not be refreshed' }] } };
+        yield { type: 'result', subtype: 'success', is_error: true, num_turns: 1, total_cost_usd: 0, session_id: 's1', result: 'Failed to authenticate: OAuth session expired and could not be refreshed' };
+      },
+      async probe() {
+        return 'ok' as const;
+      },
+    };
+    const orch = new Orchestrator({ db, concurrency: 1, exitWhenEmpty: true, heartbeatMs: 100, runner: expired as any });
+    await orch.start();
+    expect([status(a.id), status(b.id)].map((t) => t.status)).toEqual(['todo', 'todo']);
+    expect([status(a.id), status(b.id)].map((t) => t.attempts)).toEqual([0, 0]);
+    expect([status(a.id), status(b.id)].some((t) => (t.error ?? '').includes('/login'))).toBe(true);
+    expect(listRuns(db, a.id).length + listRuns(db, b.id).length).toBe(1);
+  });
+
+  test('re-queueing by hand resets the attempt count', () => {
+    const t = ticket('c', 'x');
+    updateTicket(db, t.id, { status: 'failed', attempts: 9 });
+    updateTicket(db, t.id, { status: 'todo', attempts: 0 });
+    expect(status(t.id).attempts).toBe(0);
+  });
+});
+
 describe('outcomes', () => {
   test('a failing ticket is retried once, then marked failed', async () => {
     const t = ticket('flaky', 'FAKE:failed cannot reach the database');
