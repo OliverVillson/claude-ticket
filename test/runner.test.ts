@@ -114,10 +114,20 @@ describe('salu runner (fake systemctl)', () => {
 
   test.skipIf(!HAS_REMOTE)('add also registers the box remote and enables, controls and removes the sync service', async () => {
     const b = box();
-    const r = await b.run('add', 'web', '--no-sandbox', '--remote', 'https://example.invalid/web.git');
+    const bare = join(b.d, 'web.git');
+    Bun.spawnSync(['git', 'init', '-q', '--bare', bare]);
+    const r = await b.run('add', 'web', '--no-sandbox', '--remote', bare);
     expect(r.err).toBe('');
-    // (unreachable remote: the registration itself must still be refused or accepted consistently; the check is --force-free here)
     expect(r.code).toBe(0);
+    // a bad explicit --remote is an error, not a silent skip
+    const bad = await b.run('add', 'bad', '--no-sandbox', '--remote', join(b.d, 'nope.git'));
+    expect(bad.code).toBe(1);
+    expect(bad.err).toContain('git sync');
+    expect(existsSync(join(b.d, 'var', 'bad'))).toBe(false);
+    // no url at all: orchestrator only, and it says why
+    const none = await b.run('add', 'nourl', '--no-sandbox');
+    expect(none.code).toBe(0);
+    expect(none.out).toContain('no git sync');
     expect(existsSync(join(b.d, 'units', 'salu-sync@.service'))).toBe(true);
     expect(readFileSync(join(b.d, 'etc', 'web.env'), 'utf8')).toContain('SALU_RUNNER_SYNC=1');
     expect(b.calls()).toContain('enable --now salu-runner@web.service salu-sync@web.service');

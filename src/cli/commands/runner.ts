@@ -174,8 +174,12 @@ function add(p: Parsed): number {
     else {
       const rargs = ['remote', 'add', name, ...(remoteUrl ? [remoteUrl] : []), '--box'];
       const rr = sh(p, [...asUser, ...selfCommand(rargs)]);
-      if (!rr.ok) throw new CliError(`could not set up git sync:\n${rr.out}\n(pass --remote <git-url>, or --no-sync for the orchestrator only)`);
-      sync = true;
+      if (rr.ok) sync = true;
+      else if (flagStr(p, 'remote')) {
+        if (!dry(p)) rmSync(home, { recursive: true, force: true }); // leave nothing half-made, so the retry is clean
+        throw new CliError(`could not set up git sync:\n${rr.out}`);
+      }
+      else console.log(dim(`· no git sync: ${rr.out.split('\n')[0]}\n  (give the project's git url with --remote <url> or --clone, or pass --no-sync)`));
     }
   }
   const text = renderEnvFile({ auth, apiKey: apiKey ?? (dry(p) ? 'dry-run' : undefined), sandbox, sync });
