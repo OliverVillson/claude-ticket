@@ -5,14 +5,14 @@ import { countTickets, getTicketById, listProjects } from '../../db/queries.ts';
 import { readStatus } from '../../orchestrator/status.ts';
 import { bold, cyan, dim, green, magenta, red, yellow } from '../../core/ansi.ts';
 import { formatClock, formatDuration, statusColor } from '../../core/format.ts';
-import { helpIf } from './_shared.ts';
-import { formatPause, getPause } from '../../usage/index.ts';
+import { helpIf, isEmbedded } from './_shared.ts';
+import { formatUsageHeader, getPause, formatPause, peekUsageSnapshot, getUsageSnapshot, sdkFetcher } from '../../usage/index.ts';
 import { GLYPHS } from '../../ui/glyphs.ts';
 
 const HELP = `salu status [--json]
 
-One screen: whether the orchestrator is running, tickets by status, and if it is paused,
-why and when it resumes.`;
+One screen: whether the orchestrator is running, tickets by status, plan usage left (see
+salu usage), and if it is paused, why and when it resumes.`;
 
 export async function status(p: Parsed): Promise<number> {
   if (helpIf(p, HELP)) return 0;
@@ -20,8 +20,14 @@ export async function status(p: Parsed): Promise<number> {
   const now = Date.now();
   const st = readStatus(db, now);
   const counts = countTickets(db);
+  // A read of the plan usage takes seconds and is cached for a minute. On the terminal wait for it;
+  // inside the TUI show the cache and refresh in the background so the command answers at once.
+  const fetcher = sdkFetcher({ timeoutMs: 8_000 });
+  let usage = peekUsageSnapshot(db);
+  if (isEmbedded()) void getUsageSnapshot({ db, fetcher }).catch(() => {});
+  else usage = await getUsageSnapshot({ db, fetcher }).catch(() => usage);
   if (flagBool(p, 'json')) {
-    console.log(JSON.stringify({ orchestrator: st, tickets: counts, projects: listProjects(db).length }, null, 2));
+    console.log(JSON.stringify({ orchestrator: st, tickets: counts, projects: listProjects(db).length, usage }, null, 2));
     return 0;
   }
   const lines: string[] = [];
@@ -32,6 +38,7 @@ export async function status(p: Parsed): Promise<number> {
   }
   const pause = getPause(db);
   if (pause) lines.push(`${magenta('‖')} ${bold('paused')}: ${formatPause(pause, now)}`);
+  lines.push(`${dim('usage')} ${usage.available ? formatUsageHeader(usage, now, 10) : dim(`n/a: ${usage.reason ?? 'unknown'}`)}`);
   lines.push('');
   const order = ['running', 'paused', 'todo', 'backlog', 'blocked', 'failed', 'done'] as const;
   lines.push(

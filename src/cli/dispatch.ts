@@ -21,6 +21,7 @@ Usage   (salu ?  |  salu help  |  salu --help  shows this list; quote the ? in z
                                              queue everything saved (or just the named tickets) and start
   salu pause | salu resume | salu stop
   salu status [--json]
+  salu usage [--json] [--refresh]            how much of your Claude plan's 5-hour and weekly usage is left
   salu log "name" [--follow] [--raw]
   salu plan "name"                           split a ticket into sub-tickets with Claude
   salu doctor                                check that Claude Code is found and you are logged in
@@ -60,6 +61,8 @@ export async function dispatch(argv: string[]): Promise<number> {
     case 'change':
     case 'edit':
       return (await import('./commands/change.ts')).change(sub);
+    case 'usage':
+      return (await import('./commands/usage.ts')).usage(sub);
     case 'status':
       return (await import('./commands/status.ts')).status(sub);
     case 'run':

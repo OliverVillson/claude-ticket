@@ -42,3 +42,19 @@ Core keys, also read by `salu status`, `salu pause/resume` and the TUI: `paused_
 ## Tests
 
 `bun test test/usage.test.ts`: parsing, state, formatting, `/usage` interpretation, the probe against a stubbed SDK, and the wait loop. `test/orchestrator.test.ts` covers the same module inside the real dispatch loop.
+
+## Usage left (snapshot)
+
+`getUsageSnapshot({ db })` returns how much of the plan is left, for the TUI header and `salu usage`
+(no model turn). Windows: `session` (5 h), `weekly`, `opus`, `sonnet`, `fable`, `model:<name>`,
+`credits`. Each has `percentUsed`/`percentLeft` (0..100, null when only a status is known), `status`
+(`allowed|warning|rejected|unknown`), `resetsAt` (epoch ms) and `source` (`event` or `usage`).
+`available: false` comes with `reason`/`reasonKind` (`no-subscription` for API-key auth,
+`not-logged-in`, `offline`, `error`). `stale` is true when the last read failed or is older than
+5 minutes; `error` says why. Two sources, newest observation per window wins: worker
+`rate_limit_event`s (`recordRateLimitEvent(db, info)`, called by the scheduler; stored in the state
+table so other processes see them) and the SDK's experimental `get_usage` request, read at most once
+a minute and immediately after a worker event. `watchUsage(db, cb)` keeps a screen fresh;
+`onUsageChange(cb)` fires in-process. `formatUsageHeader(snap)` gives `5h ▰▰▰▱▱ 62% · resets 3:45pm · week ▰▰▱▱▱ 31%`.
+Fake mode (`SALU_WORKER=fake`): `SALU_FAKE_USAGE` = `off` or a raw `get_usage` JSON (or file `fake-usage`); default a sample.
+The subscription figures could not be verified against a live login in the build sandbox (API key auth); the parser follows the SDK's `SDKControlGetUsageResponse` types.
