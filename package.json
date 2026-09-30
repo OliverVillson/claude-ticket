@@ -1,6 +1,6 @@
 {
   "name": "salu",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "A fast ticket queue for Claude Code agents: projects, tickets, an orchestrator that runs them, and a Claude-Code-style TUI.",
   "type": "module",
   "bin": {
