@@ -153,6 +153,25 @@ Not covered: the OS sandbox fences shell commands; the file tools are fenced by 
 Anything an agent can read inside the kernel can be sent to any site it can reach. Linux needs
 `sudo apt-get install bubblewrap socat`. `SALU_SANDBOX=off` switches it off everywhere.
 
+## The runner (an always-on Linux box)
+
+Write a ticket, go do something else: on a rented Linux VPS salu runs one orchestrator per project under
+systemd, each with its own data folder (`/var/lib/salu/<project>`: database, log, kernel). A crash or a
+reboot brings every orchestrator back; tickets a dead run left `running` go back to the queue and resume
+their Claude session. Runner projects have the sandbox on by default.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/OliverVillson/salu/main/scripts/install-runner.sh | sudo bash
+sudo -iu salu            # once: run `claude`, then /login   (skip with --auth api-key below)
+sudo salu runner add web --clone https://github.com/you/web
+salu runner list         # service state and ticket counts per project
+salu runner logs web -f
+```
+
+`--auth subscription` (default, the box's Claude login) or `--auth api-key --api-key-file <file>`: the key
+is stored in `/etc/salu/<project>.env` (root-readable, not on any command line). Workers still receive it in their environment, and sandboxed workers can reach any URL by default, so use a key with a spend limit, or the subscription login. `--auth subscription` prints a warning: Anthropic's terms may not allow a subscription login for unattended or automated use (an API key is the supported route), and a long headless session can lose its login until restarted. A login that breaks mid-run restarts the service; one that is still dead at start leaves the service failed (exit 78, no restart loop; `salu runner list` shows it) until you fix the login and `salu runner restart <project>`. `salu runner --help` lists `setup`, `start|stop|restart`,
+`remove [--purge]` and `doctor`. The systemd units confine the service itself (read-only system, an empty home holding only what that service needs, only its own project folder; the orchestrator never sees ssh keys, the sync never sees the Claude login); `salu runner setup --no-harden` drops that if the sandbox's bubblewrap fails under it. Hardened units are syntax-checked with `systemd-analyze verify` but not yet run on a real box. `salu run --no-queue` is what the service runs: start, but never queue the backlog.
+
 ## Interactive list (demo: `bun run src/tui/demo.ts`)
 
 | Key | Action |
