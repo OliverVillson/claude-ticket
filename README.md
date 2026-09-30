@@ -134,6 +134,14 @@ project's workers in a kernel:
   - `salu push [project] [--branch B] [--to url] [--dry-run]` pushes the `salu/*` branches to the project's git remote.
   - `salu export <folder> [project] [--git] [--force]` copies the files to a folder.
 
+- When any project is sandboxed, `salu run` restarts itself once with the same environment allow-list workers get, so a
+  worker's shell cannot read the orchestrator's environment (`/proc/<pid>/environ`). Unsandboxed workers then lose
+  variables outside the list: `SALU_ENV_PASS=NAME` brings one back, `SALU_ORCH_ENV=keep` turns this off.
+- After each sandboxed run salu looks for links that leave the kernel or files with several hard links and notes them
+  in the ticket log (`salu kernel audit:`). This catches a link swapped in between the file-tool check and the write.
+- `salu doctor --sandbox` proves it on your machine: one small ticket tries to read, write and hard-link canary files
+  in your home folder, and salu checks the files afterwards.
+
 Not covered: the OS sandbox fences shell commands; the file tools are fenced by the permission rules above.
 Anything an agent can read inside the kernel can be sent to any site it can reach. Linux needs
 `sudo apt-get install bubblewrap socat`. `SALU_SANDBOX=off` switches it off everywhere.

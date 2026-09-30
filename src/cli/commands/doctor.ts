@@ -11,7 +11,10 @@ import { helpIf } from './_shared.ts';
 const HELP = `salu doctor
 
 Checks that salu can do its job on this machine: Claude Code is installed and reachable, you are
-logged in (it sends one tiny test request to check the login really works), and the data folder is writable. Exits with 1 when something needs fixing.`;
+logged in (it sends one tiny test request to check the login really works), and the data folder is writable. Exits with 1 when something needs fixing.
+
+  --sandbox   also prove the kernel sandbox holds on this machine: one small ticket tries to read, write and hard-link
+              canary files in your home folder and salu checks the files (uses a few haiku requests)`;
 
 async function run(cmd: string[]): Promise<{ ok: boolean; out: string }> {
   try {
@@ -23,6 +26,32 @@ async function run(cmd: string[]): Promise<{ ok: boolean; out: string }> {
   } catch (e: any) {
     return { ok: false, out: String(e?.message ?? e) };
   }
+}
+
+/** `salu doctor --sandbox`: a real ticket in a throwaway sandboxed project attacks canary files in your home folder. */
+async function sandboxProof(): Promise<number> {
+  const sb = sandboxSupport();
+  if (!sb.ok) {
+    console.log(`${red('✗')} the kernel sandbox cannot run here`);
+    console.log(`  ${dim(sb.problem ?? '')}`);
+    return 1;
+  }
+  console.log(`\n${dim('Sandbox proof: one small haiku ticket in a throwaway sandboxed project tries to read, write and link files in your home folder (canary files, removed afterwards)...')}`);
+  const { runSandboxCheck } = await import('../../core/sandbox-check.ts');
+  const { selectRunner } = await import('../../orchestrator/worker.ts');
+  const probes = await runSandboxCheck(await selectRunner(), { onLine: () => process.stdout.write('.') });
+  console.log('');
+  let failed = 0;
+  for (const pr of probes) {
+    if (pr.ok) console.log(`${green('✓')} ${pr.name} ${dim(`(${pr.detail})`)}`);
+    else if (pr.soft) console.log(`${dim('·')} ${pr.name}: ${pr.detail}`);
+    else {
+      failed++;
+      console.log(`${red('✗')} ${pr.name}`);
+      console.log(`  ${dim(pr.detail)}`);
+    }
+  }
+  return failed;
 }
 
 export async function doctor(p: Parsed): Promise<number> {
@@ -73,6 +102,7 @@ export async function doctor(p: Parsed): Promise<number> {
   } catch (e: any) {
     no(`cannot write the data folder: ${String(e?.message ?? e)}`);
   }
+  if (p.flags.sandbox) bad += await sandboxProof();
   console.log(bad ? `\n${bad} problem${bad === 1 ? '' : 's'} to fix.` : '\nAll good.');
   return bad ? 1 : 0;
 }

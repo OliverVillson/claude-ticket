@@ -1,6 +1,6 @@
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, realpathSync, statSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import type { HookCallback, Options } from '@anthropic-ai/claude-agent-sdk';
 import { CliError } from './errors.ts';
 import { folderSlug } from './resolve.ts';
@@ -242,6 +242,66 @@ export function kernelOptions(dir: string, o: { home?: string; env?: NodeJS.Proc
     disallowedTools: secrets.flatMap((p) => ['Read', 'Edit', 'Write'].flatMap((t) => [`${t}(${p})`, `${t}(${p}/**)`])),
     hooks: { PreToolUse: [{ hooks: [fileToolHook(dir, { home })] }] },
   };
+}
+
+
+/**
+ * The orchestrator's own environment is readable by a worker's shell on Linux (`/proc/<pid>/environ`, same user),
+ * and with `ps eww` on macOS unless the OS sandbox blocks it. So when any project runs in the kernel the
+ * orchestrator restarts itself once with the same allow-list a worker gets. The catch: unsandboxed workers of
+ * that orchestrator lose variables the list does not name; `SALU_ENV_PASS=NAME` brings one back, and
+ * `SALU_ORCH_ENV=keep` turns the whole thing off.
+ */
+export function orchestratorEnvToScrub(anySandboxed: boolean, env: NodeJS.ProcessEnv = process.env): Record<string, string | undefined> | null {
+  if (!anySandboxed || !sandboxOn(env) || env.SALU_ORCH_SCRUBBED === '1' || (env.SALU_ORCH_ENV ?? '').toLowerCase() === 'keep') return null;
+  const out = scrubSecrets(env, (env.SALU_ENV_PASS ?? '').split(',').map((x) => x.trim()).filter(Boolean));
+  delete out.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB; // that one is for workers' children, not for us
+  out.SALU_ORCH_SCRUBBED = '1';
+  return out;
+}
+
+/**
+ * After a sandboxed run: what in the kernel folder could point outside it? The file-tool guard checks a path
+ * before the tool uses it, so a shell loop flipping a link between the check and the write can slip past; this
+ * looks at what such tricks leave behind. Returns one line per finding (symlinks that leave the kernel, files
+ * with several hard links). Findings are a warning for you, not a proof of escape.
+ */
+export function auditKernel(dir: string, o: { home?: string; limit?: number } = {}): string[] {
+  const home = o.home ?? homedir();
+  const kernel = canon(dir, dir, home);
+  const found: string[] = [];
+  const limit = o.limit ?? 20000;
+  let seen = 0;
+  const walk = (d: string) => {
+    let names: string[];
+    try {
+      names = readdirSync(d);
+    } catch {
+      return;
+    }
+    for (const n of names) {
+      if (++seen > limit || found.length >= 50) return;
+      const full = join(d, n);
+      let st;
+      try {
+        st = lstatSync(full);
+      } catch {
+        continue;
+      }
+      const rel = full.slice(dir.length + 1);
+      if (st.isSymbolicLink()) {
+        const real = canon(full, kernel, home);
+        if (!within(real, kernel)) found.push(`${rel} is a link to ${real}, outside the kernel`);
+      } else if (st.isDirectory()) {
+        if (n === 'node_modules' || (n === 'objects' && basename(d) === '.git')) continue;
+        walk(full);
+      } else if (st.isFile() && st.nlink > 1 && !rel.startsWith('.git/objects')) {
+        found.push(`${rel} has ${st.nlink} hard links`);
+      }
+    }
+  };
+  walk(dir);
+  return found;
 }
 
 /** What `salu doctor` needs to know: can the OS sandbox run here? */

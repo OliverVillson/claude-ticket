@@ -16,7 +16,7 @@ import { detectLimit, parseLimitText, probeWindow } from '../usage/index.ts';
 import type { LimitHit } from '../usage/types.ts';
 import { CLAUDE_MISSING, EnvironmentError, claudeExecutableOption, environmentProblem, runningCompiled } from '../core/claude-bin.ts';
 import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../core/tags.ts';
-import { kernelOptions, prepareKernel, sandboxOn, scrubSecrets } from '../core/kernel.ts';
+import { auditKernel, kernelOptions, prepareKernel, sandboxOn, scrubSecrets } from '../core/kernel.ts';
 import { DEFAULT_TOOLS, denialsFrom, toolsToSdk } from '../core/tools.ts';
 import { buildPrompt, buildResumePrompt, parseTrailer, systemAppend } from './prompt.ts';
 import type { WorkerInput, WorkerLive, WorkerResult, WorkerRunner } from './types.ts';
@@ -224,6 +224,9 @@ export const sdkRunner: WorkerRunner = {
       throw e;
     }
     while (stderr.length) yield { type: 'stderr', text: stderr.shift(), ts: Date.now() };
+    // Tricks that beat a check-then-use guard leave links behind: say so in the log.
+    const findings = kernel ? auditKernel(kernel) : [];
+    if (findings.length) yield { type: 'stderr', text: `salu kernel audit: ${findings.slice(0, 5).join('; ')}${findings.length > 5 ? ` (and ${findings.length - 5} more)` : ''}`, ts: Date.now() };
   },
   async probe(model) {
     const r = await probeWindow({ model: model ?? undefined, cwd: process.env.TMPDIR || '/tmp' });
