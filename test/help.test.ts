@@ -14,7 +14,7 @@ describe('help', () => {
     test(`ticket ${args.join(' ')} lists every command`, async () => {
       const r = await run(...args);
       expect(r.code).toBe(0);
-      for (const cmd of ['add project', 'add "name"', 'remove', 'change', 'list', 'run', 'pause', 'resume', 'stop', 'status', 'log', 'plan', 'update']) {
+      for (const cmd of ['add project', 'add "name"', 'remove', 'change', 'list', 'run', 'pause', 'resume', 'stop', 'status', 'usage', 'log', 'plan', 'update']) {
         expect(r.out).toContain(cmd);
       }
     });

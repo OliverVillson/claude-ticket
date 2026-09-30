@@ -16,6 +16,7 @@ import { clearPause, resolveHooks, type UsageHooks } from './gate.ts';
 import { clearAllWorkerInfo, clearWorkerInfo, HEARTBEAT_MS, readStatus, setPause, writeWorkerInfo, type PauseInfo } from './status.ts';
 import { runWorker as defaultRunWorker, selectRunner, type RunWorkerParams } from './worker.ts';
 import type { EventListener, OrchestratorEvent, WorkerLive, WorkerResult, WorkerRunner } from './types.ts';
+import { recordRateLimitEvent } from '../usage/index.ts';
 
 export const DEFAULT_CONCURRENCY = 2;
 /** A ticket is marked `failed` once this many attempts have failed. */
@@ -289,6 +290,7 @@ export class Orchestrator {
       resume: resumed ? t.session_id : null,
       resumeReason: t.error ? t.error : 'it was paused or the orchestrator restarted',
       abort,
+      onRateLimit: (info) => recordRateLimitEvent(this.db, info),
       onLive: (l) => {
         entry.live = l;
         this.writeLive(entry, false);

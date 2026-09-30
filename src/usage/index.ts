@@ -45,3 +45,24 @@ export { probeWindow, fakeProbe, interpretUsage, probeModelFor, probeResultFromR
 export type { ProbeOptions, QueryLike } from './probe.ts';
 export { waitUntilOpen, resumeIfDue, probeAndMaybeResume, probeAndResume, sleep, closedBackoffMs, unknownBackoffMs } from './wait.ts';
 export type { WaitOptions } from './wait.ts';
+export {
+  getUsageSnapshot,
+  peekUsageSnapshot,
+  recordRateLimitEvent,
+  resetUsageCache,
+  onUsageChange,
+  watchUsage,
+  buildSnapshot,
+  parseUsage,
+  sdkFetcher,
+  classifyFetchError,
+  windowIdFor,
+  usageBar,
+  formatWindowMeter,
+  formatUsageHeader,
+  formatUsageLines,
+  MIN_REFRESH_MS,
+  STALE_AFTER_MS,
+  SNAPSHOT_STATE,
+} from './snapshot.ts';
+export type { UsageSnapshot, UsageWindow, UsageWindowId, UsageWindowStatus, UnavailableReason, UsageFetch, UsageFetcher, GetUsageOptions } from './snapshot.ts';

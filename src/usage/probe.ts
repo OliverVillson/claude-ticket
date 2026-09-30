@@ -148,8 +148,11 @@ function usageMethodOf(session: any): ((opts?: any) => Promise<any>) | null {
   return null;
 }
 
-/** Read the plan's usage windows without a model turn. `unknown` when the SDK cannot. */
-async function readUsageProbe(q: QueryLike, options: any, pause: ProbeOptions['pause'], log?: (s: string) => void): Promise<ProbeResult> {
+/**
+ * Ask Claude Code for the plan's `/usage` data (the `get_usage` control request) without a model
+ * turn. Resolves to the raw response; rejects when the SDK cannot answer.
+ */
+export async function readUsageRaw(q: QueryLike, options: any, timeoutMs = 30_000): Promise<any> {
   let release: () => void = () => {};
   const gate = new Promise<void>((r) => (release = r));
   // An input stream that yields nothing keeps the session open without starting a turn.
@@ -159,13 +162,8 @@ async function readUsageProbe(q: QueryLike, options: any, pause: ProbeOptions['p
   const session: any = q({ prompt: idle(), options });
   try {
     const fn = usageMethodOf(session);
-    if (!fn) return { status: 'unknown', detail: 'SDK session has no usage method' };
-    const usage = await withTimeout(fn({ skipBehaviors: true }), 30_000, 'usage read');
-    const r = interpretUsage(usage, pause);
-    log?.(`usage read: ${r.status}${r.detail ? ` (${r.detail})` : ''}`);
-    return r;
-  } catch (e) {
-    return { status: 'unknown', detail: `usage read failed: ${errText(e)}` };
+    if (!fn) throw new Error('SDK session has no usage method');
+    return await withTimeout(fn({ skipBehaviors: true }), timeoutMs, 'usage read');
   } finally {
     release();
     try {
@@ -173,6 +171,39 @@ async function readUsageProbe(q: QueryLike, options: any, pause: ProbeOptions['p
     } catch {
       /* ignore */
     }
+  }
+}
+
+/** SDK options for a session that only reads usage: no settings files, no tools, no transcript. */
+export function usageSessionOptions(cwd?: string, signal?: AbortController): Record<string, any> {
+  const base: Record<string, any> = {
+    cwd: cwd ?? process.cwd(),
+    settingSources: [],
+    tools: [],
+    allowedTools: [],
+    maxTurns: 1,
+    persistSession: false,
+    permissionMode: 'default',
+    env: probeEnv(),
+  };
+  if (signal) base.abortController = signal;
+  const exe = claudeExecutableOption();
+  if (exe) base.pathToClaudeCodeExecutable = exe;
+  return base;
+}
+
+/** Load the SDK's `query`. */
+export const loadSdkQuery = loadQuery;
+
+/** Read the plan's usage windows without a model turn. `unknown` when the SDK cannot. */
+async function readUsageProbe(q: QueryLike, options: any, pause: ProbeOptions['pause'], log?: (s: string) => void): Promise<ProbeResult> {
+  try {
+    const usage = await readUsageRaw(q, options);
+    const r = interpretUsage(usage, pause);
+    log?.(`usage read: ${r.status}${r.detail ? ` (${r.detail})` : ''}`);
+    return r;
+  } catch (e) {
+    return { status: 'unknown', detail: /no usage method/.test(errText(e)) ? errText(e) : `usage read failed: ${errText(e)}` };
   }
 }
 

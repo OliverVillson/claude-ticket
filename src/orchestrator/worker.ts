@@ -237,6 +237,8 @@ export interface RunWorkerParams extends WorkerInput {
   logPath: string;
   runner: WorkerRunner;
   onLive?: (live: WorkerLive) => void;
+  /** Called with every `rate_limit_info` the session streams (status, utilization, reset time). */
+  onRateLimit?: (info: any) => void;
 }
 
 /**
@@ -259,6 +261,13 @@ export async function runWorker(p: RunWorkerParams): Promise<WorkerResult> {
     for await (const m of p.runner.run(p)) {
       appendLogLine(p.logPath, m);
       if (m?.type === 'stderr' && m.text) lastStderr = firstLine(String(m.text), 200);
+      if (m?.type === 'rate_limit_event' && m.rate_limit_info) {
+        try {
+          p.onRateLimit?.(m.rate_limit_info);
+        } catch {
+          /* a usage meter must not break a worker */
+        }
+      }
       const hit = detectLimit(m);
       if (hit && betterHit(limit, hit)) limit = hit;
       switch (m?.type) {
