@@ -32,7 +32,7 @@ struct SaluTicket: Codable {
 
 /// `<13-digit epoch ms>-<8 hex>`, same as newId() in format.ts.
 func newTicketId() -> (id: String, ms: Double) {
-    let ms = Date().timeIntervalSince1970 * 1000
+    let ms = (Date().timeIntervalSince1970 * 1000).rounded()
     let hex = (0..<4).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
-    return (String(format: "%013d", Int64(ms)) + "-" + hex, ms.rounded())
+    return (String(format: "%013lld", Int64(ms)) + "-" + hex, ms)
 }

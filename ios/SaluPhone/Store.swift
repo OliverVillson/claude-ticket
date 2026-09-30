@@ -27,7 +27,7 @@ final class Store: ObservableObject {
         guard let c = client else { error = SaluError.notConfigured.localizedDescription; return }
         loading = true; defer { loading = false }
         do {
-            let known = Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
+            let known = Dictionary(messages.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
             messages = try await c.messages(known: known)
             error = nil
         } catch { self.error = error.localizedDescription }
