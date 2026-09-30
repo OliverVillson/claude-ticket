@@ -5,6 +5,7 @@ import type { OrchestratorStatus } from '../../orchestrator/status.ts';
 import { displayWidth, truncate } from '../format.ts';
 import type { RowLayout } from '../layout.ts';
 import { messageText, type Message } from '../messages.ts';
+import { usageText, type UsageSnapshot } from '../usage.ts';
 import { DOG_WIDTH, dogFrame } from '../dog/line.ts';
 import { drawPane, paneWidth } from '../panes.ts';
 import { renderRow } from '../rows.ts';
@@ -50,6 +51,8 @@ export interface ListViewProps {
   hints?: Array<[string, string]>;
   /** workers are running: the pixel dog runs in the header */
   working?: boolean;
+  /** usage left (undefined = no source, nothing shown; null = no data, shows `usage n/a`) */
+  usage?: UsageSnapshot | null;
   /** live-activity box under the panes */
   activity?: { title: string; lines: string[]; height: number };
   /** the boxed command-line window, drawn under the panes and the activity area */
@@ -93,9 +96,13 @@ export function ListView(p: ListViewProps) {
   const counts = p.filter.trim() ? `${p.tickets.length} of ${p.total} match` : countsText(p.counts);
   const badgeW = displayWidth(statusText(p.status, p.now));
   const dogW = p.working ? DOG_WIDTH + 2 : 0;
-  const countsShown = truncate(counts, Math.max(0, cols - 1 - titleWidth(crumbs) - badgeW - 9 - dogW));
+  const headRoom = cols - 1 - titleWidth(crumbs) - badgeW - 9 - dogW;
+  // The usage meter yields to the counts on narrow terminals: counts keep at least 14 cells first.
+  const usage = p.usage === undefined ? '' : usageText(p.usage, Math.max(0, headRoom - 14 - 5), st, p.now);
+  const usageW = usage ? displayWidth(usage) + 5 : 0;
+  const countsShown = truncate(counts, Math.max(0, headRoom - usageW));
   const dog = p.working && cols - 1 - titleWidth(crumbs) - badgeW - 9 >= dogW ? dogFrame(p.spinner ?? 0, { level: st.level }) + '  ' : '';
-  const headerRight = dog + (countsShown ? st.dim(countsShown + '  ·  ') : '') + statusBadge(p.status, p.now, !p.working || blinkOn(p.spinner ?? 0));
+  const headerRight = dog + (countsShown ? st.dim(countsShown + '  ·  ') : '') + (usage ? usage + st.dim('  ·  ') : '') + statusBadge(p.status, p.now, !p.working || blinkOn(p.spinner ?? 0));
 
   // Footer: filter prompt, delete confirm, message or hints; position on the right.
   const position = p.tickets.length ? `${p.cursor + 1}/${p.tickets.length}` : '';

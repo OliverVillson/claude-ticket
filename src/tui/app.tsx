@@ -15,6 +15,7 @@ import { statSync } from 'node:fs';
 import { ancestorsOf, buildRows, pathNames, renderTreeRow, revealed, subtreeIds, treeKey, type TreeKey } from './tree.ts';
 import { tailLog, type LogLine } from './log-tail.ts';
 import { loadDetail, loadSnapshot, snapshotKey, type Snapshot, type TicketDetail } from './store.ts';
+import type { UsageSnapshot, UsageSource } from './usage.ts';
 import { PropsView } from './components/PropsView.tsx';
 import { DetailView } from './components/DetailView.tsx';
 import { FormView, type FormValues } from './components/FormView.tsx';
@@ -43,6 +44,8 @@ export interface AppProps {
    * with no flags). The app exits with the saved ticket, or null when cancelled.
    */
   form?: { ticketId?: number; projectId?: number };
+  /** cached usage snapshots for the header meter; without it the meter is hidden */
+  usage?: UsageSource;
 }
 
 export type FormResult = { action: 'added' | 'saved'; ticket: TicketView } | { action: 'cancelled' } | null;
@@ -126,6 +129,12 @@ export function App(p: AppProps) {
   const [detail, setDetail] = useState<TicketDetail | null>(null);
   const [log, setLog] = useState<LogLine[]>([]);
   const [, setTick] = useState(0);
+  const [usageSnap, setUsageSnap] = useState<UsageSnapshot | null | undefined>(() => (p.usage ? p.usage.get() : undefined));
+  useEffect(() => {
+    if (!p.usage) return;
+    setUsageSnap(p.usage.get());
+    return p.usage.subscribe(setUsageSnap);
+  }, [p.usage]);
 
   // Command line (`:`): same dispatcher as the shell CLI, with history and tab completion.
   const [cmdEditing, setCmdEditing] = useState(false);
@@ -640,6 +649,7 @@ export function App(p: AppProps) {
       commandFocus={cmdEditing}
       command={<CommandLine columns={columns} focused={cmdEditing} value={cmdValue} onChange={setCmdValue} busy={cmdBusy} nonce={cmdNonce} />}
       working={working}
+      usage={usageSnap}
       ticketFocus={!twoPane || pane === 'tickets'}
       crumbs={scopeCrumbs}
       projectConfirm={projConfirm ? `remove project "${projConfirm.name}" and its tickets?` : null}
