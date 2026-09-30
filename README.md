@@ -121,6 +121,7 @@ Any other token (`bug`, `docs`, `team=core`) is stored as a label or custom tag 
 | Enter | Open the ticket (query, tags, last run, live log tail if running) |
 | a / e / d | Add, edit, delete (one-key confirm) |
 | r | Queue the selected ticket and run it now, ahead of the queue (a saved ticket never runs until queued) |
+| a | On a ticket blocked by a permission (list, properties or output): allow what it was refused and queue it again, after a confirm line |
 | p | Pause or resume the orchestrator |
 | / | Filter by name, label or status |
 | Tab / Shift-Tab | The only keys that move between windows (projects, tickets, command line) |

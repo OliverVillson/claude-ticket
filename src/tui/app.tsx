@@ -17,6 +17,7 @@ import { tailLog, type LogLine } from './log-tail.ts';
 import { loadDetail, loadSnapshot, snapshotKey, type Snapshot, type TicketDetail } from './store.ts';
 import type { UsageSnapshot, UsageSource } from './usage.ts';
 import { DEEPER_CELLS } from './deeper.ts';
+import { ticketDenials } from '../core/allow.ts';
 import { PropsView } from './components/PropsView.tsx';
 import { DetailView } from './components/DetailView.tsx';
 import { FormView, type FormValues } from './components/FormView.tsx';
@@ -123,6 +124,7 @@ export function App(p: AppProps) {
 
   const [mode, setMode] = useState<Mode>(standaloneForm ? 'form' : 'list');
   const [confirm, setConfirm] = useState<TicketView | null>(null);
+  const [allowAsk, setAllowAsk] = useState<{ ticket: TicketView; rules: string[] } | null>(null);
   const [form, setForm] = useState<{ mode: 'add' | 'edit'; ticket?: TicketView; projectId?: number; initial: FormValues } | null>(() => {
     if (!p.form) return null;
     const t = p.form.ticketId != null ? getTicketById(db, p.form.ticketId) : null;
@@ -396,6 +398,19 @@ export function App(p: AppProps) {
     refresh(true);
   };
 
+  const doAllow = (t: TicketView): string | null => {
+    try {
+      const rules = actions.allow(t);
+      say(`allowed ${rules.join(', ')} for "${t.name}" · queued again${snapshot.status.alive ? '' : ' · start the orchestrator with: salu run'}`, 'ok');
+      refresh(true);
+      return null;
+    } catch (e: any) {
+      const m = String(e?.message ?? e);
+      say(m, 'err');
+      return m;
+    }
+  };
+
   const doTogglePause = () => {
     const paused = !!snapshot.status.paused;
     try {
@@ -509,6 +524,11 @@ export function App(p: AppProps) {
         }
         return; // the TextField consumes the rest
       }
+      if (allowAsk) {
+        if (input === 'y' || input === 'Y' || key.return) doAllow(allowAsk.ticket);
+        setAllowAsk(null);
+        return;
+      }
       if (projConfirm) {
         if (input === 'y' || input === 'Y' || key.return) void removeProject(projConfirm);
         else setProjConfirm(null);
@@ -585,6 +605,10 @@ export function App(p: AppProps) {
         if (selected) doRunNow(selected);
         return;
       }
+      if (input === 'a' && mode === 'list' && selected && ticketDenials(selected).length) {
+        setAllowAsk({ ticket: selected, rules: [...new Set(ticketDenials(selected).map((d) => d.rule))] });
+        return;
+      }
       if (input === 'u') {
         if (selected) doToggleQueue(selected);
         return;
@@ -647,7 +671,17 @@ export function App(p: AppProps) {
       refresh(true);
       return null;
     };
-    return <PropsView columns={columns} detail={detail} projects={snapshot.projects.map((pr) => pr.name)} now={now} rows={viewportRows(termRows, 4)} loadRuns={(id) => listRuns(db, id)} onSave={save} onClose={() => setMode('list')} />;
+    return <PropsView columns={columns} detail={detail} projects={snapshot.projects.map((pr) => pr.name)} now={now} rows={viewportRows(termRows, 4)} loadRuns={(id) => listRuns(db, id)} onSave={save}
+        onAllow={() => {
+          const err = doAllow(detail.ticket);
+          if (!err) {
+            const t = getTicketById(db, detail.ticket.id);
+            if (t) setDetail(loadDetail(db, t));
+          }
+          return err;
+        }}
+        onClose={() => setMode('list')}
+      />;
   }
   if (mode === 'help') return <HelpView columns={columns} scopeName={scopeName} />;
   if (mode === 'detail' && detail) {
@@ -705,7 +739,7 @@ export function App(p: AppProps) {
       usage={usageSnap}
       ticketFocus={!twoPane || pane === 'tickets'}
       crumbs={scopeCrumbs}
-      projectConfirm={projConfirm ? `remove project "${projConfirm.name}" and its tickets?` : null}
+      projectConfirm={projConfirm ? `remove project "${projConfirm.name}" and its tickets?` : allowAsk ? `Allow ${allowAsk.rules.join(', ')} for "${allowAsk.ticket.name}" and queue it again?` : null}
       hints={cmdEditing ? COMMAND_HINTS : twoPane ? (pane === 'tree' ? TREE_HINTS : TICKET_PANE_HINTS) : LIST_HINTS}
       columns={columns}
       rows={rowsAvail}

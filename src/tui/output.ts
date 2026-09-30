@@ -1,7 +1,8 @@
 import { readFileSync, statSync } from 'node:fs';
 import type { Run, TicketView } from '../db/types.ts';
 import { activityLines } from './activity.ts';
-import { ago, fmtCost, fmtDuration, wrapText } from './format.ts';
+import { ago, fmtCost, fmtDuration, truncate, wrapText } from './format.ts';
+import { ticketDenials } from '../core/allow.ts';
 import { readTail, renderLogLine, type LogLine } from './log-tail.ts';
 import type { Style } from './style.ts';
 import { GLYPHS } from '../ui/glyphs.ts';
@@ -90,6 +91,13 @@ export function outputRows(p: OutputParams): string[] {
   const latest = index === 0;
   if (latest && t.error && (t.status === 'failed' || t.status === 'blocked')) {
     wrapText(t.error.replace(/\s+/g, ' '), room - 2).slice(0, 6).forEach((l, i) => rows.push(st.red((i === 0 ? `${GLYPHS.failed} ` : '  ') + l)));
+  }
+  const denials = latest && (t.status === 'blocked' || t.status === 'failed') ? ticketDenials(t) : [];
+  if (denials.length) {
+    rows.push('');
+    rows.push(st.yellow('needs permission'));
+    for (const d of denials.slice(0, 6)) rows.push(st.text(truncate(`  ${d.tool}: ${d.input}`, room)) + st.dim(`  ${d.rule}`));
+    rows.push(st.dim('  press a to allow these rules for this ticket and queue it again'));
   }
   const answer = finalAnswer(lines);
   if (answer) {

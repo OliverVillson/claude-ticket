@@ -4,6 +4,7 @@ import { createTicket, deleteTicket, queueTicket, unqueueTicket, getProjectByNam
 import { clearPause, enterManualPause } from '../usage/index.ts';
 import { parseTags, validatePriority } from '../core/tags.ts';
 import { CliError } from '../core/errors.ts';
+import { allowTicket } from '../core/allow.ts';
 
 /** What the add/edit form collects. `tags` is the same string `salu add` takes. */
 export interface TicketInput {
@@ -32,6 +33,8 @@ export interface TuiActions {
   runNow(ticket: TicketView): void;
   /** Queue a saved or finished ticket, or take a queued one back to the backlog. Returns what happened. */
   toggleQueue(ticket: TicketView): 'queued' | 'unqueued';
+  /** Allow what a blocked ticket was refused and queue it again. Returns the rules added. */
+  allow(ticket: TicketView): string[];
   /** Pause dispatch, or resume it when `currentlyPaused`. */
   togglePause(currentlyPaused: boolean): void;
 }
@@ -98,6 +101,11 @@ export function defaultActions(db: Database): TuiActions {
       }
       queueTicket(db, ticket.id);
       return 'queued';
+    },
+    allow(ticket) {
+      const r = allowTicket(db, ticket.id);
+      wakeOrchestrator();
+      return r.rules;
     },
     remove(ticket) {
       deleteTicket(db, ticket.id);
