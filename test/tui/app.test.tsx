@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { App } from '../../src/tui/app.tsx';
 import { RunView } from '../../src/tui/components/RunView.tsx';
 import { defaultActions } from '../../src/tui/actions.ts';
-import { createProject, createRun, createTicket, getTicketById, listProjects, listTickets, setState } from '../../src/db/queries.ts';
+import { createProject, createRun, createTicket, getTicketById, listProjects, listTickets, setState, updateTicket } from '../../src/db/queries.ts';
 import { STATE } from '../../src/db/types.ts';
 import { clearPause, readStatus, setPause, writeWorkerInfo } from '../../src/orchestrator/status.ts';
 import type { OrchestratorEvent } from '../../src/orchestrator/types.ts';
@@ -1009,5 +1009,91 @@ describe('tag groups in the form', () => {
     await term.press(KEY.enter);
     await term.waitFor((s) => s.includes('added "Tooled"'), 'added');
     expect(JSON.parse(listTickets(db).find((x) => x.name === 'Tooled')!.tags).tools).toBe('readonly');
+  });
+});
+
+describe('ticket output (right arrow on a finished ticket)', () => {
+  const writeLog = (home: string, name: string, answer: string) => {
+    mkdirSync(join(home, 'logs'), { recursive: true });
+    const path = join(home, 'logs', name);
+    const msg = (content: object[]) => ({ type: 'assistant', message: { content } });
+    writeFileSync(
+      path,
+      [
+        { type: 'ticket_start', options: { model: 'claude-opus-5-5', effort: 'high' } },
+        msg([{ type: 'tool_use', name: 'Read', input: { file_path: 'src/auth.ts' } }]),
+        msg([{ type: 'text', text: answer }]),
+        { type: 'result', subtype: 'success', num_turns: 4, total_cost_usd: 0.12, result: answer },
+      ]
+        .map((l) => JSON.stringify(l))
+        .join('\n') + '\n',
+    );
+    return path;
+  };
+
+  test('a done ticket opens on its output: result first, then the transcript', async () => {
+    const { db, home, ids } = seedDb(12);
+    createRun(db, ids[3]!, writeLog(home, 'a.jsonl', 'Fixed the null check in auth'));
+    const { term } = mountApp({ db, statuses: ['done'] });
+    await term.waitFor((s) => s.includes('ticket 004'));
+    await term.press(KEY.right);
+    const f = await term.waitFor((s) => s.includes('transcript'), 'output');
+    expect(f).toContain('output');
+    expect(f).toContain('result');
+    expect(f).toContain('Fixed the null check in auth');
+    expect(f).toContain('Read(src/auth.ts)');
+    expect(f).toContain('4 turns');
+    expect(f).toContain('p properties');
+    await term.press('p');
+    await term.waitFor((s) => s.includes('properties') && s.includes('toolset'), 'properties');
+    await term.press('o');
+    await term.waitFor((s) => s.includes('transcript'), 'output again');
+    await term.press(KEY.left);
+    await term.waitFor((s) => s.includes('properties'), 'left goes to properties');
+  });
+
+  test('a failed ticket shows its error first; [ ] step through earlier runs', async () => {
+    const { db, home, ids } = seedDb(12);
+    createRun(db, ids[10]!, writeLog(home, 'old.jsonl', 'first attempt answer'));
+    await new Promise((r) => setTimeout(r, 5));
+    createRun(db, ids[10]!, writeLog(home, 'new.jsonl', 'second attempt answer'));
+    updateTicket(db, ids[10]!, { error: 'the build broke: missing dependency' });
+    const { term } = mountApp({ db, statuses: ['failed'] });
+    await term.waitFor((s) => s.includes('ticket 011'));
+    await term.press(KEY.right);
+    let f = await term.waitFor((s) => s.includes('transcript'), 'output');
+    expect(f).toContain('the build broke: missing dependency');
+    expect(f).toContain('second attempt answer');
+    expect(f).toContain('run 2 of 2');
+    await term.press('[');
+    f = await term.waitFor((s) => s.includes('run 1 of 2'), 'older run');
+    expect(f).toContain('first attempt answer');
+    expect(f).not.toContain('the build broke');
+    await term.press(']');
+    await term.waitFor((s) => s.includes('run 2 of 2'), 'newer run');
+  });
+
+  test('a long transcript scrolls; a ticket that never ran shows the properties', async () => {
+    const { db, home, ids } = seedDb(12);
+    mkdirSync(join(home, 'logs'), { recursive: true });
+    const path = join(home, 'logs', 'long.jsonl');
+    const many = Array.from({ length: 200 }, (_, i) => JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: `file-${i}.ts` } }] } }));
+    writeFileSync(path, many.join('\n') + '\n');
+    createRun(db, ids[3]!, path);
+    const { term } = mountApp({ db, statuses: ['done'] }, [100, 24]);
+    await term.waitFor((s) => s.includes('ticket 004'));
+    await term.press(KEY.right);
+    let f = await term.waitFor((s) => s.includes('file-0.ts'), 'top');
+    expect(f).not.toContain('file-199.ts');
+    await term.press('G');
+    f = await term.waitFor((s) => s.includes('file-199.ts'), 'bottom');
+    expect(f).not.toContain('file-0.ts');
+    await term.press(KEY.left);
+    await term.press(KEY.left);
+    await term.waitFor((s) => s.includes('ticket 010'), 'back to the list');
+    await term.press(KEY.down);
+    await term.press(KEY.right); // ticket 010 never ran: properties, not output
+    const g = await term.waitFor((s) => s.includes('toolset'), 'properties');
+    expect(g).not.toContain('transcript');
   });
 });

@@ -118,6 +118,7 @@ Any other token (`bug`, `docs`, `team=core`) is stored as a label or custom tag 
 | p | Pause or resume the orchestrator |
 | / | Filter by name, label or status |
 | Tab / Shift-Tab | The only keys that move between windows (projects, tickets, command line) |
+| → on a done, failed or blocked ticket | Its output: the result, the error, and the run transcript (↑↓ scroll, `[` `]` earlier runs, `p` properties, `o` back to output) |
 | → on a ticket | Properties: every setting, changeable in place (← goes back) |
 | → on tags (new ticket) | Tag groups: Model / effort, Tools (`standard` = Claude Code's regular tools), Other |
 | < / > | Narrow terminals: switch project |

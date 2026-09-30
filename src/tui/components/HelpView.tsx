@@ -16,6 +16,7 @@ const KEYS: Array<[string, string]> = [
   ['/', 'filter as you type: bug  #label  status:running  p1  p<=2  @project  model:opus  -done'],
   [':', 'command line (tab to it, or press :): any salu command, e.g. add "fix login"  add project web  run  status  (tab completes, ↑↓ history)'],
   ['←  →  (project tree)', 'inside the tree only: → opens a project or enters a subproject, ← collapses it or goes back up'],
+  ['→  (finished ticket)', 'opens its output: the result, the error if it failed, and the whole transcript (↑↓ scroll, [ ] earlier runs, p properties)'],
   ['→  (on a ticket)', 'properties: every setting of the ticket, changeable in place (↑↓ move, → or ⏎ change, ← back)'],
   ['→  (new ticket, tags)', 'tag groups: Model / effort, Tools (standard = the regular Claude Code tools), Other; priority has its own field'],
   ['a  d  (in the tree)', 'add a project (fills the command line) or remove the selected one'],
