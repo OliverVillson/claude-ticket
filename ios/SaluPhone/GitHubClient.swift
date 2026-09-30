@@ -86,7 +86,8 @@ struct GitHubClient {
             }
             if bad.contains(id) { continue }
             let path = e.path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""  // a name from the remote: keep ? and # out of the URL
-            guard let f = try? JSONDecoder().decode(FileBody.self, from: try await request("contents/\(path)?ref=\(Self.branch)")) else {
+            let data = try await request("contents/\(path)?ref=\(Self.branch)")  // network errors still fail the refresh
+            guard let f = try? JSONDecoder().decode(FileBody.self, from: data) else {
                 bad.insert(id)  // not a readable file (a submodule lists as one too)
                 continue
             }
