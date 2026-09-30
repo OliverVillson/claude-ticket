@@ -96,3 +96,12 @@ export const ASCII_SLEEP: string[][] = [
 ];
 export const ASCII_MINI_RUN: string[] = ['=^.^=', '=^-^=', '=^.^=', '=^-^='];
 export const ASCII_MINI_SLEEP: string[] = ['=-.-= z', '=-.-= Z'];
+
+/** One terminal line (2 pixel rows) run cycle, 10 wide, for the header row. */
+export const LINE_RUN: string[][] = [
+  ['TMAAAAAAAD', '.M.M..M.M.'],
+  ['TMAAAAAAAD', 'M..M...MM.'],
+  ['TMAAAAAAAD', '.MM....MM.'],
+  ['TMAAAAAAAD', '..MM..MM..'],
+];
+export const ASCII_LINE_RUN: string[] = ['=^.^=>', '=^-^=>', '=^.^=>', '=^-^=>'];
