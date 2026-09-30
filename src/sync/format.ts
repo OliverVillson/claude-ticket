@@ -49,6 +49,7 @@ export interface ReplyFile {
   id: string;
   project: string;
   ref?: string; // id of the ticket file the ticket was sent with (preferred)
+  ticketId?: number; // else the ticket's number on the box (`ticket.id` of its messages)
   name?: string; // else the ticket's name on the box
   body: string;
   now: boolean; // move the ticket to the front of the queue
@@ -122,10 +123,14 @@ export function parseReplyFile(text: string): ReplyFile | null {
   if (!o || typeof o !== 'object' || o.v !== FORMAT_VERSION || !isId(o.id)) return null;
   const body = str(o.body, 20000);
   if (!body?.trim()) return null;
-  const ref = isId(o.ref) ? o.ref : undefined;
-  const name = str(o.name, 200)?.trim() || undefined;
-  if (!ref && !name) return null;
-  return { v: 1, id: o.id, project: str(o.project, 200) ?? '', ...(ref ? { ref } : {}), ...(name ? { name } : {}), body, now: o.now === true, at: Number.isFinite(o.at) ? o.at : 0 };
+  // The ticket is named either flat (ref, name) or as { ticket: { ref?, id?, name? } }, the shape messages use.
+  const t = o.ticket && typeof o.ticket === 'object' ? o.ticket : {};
+  const refRaw = o.ref ?? t.ref;
+  const ref = isId(refRaw) ? refRaw : undefined;
+  const name = str(o.name ?? t.name, 200)?.trim() || undefined;
+  const ticketId = Number.isInteger(t.id) && t.id > 0 ? (t.id as number) : undefined;
+  if (!ref && !name && !ticketId) return null;
+  return { v: 1, id: o.id, project: str(o.project, 200) ?? '', ...(ref ? { ref } : {}), ...(ticketId ? { ticketId } : {}), ...(name ? { name } : {}), body, now: o.now === true, at: Number.isFinite(o.at) ? o.at : 0 };
 }
 
 export function parseMessageFile(text: string): MessageFile | null {

@@ -55,6 +55,10 @@ export function publishReply(db: Database, project: Project, t: TicketView, body
 function applyReply(db: Database, project: Project, r: ReplyFile): void {
   const say = (title: string, level: 'info' | 'warn', ticket?: { ref?: string; name: string; id: number }) => enqueueMessage(db, project.id, project.name, boxName(), { type: ticket && level === 'info' ? 'ticket.accepted' : 'note', level, title, ...(ticket ? { ticket } : {}) });
   let id: number | null = r.ref ? (remoteTicketByUuid(db, r.ref)?.ticket_id ?? null) : null;
+  if (id === null && r.ticketId) {
+    const t = getTicketById(db, r.ticketId);
+    if (t && t.project_id === project.id) id = t.id;
+  }
   if (id === null && r.name) id = listTickets(db, { projectId: project.id, recursive: false }).find((x) => x.name === r.name)?.id ?? null;
   const t = id === null ? null : getTicketById(db, id);
   if (!t) return void say(`Could not find the ticket for your reply${r.name ? ` ("${r.name}")` : ''}`, 'warn');

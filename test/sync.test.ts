@@ -206,6 +206,7 @@ describe('replies', () => {
   test('reply files are validated', () => {
     expect(parseReplyFile(JSON.stringify({ v: 1, id: newId(), ref: newId(), body: 'hi' }))?.now).toBe(false);
     expect(parseReplyFile(JSON.stringify({ v: 1, id: newId(), body: 'hi' }))).toBeNull(); // no ticket
+    expect(parseReplyFile(JSON.stringify({ v: 1, id: newId(), ticket: { id: 4, name: 'x' }, body: 'hi' }))).toMatchObject({ ticketId: 4, name: 'x' });
     expect(parseReplyFile(JSON.stringify({ v: 1, id: newId(), name: 'x', body: '  ' }))).toBeNull();
   });
 });

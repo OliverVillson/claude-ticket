@@ -124,9 +124,9 @@ Ticket file: `{ v, id, project, name, query, tags{}, labels[], priority 1..5, qu
 
 Reply file (`ReplyFile`; a follow-up prompt on a ticket that already has an answer; the phone can write these too):
 ```
-{ v:1, id, project, ref?, name?, body, now?, at }
+{ v:1, id, project, ticket: { ref?, id?, name? }, body, now?, at }
 ```
-`ref` is the `id` of the ticket file the ticket was sent with (preferred; it is what `ticket.ref` in messages carries); without it `name` finds the ticket on the box by name. At least one is required. The box applies a reply once (by its `id`) with `replyToTicket(db, ticketId, body, { now })` from `src/db/queries.ts`: a done, blocked or failed ticket is queued again and resumes its Claude session; a running ticket takes it as the next turn; a backlog ticket is refused. The box always answers with a message: `ticket.accepted` ("Got your reply on ...") or a `note` with level `warn` when the ticket is not found or the reply was refused. Client helper: `publishReply(db, project, ticket, body, { now })` (used by `salu reply`), or just write the file.
+The ticket is named like `ticket` in messages: `ref` (the `id` of the ticket file it was sent with, preferred), else `id` (its number on the box), else `name`. At least one is required. The flat form `{ ref?, name?, ... }` is accepted too. The box applies a reply once (by its `id`) with `replyToTicket(db, ticketId, body, { now })` from `src/db/queries.ts`: a done, blocked or failed ticket is queued again and resumes its Claude session; a running ticket takes it as the next turn; a backlog ticket is refused. The box always answers with a message: `ticket.accepted` ("Got your reply on ...") or a `note` with level `warn` when the ticket is not found or the reply was refused. Client helper: `publishReply(db, project, ticket, body, { now })` (used by `salu reply`), or just write the file.
 
 Message file (`MessageFile` in `src/sync/format.ts`):
 ```
