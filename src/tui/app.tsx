@@ -3,7 +3,7 @@ import { render, useAnimation, useApp, useInput, useWindowSize } from 'ink';
 import type { Database } from 'bun:sqlite';
 import type { TicketStatus, TicketView } from '../db/types.ts';
 import { ticketLabels, ticketTags } from '../db/types.ts';
-import { getProjectById, getTicketById, latestRun } from '../db/queries.ts';
+import { getProjectById, getTicketById, latestRun, listRuns } from '../db/queries.ts';
 import { formatTags } from '../core/tags.ts';
 import type { TuiActions } from './actions.ts';
 import { applyFilter } from './filter.ts';
@@ -587,7 +587,7 @@ export function App(p: AppProps) {
       refresh(true);
       return null;
     };
-    return <PropsView columns={columns} detail={detail} projects={snapshot.projects.map((pr) => pr.name)} now={now} onSave={save} onClose={() => setMode('list')} />;
+    return <PropsView columns={columns} detail={detail} projects={snapshot.projects.map((pr) => pr.name)} now={now} rows={viewportRows(termRows, 4)} loadRuns={(id) => listRuns(db, id)} onSave={save} onClose={() => setMode('list')} />;
   }
   if (mode === 'help') return <HelpView columns={columns} scopeName={scopeName} />;
   if (mode === 'detail' && detail) {
