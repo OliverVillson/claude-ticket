@@ -99,3 +99,19 @@ describe('Ticker', () => {
     expect(t.running).toBe(false);
   });
 });
+
+import { DOG_WIDTH, dogFrame, dogLines } from '../../src/tui/dog/line.ts';
+describe('single-line api', () => {
+  test('dogFrame is one line no wider than DOG_WIDTH and animates', () => {
+    for (const level of [3, 2, 1] as const) {
+      const fs = [0, 1, 2, 3].map((f) => dogFrame(f, { level }));
+      for (const s of fs) { expect(s).not.toContain('\n'); expect(visibleWidth(s)).toBeLessThanOrEqual(DOG_WIDTH); }
+      expect(new Set(fs).size).toBe(4);
+      expect(dogFrame(4, { level })).toBe(fs[0]!);
+    }
+  });
+  test('level 0 is ascii and dogLines is 6 rows', () => {
+    expect(dogFrame(1, { level: 0 })).not.toContain('\u001b');
+    expect(dogLines(0, { level: 3 }).length).toBe(6);
+  });
+});
