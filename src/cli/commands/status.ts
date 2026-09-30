@@ -1,0 +1,55 @@
+import type { Parsed } from '../args.ts';
+import { flagBool } from '../args.ts';
+import { openDb } from '../../db/db.ts';
+import { countTickets, getTicketById, listProjects } from '../../db/queries.ts';
+import { readStatus } from '../../orchestrator/status.ts';
+import { bold, cyan, dim, green, magenta, red, yellow } from '../../core/ansi.ts';
+import { formatClock, formatDuration, statusColor } from '../../core/format.ts';
+import { helpIf } from './_shared.ts';
+import { formatPause, getPause } from '../../usage/index.ts';
+
+const HELP = `ticket status [--json]
+
+One screen: whether the orchestrator is running, tickets by status, and if it is paused,
+why and when it resumes.`;
+
+export async function status(p: Parsed): Promise<number> {
+  if (helpIf(p, HELP)) return 0;
+  const db = openDb();
+  const now = Date.now();
+  const st = readStatus(db, now);
+  const counts = countTickets(db);
+  if (flagBool(p, 'json')) {
+    console.log(JSON.stringify({ orchestrator: st, tickets: counts, projects: listProjects(db).length }, null, 2));
+    return 0;
+  }
+  const lines: string[] = [];
+  if (st.alive) {
+    lines.push(`${green('●')} orchestrator ${bold('running')} ${dim(`pid ${st.pid}, up ${formatDuration(now - (st.startedAt ?? now))}, ${st.workers.length} worker${st.workers.length === 1 ? '' : 's'} active`)}`);
+  } else {
+    lines.push(`${dim('○')} orchestrator ${bold('not running')} ${dim('(ticket run [--detach])')}`);
+  }
+  const pause = getPause(db);
+  if (pause) lines.push(`${magenta('‖')} ${bold('paused')}: ${formatPause(pause, now)}`);
+  lines.push('');
+  const order = ['running', 'paused', 'todo', 'blocked', 'failed', 'done'] as const;
+  lines.push(
+    order
+      .map((s) => `${statusColor(s)(`${counts[s]} ${s}`)}`)
+      .join(dim('  ·  ')),
+  );
+  if (st.workers.length) {
+    lines.push('');
+    for (const w of st.workers) {
+      const t = getTicketById(db, w.ticketId);
+      const name = t ? t.name : `#${w.ticketId}`;
+      const detail = [w.model, `${w.turns} turn${w.turns === 1 ? '' : 's'}`, w.lastTool && `last: ${w.lastTool}`].filter(Boolean).join(', ');
+      lines.push(`  ${cyan('●')} ${name} ${dim(`${formatDuration(now - w.startedAt)} · ${detail}`)}`);
+    }
+  }
+  const blocked = counts.blocked;
+  if (blocked) lines.push('', yellow(`${blocked} ticket${blocked === 1 ? '' : 's'} blocked on a question: ticket list --status blocked`));
+  if (counts.failed) lines.push(red(`${counts.failed} failed: ticket log "name" shows why; ticket change "name" --status todo retries`));
+  console.log(lines.join('\n'));
+  return 0;
+}

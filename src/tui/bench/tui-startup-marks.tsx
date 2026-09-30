@@ -1,0 +1,21 @@
+// Phase timing inside openList. Run: BUN_OPTIONS= python3 src/tui/bench/tui-perf.py 500 bun run src/tui/bench/tui-startup-marks.tsx ; cat /tmp/tui-marks.txt
+import fs from 'node:fs';
+const t0 = performance.now();
+const marks: Array<[string, number]> = [];
+const mark = (s: string) => marks.push([s, performance.now() - t0]);
+const flush = () => fs.writeFileSync('/tmp/tui-marks.txt', marks.map(([k, v]) => `${k.padEnd(28)} ${v.toFixed(0)}ms`).join('\n') + '\n');
+const React = (await import('react')).default; mark('react');
+const ink = await import('ink'); mark('ink import');
+const { openDb } = await import('../../db/db.ts');
+const { App } = await import('../app.tsx'); mark('app module');
+const { defaultActions } = await import('../actions.ts');
+const { loadSnapshot } = await import('../store.ts');
+const db = openDb(); mark('openDb');
+const initial = loadSnapshot(db, {}); mark('loadSnapshot');
+const origWrite = process.stdout.write.bind(process.stdout);
+let first = true;
+(process.stdout as any).write = (chunk: any, ...rest: any[]) => { if (first) { first = false; mark('first stdout write'); flush(); if (process.env.EXIT_AFTER_FIRST) setTimeout(() => process.exit(0), 80); } return (origWrite as any)(chunk, ...rest); };
+mark('before render()');
+const inst = ink.render(React.createElement(App, { db, projectId: null, actions: defaultActions(db), initial } as any), { exitOnCtrlC: true, patchConsole: true, maxFps: 30, onRender: (m: any) => { mark(`onRender (${m.renderTime.toFixed(0)}ms)`); flush(); } });
+mark('render() returned'); flush();
+await inst.waitUntilExit();
