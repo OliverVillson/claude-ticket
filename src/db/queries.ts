@@ -28,6 +28,7 @@ export interface NewProject {
   defaultModel?: string | null;
   defaultEffort?: string | null;
   defaultTools?: string | null;
+  sandbox?: boolean;
   concurrency?: number | null;
   parentId?: number | null;
 }
@@ -39,9 +40,9 @@ export function createProject(db: Database, p: NewProject): Project {
   const tx = db.transaction(() => {
     if (isDefault) db.run('UPDATE projects SET is_default = 0');
     db.run(
-      `INSERT INTO projects (name, path, is_default, default_model, default_effort, default_tools, concurrency, created_at, parent_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [p.name, p.path, isDefault, p.defaultModel ?? null, p.defaultEffort ?? null, p.defaultTools ?? null, p.concurrency ?? null, now(), p.parentId ?? null],
+      `INSERT INTO projects (name, path, is_default, default_model, default_effort, default_tools, concurrency, created_at, parent_id, sandbox)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [p.name, p.path, isDefault, p.defaultModel ?? null, p.defaultEffort ?? null, p.defaultTools ?? null, p.concurrency ?? null, now(), p.parentId ?? null, p.sandbox ? 1 : 0],
     );
   });
   try {
@@ -80,7 +81,7 @@ export function setDefaultProject(db: Database, id: number) {
 export function updateProject(
   db: Database,
   id: number,
-  patch: Partial<Pick<Project, 'name' | 'path' | 'default_model' | 'default_effort' | 'default_tools' | 'concurrency'>>,
+  patch: Partial<Pick<Project, 'name' | 'path' | 'default_model' | 'default_effort' | 'default_tools' | 'concurrency' | 'sandbox'>>,
 ) {
   const sets: string[] = [];
   const vals: any[] = [];
@@ -188,6 +189,7 @@ export function inheritedProject(db: Database, p: Project): Project {
     out.default_effort ??= parent.default_effort;
     out.default_tools ??= parent.default_tools;
     out.concurrency ??= parent.concurrency;
+    if (!out.sandbox && parent.sandbox) out.sandbox = 1;
     cur = parent;
   }
   return out;

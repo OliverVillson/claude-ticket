@@ -12,6 +12,7 @@ export interface Project {
   default_model: string | null;
   default_effort: string | null;
   default_tools: string | null;
+  sandbox: number; // 0 | 1: workers run in the kernel sandbox
   concurrency: number | null;
   created_at: number; // epoch ms
   parent_id: number | null; // null = top-level project

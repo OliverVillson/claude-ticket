@@ -47,6 +47,8 @@ export async function change(p: Parsed): Promise<number> {
     if (tools !== undefined) patch.default_tools = tools ? validateTools(tools) : null;
     const conc = flagStr(p, 'concurrency');
     if (conc !== undefined) patch.concurrency = conc ? flagNum(p, 'concurrency')! : null;
+    if (flagBool(p, 'sandbox')) patch.sandbox = 1;
+    if (flagBool(p, 'no-sandbox')) patch.sandbox = 0;
     updateProject(db, project.id, patch);
     if (flagBool(p, 'default')) setDefaultProject(db, project.id);
     console.log(`${green('✓')} updated project ${patch.name ?? project.name}`);

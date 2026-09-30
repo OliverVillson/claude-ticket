@@ -11,7 +11,7 @@ const tv = (tags: object = {}): TicketView => ({
   session_id: null, cost_usd: 0, error: null, depends_on: null, created_at: 0, updated_at: 0, started_at: null, finished_at: null,
   project: 'web', project_path: '/work/web',
 });
-const proj = (over: Partial<Project> = {}): Project => ({ id: 1, name: 'web', path: '/work/web', is_default: 1, default_model: null, default_effort: null, default_tools: null, concurrency: null, created_at: 0, parent_id: null, ...over });
+const proj = (over: Partial<Project> = {}): Project => ({ id: 1, name: 'web', path: '/work/web', is_default: 1, default_model: null, default_effort: null, default_tools: null, sandbox: 0, concurrency: null, created_at: 0, parent_id: null, ...over });
 
 describe('tools values', () => {
   test('presets and canonical form', () => {

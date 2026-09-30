@@ -4,6 +4,7 @@ import { applyAuthPolicy } from '../../core/env.ts';
 import { probeWindow } from '../../usage/index.ts';
 import { ensureHome } from '../../core/paths.ts';
 import { dim, green, red } from '../../core/ansi.ts';
+import { sandboxSupport } from '../../core/kernel.ts';
 import { VERSION } from '../dispatch.ts';
 import { helpIf } from './_shared.ts';
 
@@ -34,6 +35,10 @@ export async function doctor(p: Parsed): Promise<number> {
     if (fix) console.log(`  ${dim(fix)}`);
   };
   ok(`salu ${VERSION} (${runningCompiled() ? 'compiled binary' : 'running from source'})`);
+
+  const sb = sandboxSupport();
+  if (sb.ok) ok('the kernel sandbox can run here (salu add project --sandbox)');
+  else console.log(`${dim('·')} the kernel sandbox cannot run here: ${sb.problem}`);
 
   const c = checkClaude();
   if (!c.ok) {

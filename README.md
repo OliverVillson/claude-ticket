@@ -113,6 +113,26 @@ without asking (it can follow a preset: `edit;also:...`).
 
 Any other token (`bug`, `docs`, `team=core`) is stored as a label or custom tag for filtering.
 
+## The kernel (sandbox, opt-in per project)
+
+`salu add project web --sandbox` (or `salu change project web --sandbox` / `--no-sandbox`) runs that
+project's workers in a kernel:
+
+- Each project gets its own copy of the code in `~/.salu/kernel/<project>` (override: `SALU_KERNEL`).
+  A git project is cloned locally, uncommitted changes included; a plain folder is copied and given a git repo.
+- Shell commands run in Claude Code's OS sandbox (Seatbelt on macOS, bubblewrap on Linux, see `salu doctor`).
+  They can write only in the kernel folder, cannot read your home folder (SSH keys, git login, other projects),
+  and can reach any site. `SALU_SANDBOX_DOMAINS=github.com,*.npmjs.org` limits them to a list instead.
+- Secret paths are closed to the agents' file tools, tokens (`GITHUB_TOKEN`, `SSH_AUTH_SOCK`, `AWS_*`, ...) are
+  removed from their environment, and a sandbox that cannot start stops the ticket instead of running unprotected.
+- Nothing reaches your real project until you run, yourself (agents cannot):
+  - `salu push [project] [--branch B] [--to url] [--dry-run]` pushes the `salu/*` branches to the project's git remote.
+  - `salu export <folder> [project] [--git] [--force]` copies the files to a folder.
+
+Not covered: the OS sandbox fences shell commands; the file tools are fenced by the permission rules above.
+Anything an agent can read inside the kernel can be sent to any site it can reach. Linux needs
+`sudo apt-get install bubblewrap socat`. `SALU_SANDBOX=off` switches it off everywhere.
+
 ## Interactive list (demo: `bun run src/tui/demo.ts`)
 
 | Key | Action |

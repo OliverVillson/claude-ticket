@@ -16,6 +16,7 @@ import { detectLimit, parseLimitText, probeWindow } from '../usage/index.ts';
 import type { LimitHit } from '../usage/types.ts';
 import { CLAUDE_MISSING, EnvironmentError, claudeExecutableOption, environmentProblem, runningCompiled } from '../core/claude-bin.ts';
 import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../core/tags.ts';
+import { kernelOptions, prepareKernel, sandboxOn, scrubSecrets } from '../core/kernel.ts';
 import { DEFAULT_TOOLS, denialsFrom, toolsToSdk } from '../core/tools.ts';
 import { buildPrompt, buildResumePrompt, parseTrailer, systemAppend } from './prompt.ts';
 import type { WorkerInput, WorkerLive, WorkerResult, WorkerRunner } from './types.ts';
@@ -44,7 +45,7 @@ export const SESSION_ENV_VARS = [
 export function workerEnv(extra: Record<string, string> = {}): Record<string, string | undefined> {
   const env = scrubParentSession(); // core helper: broader scrub, SALU_INHERIT_CLAUDE_ENV=1 opts out
   if (process.env.SALU_INHERIT_CLAUDE_ENV !== '1') for (const k of SESSION_ENV_VARS) delete env[k];
-  return { ...env, CLAUDE_AGENT_SDK_CLIENT_APP: 'salu/0.1.0', ...extra };
+  return { ...env, CLAUDE_AGENT_SDK_CLIENT_APP: 'salu/0.1.0', SALU_KERNEL_WORKER: '1', ...extra };
 }
 
 export interface EffectiveSettings {
@@ -69,10 +70,10 @@ export function effectiveSettings(t: TicketView, project: Project | null): Effec
 }
 
 /** Pure mapping from a ticket to Agent SDK options, so it can be tested without spawning anything. */
-export function workerSdkOptions(t: TicketView, project: Project | null, extra: { resume?: string | null; abort?: AbortController } = {}): Options {
+export function workerSdkOptions(t: TicketView, project: Project | null, extra: { resume?: string | null; abort?: AbortController; kernel?: string } = {}): Options {
   const s = effectiveSettings(t, project);
   const opts: Options = {
-    cwd: t.project_path,
+    cwd: extra.kernel ?? t.project_path,
     maxTurns: s.maxTurns,
     systemPrompt: { type: 'preset', preset: 'claude_code', append: systemAppend(t) },
     // Unattended: anything that would prompt is denied at once with a message telling the worker
@@ -106,6 +107,13 @@ export function workerSdkOptions(t: TicketView, project: Project | null, extra: 
       opts.permissionMode = 'acceptEdits';
   }
   Object.assign(opts, toolsToSdk(s.tools, s.permission));
+  if (extra.kernel) {
+    // The kernel: OS sandbox around shell commands, secret paths closed to the file tools, no logins in the environment.
+    const k = kernelOptions(extra.kernel);
+    opts.sandbox = k.sandbox;
+    opts.disallowedTools = [...(opts.disallowedTools ?? []), ...k.disallowedTools];
+    opts.env = scrubSecrets(opts.env ?? {});
+  }
   if (extra.resume) opts.resume = extra.resume;
   return opts;
 }
@@ -193,7 +201,10 @@ export const sdkRunner: WorkerRunner = {
     // The compiled binary has no claude of its own: fail with instructions, not the SDK's error.
     if (runningCompiled() && !claudeExecutableOption()) throw new EnvironmentError(process.env.SALU_CLAUDE_PATH ? `SALU_CLAUDE_PATH points to ${process.env.SALU_CLAUDE_PATH}, which is not an executable file` : CLAUDE_MISSING);
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
-    const options = workerSdkOptions(input.ticket, input.project, { resume: input.resume, abort: input.abort });
+    const kernel = input.project?.sandbox && sandboxOn() ? prepareKernel(input.ticket.project, input.ticket.project_path) : undefined;
+    const ticket = kernel ? { ...input.ticket, project_path: kernel } : input.ticket;
+    const options = workerSdkOptions(ticket, input.project, { resume: input.resume, abort: input.abort, kernel });
+    input = { ...input, ticket };
     const stderr: string[] = [];
     options.stderr = (data: string) => {
       const text = data.trim();

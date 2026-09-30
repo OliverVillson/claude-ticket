@@ -8,18 +8,20 @@ export const VERSION = '0.2.4';
 export const HELP = `salu — a fast ticket queue for Claude Code agents
 
 Usage   (salu ?  |  salu help  |  salu --help  shows this list; quote the ? in zsh: salu '?')
-  salu add project "name" [path] [--clone git-url] [--in parent] [--model M] [--effort E] [--tools T] [--concurrency N] [--default]
+  salu add project "name" [path] [--clone git-url] [--in parent] [--model M] [--effort E] [--tools T] [--concurrency N] [--sandbox] [--default]
   salu add "name" ["query"] ["tags"]           no project? one is made ("<name>-proj", in ./<name>-proj)
                                                tags: key=value pairs and bare labels
   salu remove "name" [--yes]                 (also: salu remove project "name")
   salu change "name" [--name N] [--query Q] [--tags T] [--priority P] [--status S]
-  salu change project "name" [--in parent|none] [--path P] [--model M] [--effort E] [--tools T] [--concurrency N] [--default]
+  salu change project "name" [--in parent|none] [--path P] [--model M] [--effort E] [--tools T] [--concurrency N] [--sandbox|--no-sandbox] [--default]
   salu list [project] [--plain] [--status S] [--projects] [--json]
   salu queue "name"... | --all [project]     queue saved tickets to run (add only saves; nothing runs by itself)
   salu unqueue "name"                        take a queued ticket back to the backlog
   salu allow "name" [--tool 'Bash(git clone *)']   unblock a ticket that needs a permission, and queue it again
   salu run [project|"name"...] [--concurrency N] [--detach] [--plain]
                                              queue everything saved (or just the named tickets) and start
+  salu push [project] [--branch B] [--to url] [--dry-run]   send what agents made in the kernel to the project's git remote
+  salu export <folder> [project] [--git] [--force]           copy what agents made in the kernel to a folder
   salu pause | salu resume | salu stop
   salu status [--json]
   salu usage [--json] [--refresh]            how much of your Claude plan's 5-hour and weekly usage is left
@@ -74,6 +76,10 @@ export async function dispatch(argv: string[]): Promise<number> {
       return (await import('./commands/queue.ts')).unqueue(sub);
     case 'allow':
       return (await import('./commands/allow.ts')).allow(sub);
+    case 'push':
+      return (await import('./commands/push.ts')).push(sub);
+    case 'export':
+      return (await import('./commands/push.ts')).exportKernel(sub);
     case 'pause':
       return (await import('./commands/pause.ts')).pause(sub);
     case 'resume':
