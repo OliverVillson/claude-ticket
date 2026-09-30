@@ -1,0 +1,107 @@
+diff --git a/index.js b/index.js
+index dd2a7cd83783dd1bc209832f99a3299fc7dc2174..887cb0d26577bc87288bae13ea4949c8ce0b7d57 100644
+--- a/index.js
++++ b/index.js
+@@ -27,6 +27,26 @@ const rgiEmojiRegex = /^\p{RGI_Emoji}$/v;
+ const unqualifiedKeycapRegex = /^[\d#*]\u20E3$/;
+ const extendedPictographicRegex = /\p{Extended_Pictographic}/gu;
+ 
++// Cheap pre-checks in front of the RGI_Emoji regex. Its first call costs ~25 ms per string
++// encoding in JavaScriptCore (it compiles a huge alternation), so text without any emoji
++// candidate never touches it. Every RGI emoji contains an Extended_Pictographic character, a
++// Regional Indicator or the keycap mark U+20E3; a lone BMP code unit is RGI exactly when it has
++// Emoji_Presentation.
++const emojiCandidateRegex = /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u20E3]/u;
++const emojiPresentationRegex = /\p{Emoji_Presentation}/u;
++
++function isRgiEmoji(segment) {
++	if (!emojiCandidateRegex.test(segment)) {
++		return false;
++	}
++
++	if (segment.length === 1) {
++		return emojiPresentationRegex.test(segment);
++	}
++
++	return rgiEmojiRegex.test(segment);
++}
++
+ function isDoubleWidthNonRgiEmojiSequence(segment) {
+ 	// Real emoji clusters are < 30 chars; guard against pathological input
+ 	if (segment.length > 50) {
+@@ -143,6 +163,34 @@ function trailingWidth(visibleSegment, eastAsianWidthOptions) {
+ 	return extra;
+ }
+ 
++// Width of one grapheme cluster. Pure function of (segment, options), so results are cached
++// per cluster: rendering the same glyphs every frame no longer re-runs the emoji regexes.
++const clusterWidthCacheNarrow = new Map();
++const clusterWidthCacheWide = new Map();
++
++function graphemeClusterWidth(segment, eastAsianWidthOptions) {
++	// Zero-width / non-printing clusters
++	const visibleSegment = baseVisible(segment);
++	if (visibleSegment === undefined) {
++		return 0;
++	}
++
++	// Emoji width logic
++	if (isRgiEmoji(segment) || isDoubleWidthNonRgiEmojiSequence(segment)) {
++		return 2;
++	}
++
++	const hangulWidth = hangulClusterWidth(visibleSegment, eastAsianWidthOptions);
++	if (hangulWidth !== undefined) {
++		return hangulWidth;
++	}
++
++	// Everything else: EAW of the cluster’s first visible scalar
++	const codePoint = visibleSegment.codePointAt(0);
++	// Add width for trailing spacing marks and Halfwidth/Fullwidth Forms (e.g., ﾞ, ﾟ, ｰ)
++	return eastAsianWidth(codePoint, eastAsianWidthOptions) + trailingWidth(visibleSegment, eastAsianWidthOptions);
++}
++
+ export default function stringWidth(input, options = {}) {
+ 	if (typeof input !== 'string' || input.length === 0) {
+ 		return 0;
+@@ -172,31 +220,18 @@ export default function stringWidth(input, options = {}) {
+ 	let width = 0;
+ 	const eastAsianWidthOptions = {ambiguousAsWide: !ambiguousIsNarrow};
+ 
+-	for (const {segment} of segmenter.segment(string)) {
+-		// Zero-width / non-printing clusters
+-		const visibleSegment = baseVisible(segment);
+-		if (visibleSegment === undefined) {
+-			continue;
+-		}
+-
+-		// Emoji width logic
+-		if (rgiEmojiRegex.test(segment) || isDoubleWidthNonRgiEmojiSequence(segment)) {
+-			width += 2;
+-			continue;
+-		}
++	const cache = eastAsianWidthOptions.ambiguousAsWide ? clusterWidthCacheWide : clusterWidthCacheNarrow;
+ 
+-		const hangulWidth = hangulClusterWidth(visibleSegment, eastAsianWidthOptions);
+-		if (hangulWidth !== undefined) {
+-			width += hangulWidth;
+-			continue;
++	for (const {segment} of segmenter.segment(string)) {
++		let clusterWidth = cache.get(segment);
++		if (clusterWidth === undefined) {
++			clusterWidth = graphemeClusterWidth(segment, eastAsianWidthOptions);
++			if (cache.size < 4096) {
++				cache.set(segment, clusterWidth);
++			}
+ 		}
+ 
+-		// Everything else: EAW of the cluster’s first visible scalar
+-		const codePoint = visibleSegment.codePointAt(0);
+-		width += eastAsianWidth(codePoint, eastAsianWidthOptions);
+-
+-		// Add width for trailing spacing marks and Halfwidth/Fullwidth Forms (e.g., ﾞ, ﾟ, ｰ)
+-		width += trailingWidth(visibleSegment, eastAsianWidthOptions);
++		width += clusterWidth;
+ 	}
+ 
+ 	return width;
