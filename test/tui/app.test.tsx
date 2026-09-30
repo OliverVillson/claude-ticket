@@ -643,6 +643,79 @@ describe('command line', () => {
   });
 });
 
+describe('easter eggs on the command line', () => {
+  const type = async (term: ReturnType<typeof fakeTerminal>, text: string) => {
+    for (const ch of text) await term.press(ch, 5);
+  };
+  const KANA = /[\uff66-\uff9d]/;
+
+  test('matrix: rain fills the screen, then the same view is back with the prompt focused and no history', async () => {
+    const { db } = seedDb(3);
+    const { term } = mountApp({ db }, [100, 24]);
+    await term.waitFor((s) => s.includes('ticket 001'));
+    await term.press(':');
+    await type(term, 'matrix');
+    await term.press(KEY.enter, 20);
+    const rain = await term.waitFor((s) => KANA.test(s) && !s.includes('ticket 001'), 'rain');
+    expect(rain.split('\n').length).toBeGreaterThanOrEqual(20);
+    const back = await term.waitFor((s) => s.includes('ticket 001') && !KANA.test(s), 'list again', 3500);
+    expect(back).toContain('⏎ run'); // command line still focused
+    expect(back).not.toContain('matrix');
+    expect(back).not.toContain('unknown command');
+    await term.press(KEY.up); // nothing to recall
+    expect(term.lastFrame()).not.toContain('matrix');
+  }, 10_000);
+
+  test('any key ends the rain at once', async () => {
+    const { db } = seedDb(3);
+    const { term } = mountApp({ db });
+    await term.waitFor((s) => s.includes('ticket 001'));
+    await term.press(':');
+    await type(term, 'salu MATRIX');
+    await term.press(KEY.enter, 20);
+    await term.waitFor((s) => KANA.test(s), 'rain');
+    await term.press('x', 80);
+    expect(term.lastFrame()).toContain('ticket 001');
+    expect(term.lastFrame()).not.toContain('❯ x'); // the key was eaten by the rain
+  });
+
+  test('dojjan: the sleeping dog barks twice and dozes off; eskil yawns', async () => {
+    const { db } = seedDb(0);
+    const { term } = mountApp({ db }, [130, 34]);
+    await term.waitFor((s) => s.includes('no tickets running'));
+    await term.press(':');
+    await type(term, 'dojjan');
+    const woofs: number[] = [];
+    let seen = false;
+    const t0 = Date.now();
+    await term.press(KEY.enter, 0);
+    while (Date.now() - t0 < 3000) {
+      const has = term.lastFrame().includes('WOOF!');
+      if (has && !seen) woofs.push(Date.now() - t0);
+      seen = has;
+      await sleep(20);
+    }
+    expect(woofs).toHaveLength(2);
+    expect(term.lastFrame()).not.toContain('WOOF!');
+    expect(term.lastFrame()).toContain('no tickets running');
+    await type(term, 'eskil');
+    await term.press(KEY.enter, 0);
+    await term.waitFor((s) => s.includes('yaaawn'), 'yawn');
+    await term.waitFor((s) => !s.includes('yaaawn'), 'asleep again', 3000);
+    expect(term.lastFrame()).not.toContain('unknown command');
+  }, 12_000);
+
+  test('without the activity area the dog answers in the footer', async () => {
+    const { db } = seedDb(3);
+    const { term } = mountApp({ db }, [100, 24]);
+    await term.waitFor((s) => s.includes('ticket 001'));
+    await term.press(':');
+    await type(term, 'dojjan');
+    await term.press(KEY.enter, 80);
+    expect(term.lastFrame()).toContain('WOOF! WOOF!');
+  });
+});
+
 describe('two panes: project tree and tickets', () => {
   function seedTree() {
     const { db, home } = seedDb(0);

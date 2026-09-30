@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { render, useAnimation, useApp, useInput, useWindowSize } from 'ink';
+import { Text, render, useAnimation, useApp, useInput, useWindowSize } from 'ink';
 import type { Database } from 'bun:sqlite';
 import type { TicketStatus, TicketView } from '../db/types.ts';
 import { ticketLabels, ticketTags } from '../db/types.ts';
@@ -27,6 +27,9 @@ import { LIST_HINTS, ListView, listInnerWidth } from './components/ListView.tsx'
 import type { Message } from './messages.ts';
 import { runCommand } from './command.ts';
 import { complete } from './complete.ts';
+import { eggDogLines, eggFor, eggFrameAt, eggMs, eggWords, type EggKind } from './eggs.ts';
+import { makeRain, rainLines } from './rain.ts';
+import { supportsUnicode } from '../ui/glyphs.ts';
 
 export interface AppProps {
   db: Database;
@@ -145,6 +148,21 @@ export function App(p: AppProps) {
   const cmdIdx = useRef(-1);
   const cmdDraft = useRef('');
   const [result, setResult] = useState<{ command: string; lines: string[]; ok: boolean; offset: number } | null>(null);
+
+  // Easter eggs (eggs.ts): what is playing, since when, and how far in. The view underneath keeps
+  // all its state, so it is back exactly as it was when the egg ends.
+  const [egg, setEgg] = useState<{ kind: EggKind; start: number } | null>(null);
+  const [eggAt, setEggAt] = useState(0);
+  useEffect(() => {
+    if (!egg) return;
+    const total = eggMs(egg.kind);
+    const i = setInterval(() => {
+      const t = Date.now() - egg.start;
+      if (t >= total) setEgg(null);
+      else setEggAt(t);
+    }, egg.kind === 'rain' ? 33 : 50);
+    return () => clearInterval(i);
+  }, [egg]);
 
   // ----- derived -------------------------------------------------------------------------
   const scopeIds = useMemo(() => subtreeIds(snapshot.projects, scope), [snapshot.projects, scope]);
@@ -414,6 +432,15 @@ export function App(p: AppProps) {
   const execute = async (line: string) => {
     const text = line.trim();
     if (!text || cmdBusy) return;
+    const hidden = eggFor(text);
+    if (hidden) {
+      // Not a command: nothing in the history, nothing in the footer, the prompt just clears.
+      setCmd('');
+      cmdIdx.current = -1;
+      if (hidden !== 'rain' && !showActivity) return say(eggWords(hidden), 'info');
+      setEggAt(0);
+      return setEgg({ kind: hidden, start: Date.now() });
+    }
     cmdHistory.current.push(text);
     cmdIdx.current = -1;
     setCmdValue('');
@@ -441,6 +468,7 @@ export function App(p: AppProps) {
   // ----- keys ----------------------------------------------------------------------------
   useInput(
     (input, key) => {
+      if (egg?.kind === 'rain') return setEgg(null); // any key ends the rain
       if (mode === 'help') {
         setMode('list');
         return;
@@ -568,6 +596,9 @@ export function App(p: AppProps) {
   );
 
   // ----- render --------------------------------------------------------------------------
+  const rainSeed = egg?.kind === 'rain' ? egg.start : 0;
+  const rain = useMemo(() => (rainSeed ? makeRain(columns, Math.max(1, (termRows || 24) - 1), rainSeed, supportsUnicode()) : null), [rainSeed, columns, termRows]);
+  if (rain) return <Text>{rainLines(rain, eggAt, st).join('\n')}</Text>;
   if (mode === 'form' && form) {
     const pid = formProjectId();
     const projectName = snapshot.projects.find((pr) => pr.id === pid)?.name ?? (pid != null ? getProjectById(db, pid)?.name : null) ?? scopeName ?? 'no project';
@@ -629,7 +660,9 @@ export function App(p: AppProps) {
   if (showActivity) {
     let lines: string[];
     let back = 0;
-    if (!target) lines = idleLines(actInner, actH, st, 0);
+    const eggFrame = egg && egg.kind !== 'rain' ? eggFrameAt(egg.kind, eggAt) : null;
+    if (eggFrame) lines = idleLines(actInner, actH, st, 0, { lines: eggDogLines(eggFrame, st), say: eggFrame.say });
+    else if (!target) lines = idleLines(actInner, actH, st, 0);
     else if (actAll.length === 0) lines = [st.dim('waiting for the worker…')];
     else {
       const w = visibleWindow(actAll, actH, actBack);
@@ -637,7 +670,7 @@ export function App(p: AppProps) {
       back = w.back;
     }
     // While the worker runs, a blinking cursor after its newest output (not when scrolled back).
-    if (target?.status === 'running' && back === 0) lines = withWritingCursor(lines, actInner, actH, blinkOn(frame), st, displayWidth);
+    if (target?.status === 'running' && back === 0 && !eggFrame) lines = withWritingCursor(lines, actInner, actH, blinkOn(frame), st, displayWidth);
     const keys = pinnedId != null ? 'f unpin' : 'f pin';
     const title = target ? `activity · ${truncate(target.name, 30)}${pinnedId != null ? ' (pinned)' : ''}${back ? ` · ↑${back}` : ''} · ${keys} · [ ] scroll` : 'activity';
     activity = { title: truncate(title, Math.max(8, actInner - 6)), lines, height: actH };

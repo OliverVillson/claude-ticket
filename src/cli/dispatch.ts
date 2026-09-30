@@ -89,6 +89,13 @@ export async function dispatch(argv: string[]): Promise<number> {
       return (await import('./commands/update.ts')).update(sub);
     case 'projects':
       return (await import('./commands/list.ts')).list({ ...sub, flags: { ...sub.flags, projects: true } });
+    case 'matrix':
+    case 'dojjan':
+    case 'eskil': {
+      // Easter eggs: deliberately missing from HELP and tab completion.
+      const { eggFor } = await import('../tui/eggs.ts');
+      return (await import('../tui/eggs-cli.ts')).playEgg(eggFor(verb)!);
+    }
     case 'help':
     case '?':
       console.log(HELP);
