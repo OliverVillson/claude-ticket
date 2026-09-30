@@ -902,7 +902,7 @@ describe('ticket properties (right arrow on a ticket)', () => {
     expect(JSON.parse(t.labels)).toEqual(['bug']);
     await rowsDown(term, 2); // toolset
     await term.press(KEY.right);
-    await term.waitFor((s) => s.includes('read-only'), 'toolset choices');
+    await term.waitFor((s) => s.includes('readonly'), 'toolset choices');
     await term.press(KEY.down);
     await term.press(KEY.enter);
     await poll(() => JSON.parse(getTicketById(db, ids[0]!)!.tags).tools === 'readonly', 'tools saved');
@@ -921,7 +921,7 @@ describe('ticket properties (right arrow on a ticket)', () => {
     await term.press(KEY.down);
     await term.press(KEY.enter);
     await poll(() => getTicketById(db, ids[0]!)!.status === 'done', 'status saved');
-    await rowsDown(term, 7); // max-turns text row
+    await rowsDown(term, 6); // max-turns text row
     await term.press(KEY.right);
     await term.press('abc');
     await term.press(KEY.enter);
@@ -947,8 +947,46 @@ describe('tag groups in the form', () => {
     await term.press(KEY.right);
     f = await term.waitFor((s) => s.includes('toolset'), 'tools group');
     await term.press(KEY.right);
-    f = await term.waitFor((s) => s.includes("Claude Code's regular toolset"), 'toolset choices');
-    expect(f).toContain('read-only');
+    f = await term.waitFor((s) => s.includes("Claude Code's regular tools"), 'toolset choices');
+    expect(f).toContain('readonly');
+    expect(f).toContain('custom');
+  });
+
+  test('custom tools build one tools= value; a bad rule is refused with the core message', async () => {
+    const { db } = seedDb(3);
+    const { term } = mountApp({ db });
+    await term.waitFor((s) => s.includes('1/3'));
+    await term.press('a');
+    await term.press('Custom tools');
+    await term.press(KEY.tab);
+    await term.press('q');
+    await term.press(KEY.tab);
+    await term.press(KEY.right);
+    await term.press(KEY.down);
+    await term.press(KEY.right); // Tools
+    await term.press(KEY.right); // toolset pick
+    for (let i = 0; i < 4; i++) await term.press(KEY.down); // standard, readonly, edit, none, custom
+    await term.press(KEY.enter);
+    await term.waitFor((s) => s.includes('allow') && s.includes('deny'), 'allow and deny rows');
+    await term.press(KEY.down);
+    await term.press(KEY.right);
+    await term.press('read');
+    await term.press(KEY.enter);
+    await term.waitFor((s) => s.includes('case sensitive'), 'core error');
+    for (let i = 0; i < 4; i++) await term.press(KEY.backspace);
+    await term.press('Read,Grep');
+    await term.press(KEY.enter);
+    await term.press(KEY.down);
+    await term.press(KEY.right);
+    await term.press('Bash(rm *)');
+    await term.press(KEY.enter);
+    await term.press(KEY.left);
+    await term.press(KEY.left);
+    await term.press(KEY.enter);
+    await term.waitFor((s) => s.includes('added "Custom tools"'), 'added');
+    const t = listTickets(db).find((x) => x.name === 'Custom tools')!;
+    expect(JSON.parse(t.tags).tools).toBe('allow:Read,Grep;deny:Bash(rm *)');
+    expect(JSON.parse(t.tags)['deny-tools']).toBeUndefined();
   });
 
   test('tools chosen in the form end up in the ticket tags', async () => {

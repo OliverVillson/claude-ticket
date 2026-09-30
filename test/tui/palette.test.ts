@@ -42,7 +42,7 @@ test('every rendered frame uses only palette colours (no orange, no grey dim, no
   }
   expect(uncoloured.slice(0, 5)).toEqual([]);
   const plain = frames.map((f) => f.replace(/\u001b\[[0-9;]*m/g, ''));
-  for (const want of ['new ticket', 'any key closes help', 'delete "', 'nothing matches', 'output', 'Read(src/auth.ts)', 'ENOENT', 'TICKET: done', 'properties', 'Model / effort', 'read-only']) expect(plain.some((f) => f.includes(want))).toBe(true);
+  for (const want of ['new ticket', 'any key closes help', 'delete "', 'nothing matches', 'output', 'Read(src/auth.ts)', 'ENOENT', 'TICKET: done', 'properties', 'Model / effort', 'readonly']) expect(plain.some((f) => f.includes(want))).toBe(true);
   expect(seen.has(`38;2;${rgb('accent')}`)).toBe(true);
   expect(hex('accent')).toBe('#00ff41');
 }, 30000);

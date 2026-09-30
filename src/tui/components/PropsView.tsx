@@ -31,13 +31,15 @@ const EDIT_HINTS: Array<[string, string]> = [
   ['esc ←', 'cancel'],
 ];
 
-const TAG_KEYS = new Set(['model', 'effort', 'toolset', 'tools', 'deny', 'permission', 'maxTurns', 'other']);
+const TAG_KEYS = new Set(['model', 'effort', 'toolset', 'allow', 'deny', 'permission', 'maxTurns', 'other']);
 
 /** Every property of one ticket, changeable in place. Opened with → on a ticket. */
 export function PropsView(p: PropsViewProps) {
   const { ticket: t, run } = p.detail;
   const [editing, setEditing] = useState(false);
+  const [custom, setCustom] = useState(false); // `custom` with empty lists writes no tag: remember the pick
   const parts = splitTags(formatTags(ticketTags(t), ticketLabels(t)));
+  if (custom && parts.toolset === '') parts.toolset = 'custom';
 
   const proj: Choice[] = p.projects.map((n) => ({ value: n, label: n }));
   const statuses: Choice[] = TICKET_STATUSES.map((s) => ({ value: s, label: s }));
@@ -66,6 +68,7 @@ export function PropsView(p: PropsViewProps) {
 
   const onSet = async (key: string, raw: string): Promise<string | null> => {
     if (TAG_KEYS.has(key)) {
+      if (key === 'toolset') setCustom(raw === 'custom');
       const r = applyTagKey(parts, key, raw);
       if (r.error) return r.error;
       return p.onSave('tags', joinTags(r.parts));
