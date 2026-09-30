@@ -3,7 +3,8 @@ import { Text } from 'ink';
 import type { TicketView } from '../../db/types.ts';
 import type { LogLine } from '../log-tail.ts';
 import type { TicketDetail } from '../store.ts';
-import { ago, extraTags, fmtCost, fmtDuration, labelText, modelEffort, priorityText, truncate, wrapText } from '../format.ts';
+import { ago, displayWidth, extraTags, fmtCost, fmtDuration, labelText, modelEffort, priorityText, truncate, wrapText } from '../format.ts';
+import { blinkOn, withWritingCursor } from '../blink.ts';
 import { messageText, type Message } from '../messages.ts';
 import { style as st } from '../style.ts';
 import { SPINNER_FRAMES, STATUS_STYLE, paint, paintPriority, paintStatus } from '../theme.ts';
@@ -97,7 +98,9 @@ export function DetailView(p: DetailViewProps) {
     lines.push('');
     lines.push(st.dim(`last run · ${runBits.join(' · ')}${run?.log_path ? ` · ${run.log_path}` : ''}`));
   }
-  for (const l of p.log.slice(-logBudget)) lines.push('  ' + logLineText(l));
+  const logLines = p.log.slice(-logBudget).map((l) => '  ' + logLineText(l));
+  // A running ticket gets the blinking writing cursor after its newest log line.
+  lines.push(...(t.status === 'running' && logBudget > 0 ? withWritingCursor(logLines, inner, logBudget, blinkOn(p.spinner ?? 0), st, displayWidth) : logLines));
 
   const crumbs = [p.scopeName ?? t.project, truncate(t.name, Math.max(8, cols - 30))];
   const idText = `#${t.id}${t.session_id ? ` · session ${t.session_id.slice(0, 8)}` : ''}`;

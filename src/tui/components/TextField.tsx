@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Text, useInput } from 'ink';
 import { displayWidth } from '../format.ts';
 import { style as st } from '../style.ts';
+import { useBlink } from '../blink.ts';
 
 export interface TextFieldProps {
   value: string;
@@ -14,7 +15,8 @@ export interface TextFieldProps {
 }
 
 /**
- * A single-line text input in the style of the claude prompt: plain text with a block cursor.
+ * A single-line text input in the style of the claude prompt: plain text with a blinking block
+ * cursor (lit again on every keystroke; without colour it shows as `_` at the end of the text).
  * Handles the readline keys people expect (arrows, home/end, ctrl-a/e/u/k/w, backspace).
  * Enter, Tab, Escape and up/down are left to the parent so it can move between fields.
  */
@@ -79,6 +81,10 @@ export function TextField({ value, onChange, focus, placeholder, width }: TextFi
     { isActive: focus },
   );
 
+  const lit = useBlink(focus, `${value}\u0000${cursor}`);
+  // The cursor cell: inverse when lit; without colour inverse is not drawn, so an underscore marks the end.
+  const cursorCell = (c: string, painted: string) => (!lit ? painted : st.enabled ? st.inverse(st.accent(c)) : c === ' ' ? '_' : c);
+
   if (!focus) {
     if (!value) return <Text>{st.dim(placeholder ?? '')}</Text>;
     return <Text>{st.text(width ? sliceToWidth(chars, 0, width) : value)}</Text>;
@@ -100,13 +106,13 @@ export function TextField({ value, onChange, focus, placeholder, width }: TextFi
   if (!value && placeholder) {
     return (
       <Text>
-        {st.inverse(st.accent(placeholder[0] ?? ' ')) + st.dim(placeholder.slice(1))}
+        {cursorCell(placeholder[0] ?? ' ', st.dim(placeholder[0] ?? ' ')) + st.dim(placeholder.slice(1))}
       </Text>
     );
   }
   return (
     <Text>
-      {st.text(before) + st.inverse(st.accent(cur)) + st.text(after)}
+      {st.text(before) + cursorCell(cur, st.text(cur)) + st.text(after)}
     </Text>
   );
 }
