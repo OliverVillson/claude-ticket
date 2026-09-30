@@ -20,6 +20,7 @@ Usage   (salu ?  |  salu help  |  salu --help  shows this list; quote the ? in z
   salu status [--json]
   salu log "name" [--follow] [--raw]
   salu plan "name"                           split a ticket into sub-tickets with Claude
+  salu update [version] [--check]            update salu to the latest release (or a given version)
 
 Tags
   project=<name>  model=opus|sonnet|haiku|<id>  effort=low|medium|high|xhigh|max
@@ -70,6 +71,9 @@ export async function dispatch(argv: string[]): Promise<number> {
       return (await import('./commands/log.ts')).log(sub);
     case 'plan':
       return (await import('./commands/plan.ts')).plan(sub);
+    case 'update':
+    case 'upgrade':
+      return (await import('./commands/update.ts')).update(sub);
     case 'projects':
       return (await import('./commands/list.ts')).list({ ...sub, flags: { ...sub.flags, projects: true } });
     case 'help':

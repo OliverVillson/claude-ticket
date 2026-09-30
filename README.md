@@ -23,7 +23,7 @@ Workers run through a logged-in Claude Code (`claude auth status`).
 
 | | |
 |---|---|
-| Update | run the same command again (it replaces the binary in place) |
+| Update | `salu update` (`--check` only looks, `salu update v0.2.0` pins); re-running the install command works too |
 | Pin a version | `... \| bash -s -- v0.2.0` |
 | Uninstall | `... \| bash -s -- --uninstall` (add `--purge` to also delete `~/.salu`) |
 | Other folder | `SALU_INSTALL_DIR=/usr/local/bin` before `bash` |
