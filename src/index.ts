@@ -36,7 +36,7 @@ async function main(argv: string[]): Promise<number> {
   const parsed = parseArgs(argv);
   const [verb, ...rest] = parsed.positional;
   if (parsed.flags.version) {
-    console.log(`ticket ${VERSION}`);
+    console.log(`salu ${VERSION}`);
     return 0;
   }
   if (!verb && parsed.flags.help) {
