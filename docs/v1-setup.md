@@ -192,7 +192,7 @@ are untouched. Run the same on the box (`sudo -iu salu`, then `salu doctor --san
 | see the box's projects | `salu runner list` (on the box) |
 | watch the orchestrator | `salu runner logs web -f` |
 | restart / stop | `sudo salu runner restart web` / `stop web` |
-| update salu on the box | `sudo salu update`, then `sudo salu runner restart web` and `the same restart covers the sync service` |
+| update salu on the box | `sudo salu update`, then `sudo salu runner restart web` (restarts both services) |
 | drop a project | `sudo salu runner remove web` (`--purge` also deletes its data) |
 | add a second project | repeat steps 5 to 8 with a new name: it gets its own orchestrator and sync |
 
