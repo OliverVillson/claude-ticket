@@ -1,7 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import type { Project, TicketView } from '../db/types.ts';
 import { createTicket, deleteTicket, getProjectByName, updateTicket, wakeOrchestrator } from '../db/queries.ts';
-import { clearPause, setPause } from '../orchestrator/status.ts';
+import { clearPause, enterManualPause } from '../usage/index.ts';
 import { parseTags, validatePriority } from '../core/tags.ts';
 import { CliError } from '../core/errors.ts';
 
@@ -92,7 +92,7 @@ export function defaultActions(db: Database): TuiActions {
     },
     togglePause(currentlyPaused) {
       if (currentlyPaused) clearPause(db);
-      else setPause(db, { until: null, reason: 'paused by ticket list', kind: 'manual', manual: true });
+      else enterManualPause(db);
       wakeOrchestrator();
     },
   };
