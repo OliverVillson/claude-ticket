@@ -8,7 +8,7 @@ export const VERSION = '0.2.3';
 export const HELP = `salu — a fast ticket queue for Claude Code agents
 
 Usage   (salu ?  |  salu help  |  salu --help  shows this list; quote the ? in zsh: salu '?')
-  salu add project "name" [path] [--in parent] [--model M] [--effort E] [--tools T] [--concurrency N] [--default]
+  salu add project "name" [path] [--clone git-url] [--in parent] [--model M] [--effort E] [--tools T] [--concurrency N] [--default]
   salu add "name" ["query"] ["tags"]           no project? one is made ("<name>-proj", in ./<name>-proj)
                                                tags: key=value pairs and bare labels
   salu remove "name" [--yes]                 (also: salu remove project "name")
