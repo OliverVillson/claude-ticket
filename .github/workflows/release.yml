@@ -1,0 +1,48 @@
+name: Release
+
+# Tag a version (git tag v0.1.0 && git push --tags) to build salu for every platform and
+# attach the binaries to a GitHub release. scripts/install.sh downloads from there.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to create or update (e.g. v0.1.0)
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bunx tsc --noEmit
+      - run: bun test
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Build binaries (bun cross-compiles every target from one runner)
+        run: |
+          mkdir -p dist
+          for t in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
+            bun build --compile --minify --splitting --target="bun-$t" src/index.ts --outfile "dist/salu-$t"
+            (cd dist && sha256sum "salu-$t" > "salu-$t.sha256")
+          done
+          ls -lh dist
+      - name: Publish release
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --generate-notes
+          gh release upload "$TAG" dist/salu-* --clobber

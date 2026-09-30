@@ -10,19 +10,42 @@ the Agent SDK. Nothing else needs to be installed.
 
 ## Install
 
-Requires [Bun](https://bun.sh) 1.3+ and a logged-in Claude Code (`claude auth status`).
+One command on macOS or Linux (x64 or arm64). It needs nothing else, not even Bun: it downloads a
+single prebuilt binary, checks its SHA-256, puts `salu` in `~/.local/bin`, adds that folder to your
+shell's PATH if it is missing, and tells you how to start.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/OliverVillson/claude-ticket/main/scripts/install.sh | bash
+```
+
+Workers run through a logged-in Claude Code (`claude auth status`).
+
+| | |
+|---|---|
+| Update | run the same command again (it replaces the binary in place) |
+| Pin a version | `... \| bash -s -- v0.2.0` |
+| Uninstall | `... \| bash -s -- --uninstall` (add `--purge` to also delete `~/.salu`) |
+| Other folder | `SALU_INSTALL_DIR=/usr/local/bin` before `bash` |
+| Private repo | the anonymous download is blocked; make the repo public, or `gh auth login` (or set `GITHUB_TOKEN`) and the installer downloads through `gh` |
+
+### Releasing (maintainers)
+
+Binaries come from `.github/workflows/release.yml`. Push a tag and it runs the tests, cross-compiles
+`salu-{darwin,linux}-{arm64,x64}` with `bun build --compile`, and attaches them and their `.sha256`
+files to a GitHub release:
+
+```sh
+git tag v0.1.0 && git push --tags
+```
+
+### From source
+
+Requires [Bun](https://bun.sh) 1.3+.
 
 ```sh
 bun install
-bun run install-cli   # puts `ticket` on your PATH (next to `bun`, in ~/.bun/bin)
-ticket '?'            # quote the ? in zsh
+bun run install-cli   # launcher that runs this checkout; `bun run uninstall-cli` removes it
 ```
-
-`install-cli` writes a tiny launcher that runs this checkout, so `git pull` updates it. Options:
-`--binary` (compile `dist/ticket` and install that), `--dir <folder>`, `--force`; `bun run uninstall-cli` removes it.
-If the folder is not on your PATH it prints the `export PATH=...` line to add to `~/.zshrc`.
-
-`bun link` alone is not enough on recent Bun: it only registers the package and never puts `ticket` on PATH.
 
 ## Quick start
 
