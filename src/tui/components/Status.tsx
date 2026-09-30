@@ -3,6 +3,7 @@ import { fmtDuration } from '../format.ts';
 import { style as st } from '../style.ts';
 import { paint } from '../theme.ts';
 import { GLYPHS } from '../../ui/glyphs.ts';
+import { pulseDot } from '../blink.ts';
 
 /** "‖ paused · session limit · resumes in 42m". */
 export function pauseText(p: PauseInfo, now: number): string {
@@ -24,10 +25,14 @@ export function statusText(s: OrchestratorStatus, now: number): string {
   return `${GLYPHS.off} orchestrator off`;
 }
 
-/** The same text, coloured: magenta when paused, accent when on, dim when off. */
-export function statusBadge(s: OrchestratorStatus, now: number): string {
+/**
+ * The same text, coloured: magenta when paused, accent when on, dim when off. `lit` false (the
+ * dark half of a blink, while workers run) swaps the on dot for a dim one; the width is unchanged.
+ */
+export function statusBadge(s: OrchestratorStatus, now: number, lit = true): string {
   const text = statusText(s, now);
   if (s.paused) return paint(st, 'magenta', text);
+  if (s.alive && !lit) return pulseDot(false, st) + paint(st, 'accent', text.slice(GLYPHS.on.length));
   if (s.alive) return paint(st, 'accent', text);
   return st.dim(text);
 }

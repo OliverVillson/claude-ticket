@@ -12,6 +12,7 @@ import { style as st } from '../style.ts';
 import { STATUS_ORDER } from '../theme.ts';
 import { Frame, confirmText, hintsText, titleText, titleWidth } from './Frame.tsx';
 import { statusBadge, statusText } from './Status.tsx';
+import { blinkOn } from '../blink.ts';
 import { TextField } from './TextField.tsx';
 
 export type { Message } from '../messages.ts';
@@ -94,7 +95,7 @@ export function ListView(p: ListViewProps) {
   const dogW = p.working ? DOG_WIDTH + 2 : 0;
   const countsShown = truncate(counts, Math.max(0, cols - 1 - titleWidth(crumbs) - badgeW - 9 - dogW));
   const dog = p.working && cols - 1 - titleWidth(crumbs) - badgeW - 9 >= dogW ? dogFrame(p.spinner ?? 0, { level: st.level }) + '  ' : '';
-  const headerRight = dog + (countsShown ? st.dim(countsShown + '  ·  ') : '') + statusBadge(p.status, p.now);
+  const headerRight = dog + (countsShown ? st.dim(countsShown + '  ·  ') : '') + statusBadge(p.status, p.now, !p.working || blinkOn(p.spinner ?? 0));
 
   // Footer: filter prompt, delete confirm, message or hints; position on the right.
   const position = p.tickets.length ? `${p.cursor + 1}/${p.tickets.length}` : '';
