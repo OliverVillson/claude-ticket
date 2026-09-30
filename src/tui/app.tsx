@@ -9,11 +9,13 @@ import type { TuiActions } from './actions.ts';
 import { applyFilter } from './filter.ts';
 import { priorityText } from './format.ts';
 import { clampCursor, computeLayout, scrollTop, viewportRows } from './layout.ts';
+import { ancestorsOf, buildRows, pathNames, renderTreeRow, revealed, subtreeIds, treeKey, type TreeKey } from './tree.ts';
 import { tailLog, type LogLine } from './log-tail.ts';
 import { loadDetail, loadSnapshot, snapshotKey, type Snapshot, type TicketDetail } from './store.ts';
 import { DetailView } from './components/DetailView.tsx';
 import { FormView, type FormValues } from './components/FormView.tsx';
 import { HelpView } from './components/HelpView.tsx';
+import { style as st } from './style.ts';
 import { CommandLine } from './components/CommandLine.tsx';
 import { ResultView } from './components/ResultView.tsx';
 import { ListView, listInnerWidth } from './components/ListView.tsx';
@@ -46,6 +48,21 @@ type Mode = 'list' | 'detail' | 'form' | 'help' | 'result';
 /** Lines around the ticket rows: header, two border lines, footer, the command line, plus one spare for the cursor. */
 const CHROME_LINES = 6;
 
+/** Terminals at least this wide get the project tree beside the tickets; narrower ones get one pane. */
+export const TWO_PANE_MIN_COLUMNS = 104;
+
+export const TREE_HINTS: Array<[string, string]> = [
+  ['↑↓', 'project'],
+  ['→', 'open'],
+  ['←', 'back'],
+  ['a', 'add project'],
+  ['d', 'remove'],
+  ['tab', 'tickets'],
+  [':', 'command'],
+  ['?', 'help'],
+  ['q', 'quit'],
+];
+
 function formValuesFor(t: TicketView | null | undefined): FormValues {
   if (!t) return { name: '', query: '', tags: '', priority: '3' };
   return { name: t.name, query: t.query, tags: formatTags(ticketTags(t), ticketLabels(t)), priority: priorityText(t.priority).replace(/^p/, '') };
@@ -62,12 +79,18 @@ export function App(p: AppProps) {
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
 
-  const [snapshot, setSnapshot] = useState<Snapshot>(() => p.initial ?? loadSnapshot(db, { projectId: p.projectId, statuses: p.statuses }));
+  const [snapshot, setSnapshot] = useState<Snapshot>(() => p.initial ?? loadSnapshot(db, { projectId: null, statuses: p.statuses }));
   const keyRef = useRef<string>(snapshotKey(snapshot));
 
   const [cursor, setCursor] = useState(0);
   const topRef = useRef(0);
+  const treeTopRef = useRef(0);
   const selectedIdRef = useRef<number | null>(null);
+
+  const twoPane = columns >= TWO_PANE_MIN_COLUMNS && !standaloneForm;
+  const [pane, setPane] = useState<'tree' | 'tickets'>('tree');
+  const [expanded, setExpanded] = useState<Set<number>>(() => revealed(p.initial?.projects ?? [], new Set(), p.projectId));
+  const [projConfirm, setProjConfirm] = useState<{ id: number; name: string } | null>(null);
 
   const [filter, setFilter] = useState('');
   const filterRef = useRef(filter);
@@ -98,25 +121,36 @@ export function App(p: AppProps) {
   const [result, setResult] = useState<{ command: string; lines: string[]; ok: boolean; offset: number } | null>(null);
 
   // ----- derived -------------------------------------------------------------------------
-  const visible = useMemo(() => applyFilter(snapshot.tickets, filter), [snapshot, filter]);
+  const scopeIds = useMemo(() => subtreeIds(snapshot.projects, scope), [snapshot.projects, scope]);
+  const scoped = useMemo(() => (scopeIds ? snapshot.tickets.filter((t) => scopeIds.has(t.project_id)) : snapshot.tickets), [snapshot.tickets, scopeIds]);
+  const scopedCounts = useMemo(() => {
+    const c = { todo: 0, running: 0, done: 0, failed: 0, blocked: 0, paused: 0 } as Snapshot['counts'];
+    for (const t of scoped) c[t.status]++;
+    return c;
+  }, [scoped]);
+  const visible = useMemo(() => applyFilter(scoped, filter), [scoped, filter]);
   const safeCursor = clampCursor(cursor, visible.length);
   const selected: TicketView | undefined = visible[safeCursor];
   selectedIdRef.current = selected?.id ?? null;
   const scopeName = scope == null ? null : snapshot.projects.find((pr) => pr.id === scope)?.name ?? null;
+  const scopeCrumbs = pathNames(snapshot.projects, scope);
   const rowsAvail = viewportRows(termRows, CHROME_LINES);
   const overflow = visible.length > rowsAvail;
   const rows = overflow ? Math.max(1, rowsAvail - 1) : rowsAvail;
   const top = scrollTop(topRef.current, safeCursor, rows, visible.length);
   topRef.current = top;
-  const layout = useMemo(() => computeLayout(listInnerWidth(columns), { showProject: scope == null }), [columns, scope]);
+  const leftW = twoPane ? Math.max(22, Math.min(32, Math.round(columns * 0.26))) : 0;
+  const showProjectCol = scopeIds == null || scopeIds.size > 1;
+  const layout = useMemo(() => computeLayout(listInnerWidth(columns) - (twoPane ? leftW + 3 : 0), { showProject: showProjectCol }), [columns, twoPane, leftW, showProjectCol]);
   const now = Date.now();
-  const anyRunningVisible = mode === 'list' ? visible.slice(top, top + rows).some((t) => t.status === 'running') : mode === 'detail' && selected?.status === 'running';
+  const working = snapshot.status.workers.length > 0 || snapshot.tickets.some((t) => t.status === 'running');
+  const anyRunningVisible = (mode === 'list' && working) || (mode === 'list' ? visible.slice(top, top + rows).some((t) => t.status === 'running') : mode === 'detail' && selected?.status === 'running');
   const { frame } = useAnimation({ interval: 200, isActive: anyRunningVisible });
 
   // ----- data refresh --------------------------------------------------------------------
   const refresh = useCallback(
     (force = false) => {
-      const snap = loadSnapshot(db, { projectId: scopeRef.current, statuses: p.statuses });
+      const snap = loadSnapshot(db, { projectId: null, statuses: p.statuses });
       const key = snapshotKey(snap);
       if (!force && key === keyRef.current) return;
       keyRef.current = key;
@@ -170,15 +204,35 @@ export function App(p: AppProps) {
   const move = (delta: number) => setCursor((c) => clampCursor(clampCursor(c, visible.length) + delta, visible.length));
   const moveTo = (i: number) => setCursor(clampCursor(i, visible.length));
 
-  const cycleScope = (dir: 1 | -1) => {
-    const ids: Array<number | null> = [null, ...snapshot.projects.map((pr) => pr.id)];
-    const i = ids.indexOf(scope);
-    const next = ids[(i + dir + ids.length) % ids.length] ?? null;
+  const selectScope = (next: number | null) => {
+    if (next === scopeRef.current) return;
     scopeRef.current = next;
     setScope(next);
     selectedIdRef.current = null;
     setCursor(0);
     topRef.current = 0;
+  };
+
+  const cycleScope = (dir: 1 | -1) => {
+    const all = new Set(snapshot.projects.map((pr) => pr.id));
+    const ids = buildRows(snapshot.projects, all).map((r) => r.id);
+    const i = Math.max(0, ids.indexOf(scope));
+    selectScope(ids[(i + dir + ids.length) % ids.length] ?? null);
+  };
+
+  const treeStep = (key: TreeKey) => {
+    const r = treeKey(snapshot.projects, { selected: scope, expanded }, key);
+    if (r.expanded !== expanded) setExpanded(r.expanded);
+    selectScope(r.selected);
+    if (r.focusTickets) setPane('tickets');
+  };
+
+  const removeProject = async (proj: { id: number; name: string }) => {
+    setProjConfirm(null);
+    const parent = ancestorsOf(snapshot.projects, proj.id)[0] ?? null;
+    const r = await runCommand(`remove project ${JSON.stringify(proj.name)} --yes`);
+    if (r.ok) selectScope(parent);
+    say((r.lines.join(' ').replace(/^[✓✗]\s*/, '') || `removed ${proj.name}`).slice(0, 200), r.ok ? 'ok' : 'err');
     refresh(true);
   };
 
@@ -342,6 +396,11 @@ export function App(p: AppProps) {
         else if (key.tab) tabComplete();
         return; // the TextField consumes the rest
       }
+      if (projConfirm) {
+        if (input === 'y' || input === 'Y' || key.return) void removeProject(projConfirm);
+        else setProjConfirm(null);
+        return;
+      }
       if (confirm) {
         if (input === 'y' || input === 'Y' || key.return) doDelete(confirm);
         else setConfirm(null);
@@ -356,6 +415,26 @@ export function App(p: AppProps) {
         else if (key.downArrow) move(1);
         return; // the TextField consumes the rest
       }
+      // Two-pane: the project tree owns the arrows while it has the focus.
+      if (twoPane && mode === 'list' && pane === 'tree') {
+        if (key.upArrow || input === 'k') return treeStep('up');
+        if (key.downArrow || input === 'j') return treeStep('down');
+        if (key.rightArrow || input === 'l') return treeStep('right');
+        if (key.leftArrow || input === 'h') return treeStep('left');
+        if (key.return || key.tab) return setPane('tickets');
+        if (input === 'a') {
+          setCmdEditing(true);
+          return setCmd('add project ');
+        }
+        if (input === 'd' || input === 'x') {
+          const proj = scope == null ? null : snapshot.projects.find((pr) => pr.id === scope);
+          if (proj) setProjConfirm({ id: proj.id, name: proj.name });
+          else say('pick a project to remove', 'info');
+          return;
+        }
+        if (input === 'e' || input === 'r' || input === 'g' || input === 'G' || key.pageUp || key.pageDown || key.home || key.end) return;
+      }
+      if (twoPane && mode === 'list' && pane === 'tickets' && key.leftArrow) return setPane('tree');
       // Shared navigation (list and detail).
       if (key.upArrow || input === 'k') return move(-1);
       if (key.downArrow || input === 'j') return move(1);
@@ -387,7 +466,7 @@ export function App(p: AppProps) {
       if (input === 'a') return openForm('add');
       if (input === '/') return setFilterEditing(true);
       if (input === ':') return setCmdEditing(true);
-      if (key.tab) return cycleScope(key.shift ? -1 : 1);
+      if (key.tab) return twoPane ? setPane('tree') : cycleScope(key.shift ? -1 : 1);
       if (input === '?') return setMode('help');
       if (key.escape) {
         if (filter) setFilter('');
@@ -423,19 +502,46 @@ export function App(p: AppProps) {
       <DetailView columns={columns} rows={rowsAvail + 2} detail={detail} log={log} scopeName={scopeName} now={now} spinner={frame} confirm={confirm} message={message} />
     );
   }
+  let sidebar: { width: number; lines: string[] } | undefined;
+  if (twoPane) {
+    const rowsAll = buildRows(snapshot.projects, expanded);
+    const own = new Map<number, number>();
+    for (const t of snapshot.tickets) own.set(t.project_id, (own.get(t.project_id) ?? 0) + 1);
+    const countOf = (id: number | null) => {
+      const ids = subtreeIds(snapshot.projects, id);
+      if (!ids) return snapshot.tickets.length;
+      let n = 0;
+      for (const i of ids) n += own.get(i) ?? 0;
+      return n;
+    };
+    const sel = Math.max(0, rowsAll.findIndex((r) => r.id === scope));
+    const height = Math.max(1, rowsAvail);
+    const from = scrollTop(treeTopRef.current, sel, height, rowsAll.length);
+    treeTopRef.current = from;
+    sidebar = {
+      width: leftW,
+      lines: rowsAll.slice(from, from + height).map((r) => renderTreeRow(r, { st, selected: r.id === scope, focused: pane === 'tree', width: leftW, count: countOf(r.id) })),
+    };
+  }
   return (
     <Box flexDirection="column">
     <ListView
+      working={working}
+      sidebar={sidebar}
+      ticketFocus={!twoPane || pane === 'tickets'}
+      crumbs={scopeCrumbs}
+      projectConfirm={projConfirm ? `remove project "${projConfirm.name}" and its tickets?` : null}
+      hints={twoPane && pane === 'tree' ? TREE_HINTS : undefined}
       columns={columns}
       rows={rowsAvail}
       tickets={visible}
-      total={snapshot.tickets.length}
+      total={scoped.length}
       cursor={safeCursor}
       top={top}
       layout={layout}
       scopeName={scopeName}
       statuses={p.statuses}
-      counts={snapshot.counts}
+      counts={scopedCounts}
       status={snapshot.status}
       filter={filter}
       filterEditing={filterEditing}

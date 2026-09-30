@@ -29,10 +29,11 @@ test('every rendered frame uses only palette colours (no orange, no grey dim, no
     }
     for (const m of f.matchAll(/\u001b\[([0-9;]*)m/g)) {
       const code = m[1]!;
-      if (/^(38;2;\d+;\d+;\d+)$/.test(code)) {
+      // 38 = foreground, 48 = background (the dog's half-block pixels); both must be palette colours
+      if (/^(38|48);2;\d+;\d+;\d+$/.test(code)) {
         seen.add(code);
-        expect(ALLOWED.has(code)).toBe(true);
-      } else if (/^(39|1|22|7|27|0|)$/.test(code)) {
+        expect(ALLOWED.has('38' + code.slice(2))).toBe(true);
+      } else if (/^(39|49|1|22|7|27|0|)$/.test(code)) {
         // reset / bold / inverse are fine
       } else {
         throw new Error(`unexpected SGR ${code} (dim, 256/16-colour or background leaks)`);

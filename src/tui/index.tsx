@@ -53,7 +53,7 @@ export interface OpenListOptions extends CommonOptions {
 export async function openList(o: OpenListOptions = {}): Promise<void> {
   const db = o.db ?? openDb();
   const projectId = o.projectId ?? null;
-  const initial = loadSnapshot(db, { projectId, statuses: o.statuses });
+  const initial = loadSnapshot(db, { projectId: null, statuses: o.statuses });
   await mount(
     <App db={db} projectId={projectId} statuses={o.statuses} actions={{ ...defaultActions(db), ...o.actions }} pollMs={o.pollMs} initial={initial} />,
     { stdout: o.stdout, stdin: o.stdin, fullscreen: o.fullscreen ?? true },

@@ -15,6 +15,8 @@ const KEYS: Array<[string, string]> = [
   ['p', 'pause or resume the orchestrator'],
   ['/', 'filter as you type: bug  #label  status:running  p1  p<=2  @project  model:opus  -done'],
   [':', 'command line: any salu command, e.g. add "fix login"  add project web  run  status  (tab completes, ↑↓ history)'],
+  ['←  →  (wide terminals)', 'project tree on the left: → opens a project or enters a subproject, ← goes back up, tab or → on a leaf moves to the tickets'],
+  ['a  d  (in the tree)', 'add a project (fills the command line) or remove the selected one'],
   ['tab  shift-tab', 'switch project (all projects, then each one)'],
   ['esc', 'clear the filter, close the ticket, or quit'],
   ['q  ctrl-c', 'quit'],
