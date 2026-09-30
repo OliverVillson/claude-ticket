@@ -665,6 +665,28 @@ describe('two panes: project tree and tickets', () => {
     expect(term.lastFrame()).toContain('add project');
   });
 
+  test('the pane with the focus is marked: heavy border and ▌ title, readable without colour', async () => {
+    const { db } = seedTree();
+    const { term } = mountApp({ db }, [130, 30]);
+    let f = await term.waitFor((s) => s.includes('web root job'));
+    expect(f).toContain('┏━ ▌projects');
+    expect(f).toContain('╭─ tickets');
+    expect(f).toContain('tab switch pane');
+    await term.press(KEY.tab);
+    f = term.lastFrame();
+    expect(f).toContain('╭─ projects');
+    expect(f).toContain('┏━ ▌tickets');
+    expect(f).toContain('tab switch pane');
+    expect(f.match(/▌/g)!.length).toBe(2); // wordmark + the active pane's title
+    await term.press(KEY.tab);
+    expect(term.lastFrame()).toContain('┏━ ▌projects');
+    await term.press(KEY.tab);
+    await term.press(KEY.left);
+    expect(term.lastFrame()).toContain('┏━ ▌projects');
+    await term.press(KEY.shiftTab);
+    expect(term.lastFrame()).toContain('┏━ ▌tickets');
+  });
+
   test('narrow terminals fall back to a single pane', async () => {
     const { db } = seedTree();
     const { term } = mountApp({ db }, [90, 30]);
@@ -680,10 +702,10 @@ describe('two panes: project tree and tickets', () => {
     await term.press('a');
     for (const ch of 'newproj') await term.press(ch, 5);
     await term.press(KEY.enter, 300);
-    await term.waitFor((s) => /[▸ ] newproj\s+\d*\s*│/.test(s) || s.includes('added') || s.includes('project newproj'), 'command ran');
+    await term.waitFor((s) => /[▸ ] newproj\s+\d*\s*[│┃]/.test(s) || s.includes('added') || s.includes('project newproj'), 'command ran');
     for (let i = 0; i < 50 && !listProjects(db).some((p) => p.name === 'newproj'); i++) await sleep(20);
     expect(listProjects(db).some((p) => p.name === 'newproj')).toBe(true);
-    await term.waitFor((s) => /newproj\s+\d*\s*│/.test(s), 'project in tree');
+    await term.waitFor((s) => /newproj\s+\d*\s*[│┃]/.test(s), 'project in tree');
     await term.press(KEY.esc);
     await term.press(KEY.down);
     await term.press(KEY.down);

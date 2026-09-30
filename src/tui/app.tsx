@@ -18,7 +18,7 @@ import { HelpView } from './components/HelpView.tsx';
 import { style as st } from './style.ts';
 import { CommandLine } from './components/CommandLine.tsx';
 import { ResultView } from './components/ResultView.tsx';
-import { ListView, listInnerWidth } from './components/ListView.tsx';
+import { LIST_HINTS, ListView, listInnerWidth } from './components/ListView.tsx';
 import type { Message } from './messages.ts';
 import { runCommand } from './command.ts';
 import { complete } from './complete.ts';
@@ -51,13 +51,15 @@ const CHROME_LINES = 6;
 /** Terminals at least this wide get the project tree beside the tickets; narrower ones get one pane. */
 export const TWO_PANE_MIN_COLUMNS = 104;
 
+export const TICKET_PANE_HINTS: Array<[string, string]> = [['↑↓', 'move'], ['tab', 'switch pane'], ...LIST_HINTS.filter(([k]) => k !== 'tab' && k !== '↑↓')];
+
 export const TREE_HINTS: Array<[string, string]> = [
   ['↑↓', 'project'],
   ['→', 'open'],
   ['←', 'back'],
   ['a', 'add project'],
   ['d', 'remove'],
-  ['tab', 'tickets'],
+  ['tab', 'switch pane'],
   [':', 'command'],
   ['?', 'help'],
   ['q', 'quit'],
@@ -141,7 +143,7 @@ export function App(p: AppProps) {
   topRef.current = top;
   const leftW = twoPane ? Math.max(22, Math.min(32, Math.round(columns * 0.26))) : 0;
   const showProjectCol = scopeIds == null || scopeIds.size > 1;
-  const layout = useMemo(() => computeLayout(listInnerWidth(columns) - (twoPane ? leftW + 3 : 0), { showProject: showProjectCol }), [columns, twoPane, leftW, showProjectCol]);
+  const layout = useMemo(() => computeLayout(twoPane ? columns - leftW - 8 : listInnerWidth(columns), { showProject: showProjectCol }), [columns, twoPane, leftW, showProjectCol]);
   const now = Date.now();
   const working = snapshot.status.workers.length > 0 || snapshot.tickets.some((t) => t.status === 'running');
   const anyRunningVisible = (mode === 'list' && working) || (mode === 'list' ? visible.slice(top, top + rows).some((t) => t.status === 'running') : mode === 'detail' && selected?.status === 'running');
@@ -531,7 +533,7 @@ export function App(p: AppProps) {
       ticketFocus={!twoPane || pane === 'tickets'}
       crumbs={scopeCrumbs}
       projectConfirm={projConfirm ? `remove project "${projConfirm.name}" and its tickets?` : null}
-      hints={twoPane && pane === 'tree' ? TREE_HINTS : undefined}
+      hints={twoPane ? (pane === 'tree' ? TREE_HINTS : TICKET_PANE_HINTS) : undefined}
       columns={columns}
       rows={rowsAvail}
       tickets={visible}

@@ -17,6 +17,8 @@ export interface FrameProps {
   /** a string pair, or a React node when the footer needs a live input (the filter prompt) */
   footer: { left: string; right?: string } | React.ReactNode;
   children: React.ReactNode;
+  /** no outer border: the caller draws its own (the two-pane layout draws one box per pane) */
+  bare?: boolean;
 }
 
 /** " left      right": one leading space, right side pushed to the far edge, cut to fit. */
@@ -38,9 +40,15 @@ export function Frame(p: FrameProps) {
   return (
     <Box flexDirection="column" width={cols}>
       <Text wrap="truncate-end">{joinLine(p.header.left, p.header.right, cols)}</Text>
-      <Box borderStyle="round" {...(st.enabled ? { borderColor: st.level >= 2 ? hex('chrome') : 'green' } : { borderDimColor: true })} flexDirection="column" paddingX={1} width={cols}>
-        {p.children}
-      </Box>
+      {p.bare ? (
+        <Box flexDirection="column" width={cols}>
+          {p.children}
+        </Box>
+      ) : (
+        <Box borderStyle="round" {...(st.enabled ? { borderColor: st.level >= 2 ? hex('chrome') : 'green' } : { borderDimColor: true })} flexDirection="column" paddingX={1} width={cols}>
+          {p.children}
+        </Box>
+      )}
       {isPair(p.footer) ? <Text wrap="truncate-end">{joinLine(p.footer.left, p.footer.right, cols)}</Text> : p.footer}
     </Box>
   );
