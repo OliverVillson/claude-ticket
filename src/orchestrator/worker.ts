@@ -14,6 +14,7 @@ import type { Effort, Permission } from '../core/tags.ts';
 import { workerEnv as scrubParentSession } from '../core/env.ts';
 import { detectLimit, parseLimitText, probeWindow } from '../usage/index.ts';
 import type { LimitHit } from '../usage/types.ts';
+import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../core/tags.ts';
 import { buildPrompt, buildResumePrompt, parseTrailer, systemAppend } from './prompt.ts';
 import type { WorkerInput, WorkerLive, WorkerResult, WorkerRunner } from './types.ts';
 
@@ -67,8 +68,8 @@ export function effectiveSettings(t: TicketView, project: Project | null): Effec
   const tags = ticketTags(t);
   const maxTurns = Number(tags['max-turns']);
   return {
-    model: tags.model ?? project?.default_model ?? null,
-    effort: ((tags.effort ?? project?.default_effort) as Effort | undefined) ?? null,
+    model: tags.model ?? project?.default_model ?? DEFAULT_MODEL,
+    effort: ((tags.effort ?? project?.default_effort) as Effort | undefined) ?? (DEFAULT_EFFORT as Effort),
     permission: (tags.permission as Permission | undefined) ?? DEFAULT_PERMISSION,
     maxTurns: Number.isInteger(maxTurns) && maxTurns > 0 ? maxTurns : DEFAULT_MAX_TURNS,
   };

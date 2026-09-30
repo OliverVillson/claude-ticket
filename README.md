@@ -29,6 +29,7 @@ If the folder is not on your PATH it prints the `export PATH=...` line to add to
 
 ```sh
 salu add project "myapp" ~/code/myapp          # first project becomes the default
+salu add "landing page"          # no project yet? salu makes "landing-page-proj" in ./landing-page-proj
 salu add "fix login" "Fix the login bug in auth.ts and add a test" "model=opus effort=high priority=1 bug"
 salu add "write docs" "Write a README for the API" "docs max-turns=20"
 salu list                                      # interactive list (arrow keys)
@@ -42,7 +43,7 @@ salu log "fix login" --follow                  # worker transcript
 
 | Command | What it does |
 | --- | --- |
-| `salu add project "name" [path]` | Registers a project. `path` defaults to the current folder. Flags: `--model`, `--effort`, `--concurrency`, `--default`. |
+| `salu add project "name" [path]` | Registers a project. With no `path` it uses the current folder if that is a git repo, else creates `./<name>`. Flags: `--model`, `--effort`, `--concurrency`, `--default`. |
 | `salu add "name" "query" ["tags"]` | Adds a ticket. `query` is the prompt the worker gets. Tags are `key=value` pairs and bare labels. |
 | `salu remove "name" [--yes]` | Deletes a ticket; a running one is stopped first. `salu remove project "name"` deletes a project and its tickets. |
 | `salu change "name" [--name] [--query] [--tags] [--priority] [--status]` | Edits fields. No flags opens the inline editor. `--status todo` re-queues a ticket. `salu change project "name" --path/--model/--effort/--concurrency/--default` edits a project. |
@@ -61,8 +62,8 @@ Ticket names are unique within a project. When a name exists in several projects
 | Key | Values | Default |
 | --- | --- | --- |
 | `project` | a registered project | the project whose folder contains the current directory, else the default |
-| `model` | `opus`, `sonnet`, `haiku`, or a full model id | the project's default, else Claude Code's |
-| `effort` | `low`, `medium`, `high`, `xhigh`, `max` | the project's default, else Claude Code's |
+| `model` | `opus`, `sonnet`, `haiku`, or a full model id | the project's default, else `claude-opus-5-5` |
+| `effort` | `low`, `medium`, `high`, `xhigh`, `max` | the project's default, else `medium` |
 | `priority` | 1 (highest) to 5 | 3 |
 | `max-turns` | a number | 50 |
 | `permission` | `plan`, `default`, `acceptEdits`, `bypass`, `dontAsk` | `acceptEdits` |
@@ -86,7 +87,7 @@ Any other token (`bug`, `docs`, `team=core`) is stored as a label or custom tag 
 
 - One orchestrator per machine. It claims tickets by priority then age, up to the
   concurrency cap (`--concurrency`, default 2; a project's `--concurrency` caps that project).
-- Each salu runs as its own Claude Code session in the project folder, with model,
+- Each ticket runs as its own Claude Code session in the project folder, with model,
   effort, permission mode and max turns from its tags. Workers are told to commit on a
   branch named `salu/<name>` and never push, and to end with one line
   `TICKET: done`, `TICKET: blocked <question>` or `TICKET: failed <reason>`.
