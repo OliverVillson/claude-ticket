@@ -54,17 +54,24 @@ maybe('compiled salu binary', () => {
   test('with a claude on PATH: doctor is happy and a ticket runs to done', async () => {
     const e = env(true);
     const d = await salu(['doctor'], e);
+    if (d.code !== 0 || !d.out.includes('Claude Code 9.9.9')) console.error('doctor said:', d.code, d.out, d.err);
     expect(d.out).toContain('Claude Code 9.9.9');
     expect(d.code).toBe(0);
     const p = Bun.spawn([BIN, 'run', '--plain'], { cwd, env: e, stdout: 'pipe', stderr: 'pipe' });
     try {
       const end = Date.now() + 40_000;
       let status = 'todo';
+      let last = '';
       while (Date.now() < end) {
-        status = (await tickets(e))[0].status;
+        try {
+          status = (await tickets(e))[0].status;
+        } catch (err: any) {
+          last = String(err?.message ?? err); // a read that races the orchestrator's first write: try again
+        }
         if (status === 'done') break;
         await new Promise((r) => setTimeout(r, 250));
       }
+      if (status !== 'done') console.error('run output:', await Promise.race([new Response(p.stdout).text(), new Promise((r) => setTimeout(() => r('(still running)'), 500))]), last);
       expect(status).toBe('done');
     } finally {
       p.kill('SIGTERM');
