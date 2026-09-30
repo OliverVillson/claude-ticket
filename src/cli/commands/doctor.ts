@@ -9,6 +9,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { orchestratorEnvToScrub, sandboxOn, sandboxSupport } from '../../core/kernel.ts';
 import { CANARY_ENV_NAME } from '../../core/sandbox-check.ts';
+import { openDb } from '../../db/db.ts';
+import { listRemotes } from '../../sync/store.ts';
+import { unsignedWarning } from '../../sync/format.ts';
 import { VERSION } from '../dispatch.ts';
 import { helpIf } from './_shared.ts';
 
@@ -135,6 +138,13 @@ export async function doctor(p: Parsed): Promise<number> {
 
   const auth = applyAuthPolicy({ ...process.env });
   if (auth.warning) console.log(`${dim('·')} ${auth.warning}`);
+
+  try {
+    const w = listRemotes(openDb()).length ? unsignedWarning() : null;
+    if (w) console.log(`${red('!')} ${w}`); // a warning, not a failure: requiring a key is your call
+  } catch {
+    /* the database may not exist yet */
+  }
 
   try {
     ok(`data folder ${ensureHome()}`);

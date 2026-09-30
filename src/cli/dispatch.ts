@@ -24,6 +24,7 @@ Usage   (salu ?  |  salu help  |  salu --help  shows this list; quote the ? in z
                                              queue everything saved (or just the named tickets) and start
   salu push [project] [--branch B] [--to url] [--dry-run]   send what agents made in the kernel to the project's git remote
   salu export <folder> [project] [--git] [--force]           copy what agents made in the kernel to a folder
+  salu remote add|list|remove|sync            run a project on an always-on box through its git remote (salu remote --help)
   salu pause | salu resume | salu stop
   salu status [--json]
   salu usage [--json] [--refresh]            how much of your Claude plan's 5-hour and weekly usage is left
@@ -88,6 +89,8 @@ export async function dispatch(argv: string[]): Promise<number> {
       return (await import('./commands/push.ts')).push(sub);
     case 'export':
       return (await import('./commands/push.ts')).exportKernel(sub);
+    case 'remote':
+      return (await import('./commands/remote.ts')).remote(sub);
     case 'pause':
       return (await import('./commands/pause.ts')).pause(sub);
     case 'resume':

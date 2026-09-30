@@ -1,11 +1,13 @@
 import type { Parsed } from '../args.ts';
 import { flagBool, flagStr } from '../args.ts';
 import { openDb } from '../../db/db.ts';
-import { listTurns, replyToTicket } from '../../db/queries.ts';
+import { getProjectById, listTurns, markFollowUpsDelivered, replyToTicket } from '../../db/queries.ts';
 import { resolveTicket } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
 import { bold, dim, green, stripControl } from '../../core/ansi.ts';
 import { readStatus } from '../../orchestrator/status.ts';
+import { publishReply, syncProject } from '../../sync/sync.ts';
+import { getRemote } from '../../sync/store.ts';
 import { helpIf } from './_shared.ts';
 import type { Turn, TicketView } from '../../db/types.ts';
 
@@ -39,6 +41,20 @@ export async function reply(p: Parsed): Promise<number> {
     return 0;
   }
   const q = replyToTicket(db, t.id, message, { now: flagBool(p, 'now') });
+  const project = getProjectById(db, q.project_id);
+  const remote = project ? getRemote(db, project.id) : null;
+  if (project && remote && publishReply(db, project, q, message, { now: flagBool(p, 'now') })) {
+    // This ticket runs on the box: the message goes there, and nothing waits for a local worker.
+    markFollowUpsDelivered(db, q.id);
+    try {
+      syncProject(db, project, remote);
+      console.log(`${green('✓')} sent to #${q.id} ${q.name} ${dim(`(on the box: ${remote.url})`)}`);
+    } catch (e: any) {
+      console.log(`${green('✓')} saved for #${q.id} ${q.name} ${dim('(it will be sent on the next `salu remote sync`)')}`);
+      console.error(dim('could not reach the remote now: ' + String(e?.message ?? e)));
+    }
+    return 0;
+  }
   const st = readStatus(db);
   const where = q.status === 'running' ? 'it is running; your message is the next turn' : q.status === 'todo' ? 'queued' : q.status;
   console.log(`${green('✓')} sent to #${q.id} ${stripControl(q.name)} ${dim(`(${where})`)}`);
