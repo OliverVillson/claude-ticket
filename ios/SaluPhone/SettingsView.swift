@@ -6,6 +6,7 @@ struct SettingsView: View {
     @State private var check: Store.Check?
     @State private var checking = false
     @State private var showToken = false
+    @State private var keyDraft = ""  // saved on return or when leaving, not on every keystroke
 
     var body: some View {
         NavigationStack {
@@ -56,11 +57,16 @@ struct SettingsView: View {
                 .listRowBackground(Salu.surface)
 
                 Section {
-                    SecureField("", text: $store.signingKey, prompt: Text("off").foregroundStyle(Salu.chrome))
+                    SecureField("", text: $keyDraft, prompt: Text("off").foregroundStyle(Salu.chrome))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        .submitLabel(.done)
+                        .onSubmit(saveKey)
                     Button("Paste key") {
-                        if let s = UIPasteboard.general.string { store.signingKey = s.trimmed }
+                        if let s = UIPasteboard.general.string {
+                            keyDraft = s.trimmed
+                            saveKey()
+                        }
                     }
                 } header: {
                     label("signing key (optional)")
@@ -129,7 +135,13 @@ struct SettingsView: View {
             .onChange(of: store.repo) { check = nil }
             .onChange(of: store.token) { check = nil }
             .onChange(of: store.signingKey) { check = nil }
+            .onAppear { keyDraft = store.signingKey }
+            .onDisappear(perform: saveKey)
         }
+    }
+
+    private func saveKey() {
+        if keyDraft.trimmed != store.signingKey.trimmed { store.signingKey = keyDraft.trimmed }
     }
 
     private func label(_ s: String) -> some View {

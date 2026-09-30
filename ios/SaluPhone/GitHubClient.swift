@@ -86,7 +86,10 @@ struct GitHubClient {
             }
             if bad.contains(id) { continue }
             let path = e.path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""  // a name from the remote: keep ? and # out of the URL
-            let f = try JSONDecoder().decode(FileBody.self, from: try await request("contents/\(path)?ref=\(Self.branch)"))
+            guard let f = try? JSONDecoder().decode(FileBody.self, from: try await request("contents/\(path)?ref=\(Self.branch)")) else {
+                bad.insert(id)  // not a readable file (a submodule lists as one too)
+                continue
+            }
             let raw = Data(base64Encoded: f.content.replacingOccurrences(of: "\n", with: "")) ?? Data()
             guard raw.count <= Self.maxFileBytes, Signing.verify(raw, key: key) else {
                 bad.insert(id)
@@ -94,6 +97,7 @@ struct GitHubClient {
             }
             if let m = try? JSONDecoder().decode(SaluMessage.self, from: raw), m.v == 1, seen.insert(m.id).inserted { out.append(m) }
         }
+        bad.formIntersection(listing.map { String($0.name.dropLast(5)) })  // forget files the box removed
         return (out.sorted { $0.id > $1.id }, bad)
     }
 
