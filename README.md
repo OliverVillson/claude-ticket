@@ -134,13 +134,20 @@ project's workers in a kernel:
   - `salu push [project] [--branch B] [--to url] [--dry-run]` pushes the `salu/*` branches to the project's git remote.
   - `salu export <folder> [project] [--git] [--force]` copies the files to a folder.
 
-- When any project is sandboxed, `salu run` restarts itself once with the same environment allow-list workers get, so a
-  worker's shell cannot read the orchestrator's environment (`/proc/<pid>/environ`). Unsandboxed workers then lose
-  variables outside the list: `SALU_ENV_PASS=NAME` brings one back, `SALU_ORCH_ENV=keep` turns this off.
-- After each sandboxed run salu looks for links that leave the kernel or files with several hard links and notes them
-  in the ticket log (`salu kernel audit:`). This catches a link swapped in between the file-tool check and the write.
-- `salu doctor --sandbox` proves it on your machine: one small ticket tries to read, write and hard-link canary files
-  in your home folder, and salu checks the files afterwards.
+- When any project is sandboxed, `salu run` replaces itself (execve, same pid) with a copy that has only the
+  environment allow-list workers get, so a worker's shell cannot read the orchestrator's environment
+  (`/proc/<pid>/environ`); `--detach` starts the clean copy directly. Where exec is not possible it starts in the
+  background instead. Unsandboxed workers then lose variables outside the list: `SALU_ENV_PASS=NAME` brings one
+  back, `SALU_ORCH_ENV=keep` turns this off. The API key (when you use one) stays in the worker's own environment:
+  that is how it logs in, so prefer a subscription login for sandboxed projects.
+- After each sandboxed run salu lists links that leave the kernel and files with several hard links (`salu kernel
+  audit:` in the ticket log). **This is a warning about residue, not a barrier:** it runs after the run's output
+  has streamed, it skips `node_modules` and `.git/objects`, and a worker that removes its link leaves nothing to
+  find. What actually stops reads and writes is the OS sandbox and the file-tool check.
+- `salu doctor --sandbox` restarts itself the way `salu run` does, plants canary files in your home folder and runs
+  one small haiku ticket that tries to read, write and hard-link them and to read the old environment. A probe
+  only counts when the session log shows the agent really made the attempt; otherwise it fails as "not tested".
+  It is evidence that these attempts were refused on this machine now, not a proof that nothing can escape.
 
 Not covered: the OS sandbox fences shell commands; the file tools are fenced by the permission rules above.
 Anything an agent can read inside the kernel can be sent to any site it can reach. Linux needs

@@ -4,7 +4,11 @@ import { applyAuthPolicy } from '../../core/env.ts';
 import { probeWindow } from '../../usage/index.ts';
 import { ensureHome } from '../../core/paths.ts';
 import { dim, green, red } from '../../core/ansi.ts';
-import { sandboxSupport } from '../../core/kernel.ts';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { orchestratorEnvToScrub, sandboxOn, sandboxSupport } from '../../core/kernel.ts';
+import { CANARY_ENV_NAME } from '../../core/sandbox-check.ts';
 import { VERSION } from '../dispatch.ts';
 import { helpIf } from './_shared.ts';
 
@@ -28,8 +32,42 @@ async function run(cmd: string[]): Promise<{ ok: boolean; out: string }> {
   }
 }
 
+/** Restart this process the way `salu run` does (before anything prints): the secret set here must be gone afterwards, and the agent looks for it. */
+async function restartWithCanary(p: Parsed): Promise<string | undefined> {
+  if (!sandboxOn()) return undefined;
+  const fileFlag = typeof p.flags['canary-file'] === 'string' ? (p.flags['canary-file'] as string) : null;
+  let canaryEnvValue: string | undefined;
+  if (fileFlag) {
+    try {
+      canaryEnvValue = readFileSync(fileFlag, 'utf8').trim();
+    } catch {
+      /* no canary */
+    }
+    rmSync(fileFlag, { force: true });
+  } else if (process.env.SALU_ORCH_SCRUBBED !== '1') {
+    const value = `ENV-CANARY-${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+    const file = join(homedir(), `.salu-sandbox-check-env-${process.pid}`);
+    const clean = orchestratorEnvToScrub(true, { ...process.env, [CANARY_ENV_NAME]: value });
+    if (clean) {
+      try {
+        writeFileSync(file, value, { mode: 0o600 });
+        const { selfCommand } = await import('../../orchestrator/index.ts');
+        const { execReplace } = await import('../../core/exec.ts');
+        await execReplace(selfCommand(['doctor', '--sandbox', '--canary-file', file]), clean);
+      } catch {
+        rmSync(file, { force: true }); // no exec here: the environment probe is reported as not tested
+      }
+    }
+  }
+  return canaryEnvValue;
+}
+
 /** `salu doctor --sandbox`: a real ticket in a throwaway sandboxed project attacks canary files in your home folder. */
-async function sandboxProof(): Promise<number> {
+async function sandboxProof(canaryEnvValue: string | undefined): Promise<number> {
+  if (!sandboxOn()) {
+    console.log(`${red('✗')} SALU_SANDBOX is off, so workers would not run in the kernel; there is nothing to prove`);
+    return 1;
+  }
   const sb = sandboxSupport();
   if (!sb.ok) {
     console.log(`${red('✗')} the kernel sandbox cannot run here`);
@@ -39,7 +77,7 @@ async function sandboxProof(): Promise<number> {
   console.log(`\n${dim('Sandbox proof: one small haiku ticket in a throwaway sandboxed project tries to read, write and link files in your home folder (canary files, removed afterwards)...')}`);
   const { runSandboxCheck } = await import('../../core/sandbox-check.ts');
   const { selectRunner } = await import('../../orchestrator/worker.ts');
-  const probes = await runSandboxCheck(await selectRunner(), { onLine: () => process.stdout.write('.') });
+  const probes = await runSandboxCheck(await selectRunner(), { onLine: () => process.stdout.write('.'), canaryEnvValue });
   console.log('');
   let failed = 0;
   for (const pr of probes) {
@@ -56,6 +94,7 @@ async function sandboxProof(): Promise<number> {
 
 export async function doctor(p: Parsed): Promise<number> {
   if (helpIf(p, HELP)) return 0;
+  const canary = p.flags.sandbox ? await restartWithCanary(p) : undefined;
   let bad = 0;
   const ok = (m: string) => console.log(`${green('✓')} ${m}`);
   const no = (m: string, fix?: string) => {
@@ -102,7 +141,7 @@ export async function doctor(p: Parsed): Promise<number> {
   } catch (e: any) {
     no(`cannot write the data folder: ${String(e?.message ?? e)}`);
   }
-  if (p.flags.sandbox) bad += await sandboxProof();
+  if (p.flags.sandbox) bad += await sandboxProof(canary);
   console.log(bad ? `\n${bad} problem${bad === 1 ? '' : 's'} to fix.` : '\nAll good.');
   return bad ? 1 : 0;
 }

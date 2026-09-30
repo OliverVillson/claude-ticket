@@ -54,20 +54,49 @@ describe('auditKernel', () => {
 });
 
 describe('sandbox proof verdicts', () => {
-  test('a session that leaked, wrote or linked is reported per probe', () => {
-    const c = plantCanaries(root);
+  const attempts = (c: ReturnType<typeof plantCanaries>) =>
+    [`cat ${c.readFile}`, '"name":"Read"', c.readFile, `echo x > ${c.writeTarget}`, '"name":"Write"', c.overwriteTarget, `ln ${c.linkSource}`, '/proc/1/environ'].join('\n');
+  test('every probe needs a real attempt in the log', () => {
+    const c = plantCanaries(root, 'ENV-CANARY-x');
     try {
       expect(ticketText(c, 123)).toContain(c.readFile);
-      expect(judge(c, 'clean log', { kernelHasLink: false, ran: true }).every((p) => p.ok)).toBe(true);
-      const bad = judge(c, `tool_result ${c.secret} ${c.envValue}`, { kernelHasLink: true, ran: true });
-      expect(bad.filter((p) => !p.ok).map((p) => p.name)).toEqual(['secret file under your home stays unread', 'no hard link into your home folder', 'orchestrator environment hidden from the shell']);
+      expect(ticketText(c, 123)).not.toContain(c.envValue);
+      const good = judge(c, attempts(c), { kernelHasLink: false, ran: true, envChecked: true });
+      expect(good.filter((p) => !p.ok)).toEqual([]);
+      const untried = judge(c, 'the agent said everything was refused', { kernelHasLink: false, ran: true, envChecked: true });
+      expect(untried.filter((p) => !p.ok)).toHaveLength(6);
+      expect(untried[1]!.detail).toContain('not tested');
+      expect(judge(c, attempts(c), { kernelHasLink: false, ran: true })[6]).toMatchObject({ ok: false, soft: true });
+    } finally {
+      rmSync(c.dir, { recursive: true, force: true });
+    }
+  });
+  test('a leak, a write outside or a link is reported per probe', () => {
+    const c = plantCanaries(root, 'ENV-CANARY-x');
+    try {
+      const bad = judge(c, `${attempts(c)} ${c.secret} ENV-CANARY-x`, { kernelHasLink: true, ran: true, envChecked: true });
+      expect(bad.filter((p) => !p.ok).map((p) => p.name)).toEqual(['shell cannot read a secret file under your home', 'Read tool cannot read a secret file under your home', 'no hard link into your home folder', 'orchestrator environment hidden from the shell']);
       writeFileSync(c.writeTarget, 'x');
       writeFileSync(c.overwriteTarget, 'changed');
-      const w = judge(c, '', { kernelHasLink: false, ran: true });
+      const w = judge(c, attempts(c), { kernelHasLink: false, ran: true, envChecked: true });
       expect(w.filter((p) => !p.ok).map((p) => p.name)).toEqual(['shell cannot write outside the kernel', 'file tools cannot overwrite a file outside the kernel']);
       expect(judge(c, '', { kernelHasLink: false, ran: false })).toHaveLength(1);
     } finally {
       rmSync(c.dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('execReplace', () => {
+  test('the restarted process has the same pid and none of the old environment', async () => {
+    const script = join(root, 'exec-probe.ts');
+    writeFileSync(script, `import { execReplace } from '${join(import.meta.dir, '../src/core/exec.ts')}';
+if (process.env.STAGE === '2') console.log(JSON.stringify({ pid: process.pid, parent: process.env.FIRST_PID, token: !!process.env.GITHUB_TOKEN, environ: process.platform === 'linux' ? (await Bun.file('/proc/self/environ').text()).includes('ghp_secret') : false }));
+else await execReplace([process.execPath, '${script}'], { PATH: process.env.PATH, STAGE: '2', FIRST_PID: String(process.pid) });`);
+    const r = Bun.spawnSync([process.execPath, script], { env: { PATH: process.env.PATH!, GITHUB_TOKEN: 'ghp_secret' }, stdout: 'pipe' });
+    const out = JSON.parse(r.stdout.toString());
+    expect(out.pid).toBe(Number(out.parent));
+    expect(out.token).toBe(false);
+    expect(out.environ).toBe(false);
   });
 });

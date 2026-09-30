@@ -12,6 +12,7 @@ import { closeSync, existsSync, openSync } from 'node:fs';
 import { openDb } from '../db/db.ts';
 import { getProjectById } from '../db/queries.ts';
 import { CliError } from '../core/errors.ts';
+import { execReplace } from '../core/exec.ts';
 import { orchestratorEnvToScrub } from '../core/kernel.ts';
 import { listProjects } from '../db/queries.ts';
 import { dim, green } from '../core/ansi.ts';
@@ -73,13 +74,16 @@ export async function startOrchestratorCommand(o: { projectIds?: number[]; concu
   // A worker's shell must not be able to read this process's environment: start over with only what workers get.
   const clean = orchestratorEnvToScrub(listProjects(db).some((p) => p.sandbox));
   if (clean && !o.detach) {
+    // Replace this process, do not wait for a clean child: a waiting parent would keep the old environment readable.
     const args = ['run', ...(o.plain ? ['--plain'] : []), ...(o.concurrency ? ['--concurrency', String(o.concurrency)] : [])];
-    const [cmd, ...rest] = selfCommand(args);
     const env = { ...clean, ...(projectIds ? { SALU_PROJECT_IDS: projectIds.join(',') } : {}) };
-    const child = Bun.spawn([cmd!, ...rest], { stdio: ['inherit', 'inherit', 'inherit'], env: env as Record<string, string> });
-    // Ctrl-C reaches both processes; ours just waits for the child to wind down.
-    for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => child.kill(sig));
-    return await child.exited;
+    try {
+      await execReplace(selfCommand(args), env);
+    } catch (e: any) {
+      // No exec here: run in the background instead (its launcher exits, nothing keeps the old environment).
+      console.log(`${dim(`${e?.message ?? e}; starting in the background instead (\`salu log -f\` follows it)`)}`);
+      return detach({ projectIds, concurrency: o.concurrency });
+    }
   }
   if (o.detach) return detach({ projectIds, concurrency: o.concurrency });
 
