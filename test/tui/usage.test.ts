@@ -6,8 +6,20 @@ import { ASCII_GLYPHS, UNICODE_GLYPHS } from '../../src/ui/glyphs.ts';
 
 const NOW = new Date(2026, 8, 30, 12, 0).getTime();
 const at = (h: number, m = 0) => new Date(2026, 8, 30, h, m).getTime();
-const win = (key: string, used: number | null, extra: Partial<UsageWindow> = {}): UsageWindow => ({ key, label: key, usedPercent: used, status: 'ok', resetsAt: at(15, 45), ...extra });
-const snap = (windows: UsageWindow[], extra: Partial<UsageSnapshot> = {}): UsageSnapshot => ({ available: true, stale: false, fetchedAt: NOW, windows, ...extra });
+const win = (key: string, used: number | null, extra: Partial<UsageWindow> = {}): UsageWindow => ({
+  id: (key === 'five_hour' ? 'session' : key) as UsageWindow['id'],
+  short: key === 'five_hour' ? '5h' : 'week',
+  label: key,
+  percentUsed: used,
+  percentLeft: used == null ? null : 100 - used,
+  utilization: used == null ? null : used / 100,
+  status: 'allowed',
+  resetsAt: at(15, 45),
+  observedAt: NOW,
+  source: 'usage',
+  ...extra,
+});
+const snap = (windows: UsageWindow[], extra: Partial<UsageSnapshot> = {}): UsageSnapshot => ({ available: true, reason: null, reasonKind: null, plan: 'max', windows, updatedAt: NOW, fetchedAt: NOW, stale: false, error: null, ...extra });
 const st = makeStyle(false);
 const both = snap([win('five_hour', 62), win('weekly', 28, { resetsAt: at(15, 45) + 3 * 86_400_000 })]);
 
@@ -27,26 +39,29 @@ describe('usage meter', () => {
   });
   test('no data reads usage n/a; stale numbers carry a ~; unknown percent shows ?', () => {
     expect(usageText(null, 40, st, NOW)).toBe('usage n/a');
-    expect(usageText(snap([], { available: false }), 40, st, NOW)).toBe('usage n/a');
+    expect(usageText(snap([], { available: false, reason: 'API key', reasonKind: 'no-subscription' }), 40, st, NOW)).toBe('usage n/a');
     expect(usageText(snap([win('five_hour', 50)], { stale: true }), 14, st, NOW)).toContain('50%~');
     expect(usageText(snap([win('five_hour', null)]), 30, st, NOW)).toContain('5h ?');
   });
   test('falls back to the weekly window when the 5-hour one is missing', () => {
     expect(usageText(snap([win('weekly', 10)]), 30, st, NOW)).toContain('wk ');
   });
+  test('a rejected window without a percentage reads limit reached', () => {
+    expect(usageText(snap([win('five_hour', null, { status: 'rejected' })]), 30, st, NOW)).toContain('limit reached');
+  });
   test('bar cells and percent left are clamped', () => {
     expect(usageBar(0)).toBe('▱▱▱▱▱');
     expect(usageBar(100)).toBe('▰▰▰▰▰');
     expect(usageBar(3)).toBe('▰▱▱▱▱');
-    expect(percentLeft(win('five_hour', 130))).toBe(0);
-    expect(percentLeft(win('five_hour', -5))).toBe(100);
+    expect(percentLeft(win('five_hour', 130, { percentUsed: 130 }))).toBe(0);
+    expect(percentLeft(win('five_hour', -5, { percentUsed: -5 }))).toBe(100);
   });
   test('tone: greens until 30% left, amber to 10%, red below or when rejected', () => {
     expect(tone(win('five_hour', 50))).toBe('ok');
     expect(tone(win('five_hour', 75))).toBe('warn');
     expect(tone(win('five_hour', 95))).toBe('error');
-    expect(tone(win('five_hour', 10, { status: 'rejected' }))).toBe('error');
-    expect(tone(win('five_hour', 10, { status: 'warning' }))).toBe('warn');
+    expect(tone(win('five_hour', 10, { status: 'rejected' as const }))).toBe('error');
+    expect(tone(win('five_hour', 10, { status: 'warning' as const }))).toBe('warn');
   });
   test('every glyph has an ASCII form of the same width', () => {
     expect(ASCII_GLYPHS.barFull.length).toBe(UNICODE_GLYPHS.barFull.length);

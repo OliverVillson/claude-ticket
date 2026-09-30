@@ -1172,7 +1172,8 @@ describe('ticket output (right arrow on a finished ticket)', () => {
 });
 
 describe('usage meter in the header', () => {
-  const win = (used: number) => ({ key: 'five_hour', label: '5-hour', usedPercent: used, status: 'ok' as const, resetsAt: Date.now() + 3_600_000 });
+  const win = (used: number) => ({ id: 'session', short: '5h', label: '5-hour', percentUsed: used, percentLeft: 100 - used, utilization: used / 100, status: 'allowed', resetsAt: Date.now() + 3_600_000, observedAt: Date.now(), source: 'usage' });
+  const wrap = (windows: any[]) => ({ available: true, reason: null, reasonKind: null, plan: 'max', windows, updatedAt: Date.now(), fetchedAt: Date.now(), stale: false, error: null });
   const source = (first: any) => {
     let cb: ((s: any) => void) | null = null;
     return {
@@ -1189,11 +1190,11 @@ describe('usage meter in the header', () => {
 
   test('shows what is left, follows the data layer, and is absent without a source', async () => {
     const { db } = seedDb(6);
-    const src = source({ available: true, stale: false, fetchedAt: Date.now(), windows: [win(62)] });
+    const src = source(wrap([win(62)]));
     const { term } = mountApp({ db, usage: src }, [130, 34]);
     let f = await term.waitFor((s) => s.includes('5h '), 'meter');
     expect(f).toContain('38% left');
-    src.push({ available: true, stale: false, fetchedAt: Date.now(), windows: [win(90)] });
+    src.push(wrap([win(90)]));
     f = await term.waitFor((s) => s.includes('10% left'), 'updated');
     src.push(null);
     await term.waitFor((s) => s.includes('usage n/a'), 'n/a');
@@ -1205,12 +1206,78 @@ describe('usage meter in the header', () => {
 
   test('on a narrow terminal it collapses and the counts stay', async () => {
     const { db } = seedDb(6);
-    const src = source({ available: true, stale: false, fetchedAt: Date.now(), windows: [win(62)] });
+    const src = source(wrap([win(62)]));
     const { term } = mountApp({ db, usage: src }, [90, 24]);
     const f = await term.waitFor((s) => s.includes('ticket 001'));
     const head = f.split('\n')[0]!;
     expect(head).toContain('38%');
     expect(head).not.toContain('resets');
     expect(head).toContain('running');
+  });
+});
+
+describe('backlog and queue', () => {
+  const addTicket = async (term: any, name: string, queue: boolean) => {
+    await term.press('a');
+    await term.press(name);
+    await term.press(KEY.tab);
+    await term.press('do it');
+    for (let i = 0; i < 3; i++) await term.press(KEY.tab); // tags, priority, then
+    if (queue) await term.press(KEY.right);
+    await term.press(KEY.enter);
+  };
+
+  test('a new ticket is saved to the backlog by default and says how to queue it', async () => {
+    const { db } = seedDb(3);
+    const { term } = mountApp({ db });
+    await term.waitFor((s) => s.includes('1/3'));
+    await term.press('a');
+    const f = await term.waitFor((s) => s.includes('save only'), 'queue row');
+    expect(f).toContain('backlog');
+    await term.press(KEY.esc);
+    await addTicket(term, 'Saved only', false);
+    const m = await term.waitFor((s) => s.includes('to the backlog'), 'added message');
+    expect(m).toContain('u queues it');
+    expect(listTickets(db).find((t) => t.name === 'Saved only')!.status).toBe('backlog');
+  });
+
+  test('"save and queue" makes the ticket eligible to run at once', async () => {
+    const { db } = seedDb(3);
+    const { term } = mountApp({ db });
+    await term.waitFor((s) => s.includes('1/3'));
+    await addTicket(term, 'Queued now', true);
+    await term.waitFor((s) => s.includes('and queued it'), 'added and queued');
+    expect(listTickets(db).find((t) => t.name === 'Queued now')!.status).toBe('todo');
+  });
+
+  test('u queues a backlog ticket and takes a queued one back; a running one is refused', async () => {
+    const { db, ids } = seedDb(12);
+    updateTicket(db, ids[1]!, { status: 'backlog' });
+    const { term } = mountApp({ db });
+    await term.waitFor((s) => s.includes('ticket 002'));
+    await term.press('/');
+    await term.press('ticket 002');
+    await term.press(KEY.enter);
+    await term.press('u');
+    await term.waitFor((s) => s.includes('queued'), 'queued');
+    expect(getTicketById(db, ids[1]!)!.status).toBe('todo');
+    await term.press('u');
+    await term.waitFor((s) => s.includes('back in the backlog'), 'unqueued');
+    expect(getTicketById(db, ids[1]!)!.status).toBe('backlog');
+    await term.press(KEY.esc); // clear the filter
+    await term.press('/');
+    await term.press('ticket 001');
+    await term.press(KEY.enter);
+    await term.press('u');
+    await term.waitFor((s) => s.includes("can't be queued"), 'running refused');
+    expect(getTicketById(db, ids[0]!)!.status).toBe('running');
+  });
+
+  test('the header counts show the backlog', async () => {
+    const { db, ids } = seedDb(12);
+    updateTicket(db, ids[1]!, { status: 'backlog' });
+    const { term } = mountApp({ db }, [130, 34]);
+    const f = await term.waitFor((s) => s.includes('backlog'), 'count');
+    expect(f.split('\n')[0]).toContain('1 backlog');
   });
 });

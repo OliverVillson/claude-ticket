@@ -11,6 +11,7 @@ const KEYS: Array<[string, string]> = [
   ['a', 'add a ticket (name, query, tags)'],
   ['e', 'edit the selected ticket'],
   ['d', 'delete the selected ticket (asks y/n)'],
+  ['u', 'queue the selected ticket (saved tickets stay in the backlog until then), or take a queued one back'],
   ['r', 'run the selected ticket next, ahead of the queue'],
   ['p', 'pause or resume the orchestrator'],
   ['/', 'filter as you type: bug  #label  status:running  p1  p<=2  @project  model:opus  -done'],

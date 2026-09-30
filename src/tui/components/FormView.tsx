@@ -14,6 +14,8 @@ export interface FormValues {
   tags: string;
   /** "1".."5" or "now"; empty keeps the current priority */
   priority: string;
+  /** also queue the ticket after saving (otherwise it stays in the backlog) */
+  queue?: boolean;
 }
 
 export interface FormViewProps {
@@ -25,6 +27,8 @@ export interface FormViewProps {
   onSubmit: (v: FormValues) => void;
   onCancel: () => void;
   onChange?: () => void;
+  /** show the save-only / save-and-queue choice (a new ticket, or one still in the backlog) */
+  canQueue?: boolean;
 }
 
 const FIELDS: Array<{ key: keyof FormValues; label: string; placeholder: string; width?: number }> = [
@@ -48,6 +52,7 @@ const TAG_HINTS: Array<[string, string]> = [
 ];
 
 const TAGS = 2; // index of the tags row in FIELDS
+const QUEUE = FIELDS.length; // the optional save-and-queue row comes after the fields
 
 /**
  * Inline add/edit form inside the same frame. Enter saves when name and query are filled,
@@ -58,6 +63,7 @@ export function FormView(p: FormViewProps) {
   const [focus, setFocus] = useState(0);
   const [tagsOpen, setTagsOpen] = useState(false);
   const [group, setGroup] = useState<TagGroup | null>(null);
+  const rowCount = FIELDS.length + (p.canQueue ? 1 : 0);
   const set = (k: keyof FormValues) => (v: string) => {
     setValues((prev) => ({ ...prev, [k]: v }));
     p.onChange?.();
@@ -65,6 +71,10 @@ export function FormView(p: FormViewProps) {
 
   useInput(
     (_input, key) => {
+    if (p.canQueue && focus === QUEUE && (key.rightArrow || key.leftArrow || _input === ' ')) {
+      setValues((prev) => ({ ...prev, queue: !prev.queue }));
+      return;
+    }
     if (focus === TAGS && key.rightArrow) {
       setTagsOpen(true);
       return;
@@ -74,17 +84,17 @@ export function FormView(p: FormViewProps) {
       return;
     }
     if (key.tab || key.downArrow) {
-      setFocus((f) => (key.shift ? (f + FIELDS.length - 1) % FIELDS.length : (f + 1) % FIELDS.length));
+      setFocus((f) => (key.shift ? (f + rowCount - 1) % rowCount : (f + 1) % rowCount));
       return;
     }
     if (key.upArrow) {
-      setFocus((f) => (f + FIELDS.length - 1) % FIELDS.length);
+      setFocus((f) => (f + rowCount - 1) % rowCount);
       return;
     }
     if (key.return) {
       if (!values.name.trim()) return setFocus(0);
       if (!values.query.trim()) return setFocus(1);
-      p.onSubmit({ name: values.name.trim(), query: values.query.trim(), tags: values.tags.trim(), priority: values.priority.trim() });
+      p.onSubmit({ name: values.name.trim(), query: values.query.trim(), tags: values.tags.trim(), priority: values.priority.trim(), queue: !!values.queue });
     }
     },
     { isActive: !tagsOpen },
@@ -130,10 +140,17 @@ export function FormView(p: FormViewProps) {
         return (
           <Text key={f.key} wrap="truncate-end">
             {label}
-            <TextField value={values[f.key]} onChange={set(f.key)} focus={i === focus && !tagsOpen} placeholder={f.placeholder} width={Math.max(10, Math.min(f.width ?? 999, cols - 4 - labelW))} />
+            <TextField value={String(values[f.key] ?? '')} onChange={set(f.key)} focus={i === focus && !tagsOpen} placeholder={f.placeholder} width={Math.max(10, Math.min(f.width ?? 999, cols - 4 - labelW))} />
           </Text>
         );
       })}
+      {p.canQueue ? (
+        <Text wrap="truncate-end">
+          <Text color={inkColor(focus === QUEUE ? 'accent' : 'chrome')}>{(focus === QUEUE ? '❯ ' : '  ') + 'then'.padEnd(labelW - 2)}</Text>
+          {values.queue ? st.accent('save and queue') + st.dim('  runs as soon as a worker is free') : st.text('save only') + st.dim('  stays in the backlog until you queue it (u)')}
+          {focus === QUEUE ? st.dim('   ← → or space to change') : ''}
+        </Text>
+      ) : null}
       <Text> </Text>
       {p.error ? (
         <Text color={inkColor('error')} wrap="truncate-end">

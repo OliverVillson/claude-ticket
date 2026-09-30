@@ -343,11 +343,11 @@ export function App(p: AppProps) {
       return;
     }
     try {
-      const input = { projectId, name: v.name, query: v.query, tags: v.tags, priority: v.priority };
+      const input = { projectId, name: v.name, query: v.query, tags: v.tags, priority: v.priority, queue: v.queue };
       const edit = form.mode === 'edit' && !!form.ticket;
       const t = edit ? actions.update(form.ticket!, input) : actions.create(input);
       selectedIdRef.current = t.id;
-      say(edit ? `saved "${t.name}"` : `added "${t.name}"`);
+      say(t.status === 'todo' ? `${edit ? 'saved' : 'added'} "${t.name}" and queued it` : edit ? `saved "${t.name}"` : `added "${t.name}" to the backlog · u queues it`);
       closeForm({ action: edit ? 'saved' : 'added', ticket: t });
       if (!standaloneForm) refresh(true);
     } catch (e: any) {
@@ -375,6 +375,20 @@ export function App(p: AppProps) {
     try {
       actions.runNow(t);
       say(snapshot.status.alive ? `"${t.name}" runs next` : `"${t.name}" runs next · start the orchestrator with: salu run`, snapshot.status.alive ? 'ok' : 'info');
+    } catch (e: any) {
+      say(String(e?.message ?? e), 'err');
+    }
+    refresh(true);
+  };
+
+  const doToggleQueue = (t: TicketView) => {
+    if (t.status === 'running' || t.status === 'paused') {
+      say(`"${t.name}" is ${t.status}; it can't be queued or unqueued`, 'info');
+      return;
+    }
+    try {
+      const r = actions.toggleQueue(t);
+      say(r === 'queued' ? `"${t.name}" queued${snapshot.status.alive ? '' : ' · start the orchestrator with: salu run'}` : `"${t.name}" back in the backlog`, 'ok');
     } catch (e: any) {
       say(String(e?.message ?? e), 'err');
     }
@@ -531,7 +545,7 @@ export function App(p: AppProps) {
           else say('pick a project to remove', 'info');
           return;
         }
-        if (input === 'e' || input === 'r' || input === 'g' || input === 'G' || key.pageUp || key.pageDown || key.home || key.end) return;
+        if (input === 'e' || input === 'r' || input === 'u' || input === 'g' || input === 'G' || key.pageUp || key.pageDown || key.home || key.end) return;
       }
       // Only tab and shift-tab move between windows. Right on a ticket opens its properties;
       // a narrow terminal (one pane) cycles projects with < and >.
@@ -568,6 +582,10 @@ export function App(p: AppProps) {
       }
       if (input === 'r') {
         if (selected) doRunNow(selected);
+        return;
+      }
+      if (input === 'u') {
+        if (selected) doToggleQueue(selected);
         return;
       }
       if (input === 'p') return doTogglePause();
@@ -609,6 +627,7 @@ export function App(p: AppProps) {
         projectName={projectName}
         initial={form.initial}
         error={formError}
+        canQueue={form.mode === 'add' || form.ticket?.status === 'backlog'}
         onSubmit={submitForm}
         onCancel={() => closeForm({ action: 'cancelled' })}
         onChange={() => formError && setFormError(null)}

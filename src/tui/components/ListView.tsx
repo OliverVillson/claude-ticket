@@ -67,6 +67,7 @@ export const LIST_HINTS: Array<[string, string]> = [
   ['a', 'add'],
   ['e', 'edit'],
   ['d', 'delete'],
+  ['u', 'queue'],
   ['r', 'run now'],
   ['p', 'pause'],
   ['/', 'filter'],
