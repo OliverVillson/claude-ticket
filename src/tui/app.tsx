@@ -150,7 +150,7 @@ export function App(p: AppProps) {
   const scopeIds = useMemo(() => subtreeIds(snapshot.projects, scope), [snapshot.projects, scope]);
   const scoped = useMemo(() => (scopeIds ? snapshot.tickets.filter((t) => scopeIds.has(t.project_id)) : snapshot.tickets), [snapshot.tickets, scopeIds]);
   const scopedCounts = useMemo(() => {
-    const c = { todo: 0, running: 0, done: 0, failed: 0, blocked: 0, paused: 0 } as Snapshot['counts'];
+    const c = { backlog: 0, todo: 0, running: 0, done: 0, failed: 0, blocked: 0, paused: 0 } as Snapshot['counts'];
     for (const t of scoped) c[t.status]++;
     return c;
   }, [scoped]);

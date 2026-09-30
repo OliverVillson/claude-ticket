@@ -60,7 +60,8 @@ salu add "landing page"          # no project yet? salu makes "landing-page-proj
 salu add "fix login" "Fix the login bug in auth.ts and add a test" "model=opus effort=high priority=1 bug"
 salu add "write docs" "Write a README for the API" "docs max-turns=20"
 salu list                                      # interactive list (arrow keys)
-salu run                                       # orchestrator with a live view
+salu queue "fix login"                         # adding only saves a ticket; queue it to let it run
+salu run                                       # queues everything saved, then the orchestrator with a live view
 salu run --detach                              # or in the background; `salu stop` ends it
 salu status                                    # state, counts, pause reason and resume time
 salu log "fix login" --follow                  # worker transcript
@@ -72,11 +73,13 @@ salu log "fix login" --follow                  # worker transcript
 | --- | --- |
 | `salu add project "sub" --in parent` | Subproject (also `"parent/sub"`); its folder defaults to a folder inside the parent's. A project shows the tickets of all its subprojects, a subproject only its own. `salu change project "x" --in parent\|none` moves it; removing a project removes its subprojects too (it asks first). |
 | `salu add project "name" [path]` | Registers a project. With no `path` it uses the current folder if that is a git repo, else creates `./<name>`. Flags: `--model`, `--effort`, `--concurrency`, `--default`. |
-| `salu add "name" "query" ["tags"]` | Adds a ticket. `query` is the prompt the worker gets. Tags are `key=value` pairs and bare labels. |
+| `salu add "name" "query" ["tags"] [--queue]` | Saves a ticket (status `backlog`); it never runs by itself. `query` is the prompt the worker gets. Tags are `key=value` pairs and bare labels. `--queue` saves and queues it. |
+| `salu queue "name"... \| --all [project]` | Queues saved tickets (status `todo`, shown as queued): a running orchestrator starts them at once. Also re-queues a done, failed or blocked ticket. `--now` goes to the front. |
+| `salu unqueue "name"` | Takes a queued ticket that has not started back to the backlog. |
 | `salu remove "name" [--yes]` | Deletes a ticket; a running one is stopped first. `salu remove project "name"` deletes a project and its tickets. |
 | `salu change "name" [--name] [--query] [--tags] [--priority] [--status]` | Edits fields. No flags opens the inline editor. `--status todo` re-queues a ticket. `salu change project "name" --path/--model/--effort/--concurrency/--default` edits a project. |
 | `salu list [project] [--plain] [--status S] [--projects] [--json]` | Interactive list; `--plain` prints a table (also when piped). |
-| `salu run [project] [--concurrency N] [--detach] [--plain]` | Starts the orchestrator. Defaults to every project. |
+| `salu run [project\|"name"...] [--concurrency N] [--detach] [--plain]` | Queues every saved ticket (or only the named tickets, or those in the named project) and starts the orchestrator. If one is already running it just queues and lets it pick them up. |
 | `salu pause` / `salu resume` / `salu stop` | Pause dispatch after current workers finish; resume early; stop a detached orchestrator. |
 | `salu status [--json]` | One screen of state. |
 | `salu log "name" [--follow] [--raw] [--run N]` | Worker transcript for a ticket. |
@@ -114,7 +117,7 @@ Any other token (`bug`, `docs`, `team=core`) is stored as a label or custom tag 
 | ↑ / ↓, j / k | Move the cursor |
 | Enter | Open the ticket (query, tags, last run, live log tail if running) |
 | a / e / d | Add, edit, delete (one-key confirm) |
-| r | Run the selected ticket now, ahead of the queue |
+| r | Queue the selected ticket and run it now, ahead of the queue (a saved ticket never runs until queued) |
 | p | Pause or resume the orchestrator |
 | / | Filter by name, label or status |
 | Tab / Shift-Tab | The only keys that move between windows (projects, tickets, command line) |

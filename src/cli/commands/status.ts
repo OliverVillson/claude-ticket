@@ -33,7 +33,7 @@ export async function status(p: Parsed): Promise<number> {
   const pause = getPause(db);
   if (pause) lines.push(`${magenta('‖')} ${bold('paused')}: ${formatPause(pause, now)}`);
   lines.push('');
-  const order = ['running', 'paused', 'todo', 'blocked', 'failed', 'done'] as const;
+  const order = ['running', 'paused', 'todo', 'backlog', 'blocked', 'failed', 'done'] as const;
   lines.push(
     order
       .map((s) => `${statusColor(s)(`${counts[s]} ${s}`)}`)

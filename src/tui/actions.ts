@@ -1,6 +1,6 @@
 import type { Database } from 'bun:sqlite';
 import type { Project, TicketView } from '../db/types.ts';
-import { createTicket, deleteTicket, getProjectByName, updateTicket, wakeOrchestrator } from '../db/queries.ts';
+import { createTicket, deleteTicket, queueTicket, getProjectByName, updateTicket, wakeOrchestrator } from '../db/queries.ts';
 import { clearPause, enterManualPause } from '../usage/index.ts';
 import { parseTags, validatePriority } from '../core/tags.ts';
 import { CliError } from '../core/errors.ts';
@@ -88,7 +88,7 @@ export function defaultActions(db: Database): TuiActions {
     },
     runNow(ticket) {
       if (ticket.status === 'running') return;
-      updateTicket(db, ticket.id, { status: 'todo', priority: PRIORITY_NOW, attempts: 0, error: null, finished_at: null });
+      queueTicket(db, ticket.id, { now: true });
     },
     togglePause(currentlyPaused) {
       if (currentlyPaused) clearPause(db);

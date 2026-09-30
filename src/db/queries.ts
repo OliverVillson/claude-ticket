@@ -131,7 +131,7 @@ export function projectQualifiedName(db: Database, id: number): string {
 export function listProjectTree(db: Database): ProjectNode[] {
   const all = db.query<Project, []>('SELECT * FROM projects ORDER BY is_default DESC, name ASC').all();
   const rows = db.query<{ project_id: number; status: TicketStatus; c: number }, []>('SELECT project_id, status, COUNT(*) AS c FROM tickets GROUP BY project_id, status').all();
-  const empty = (): Record<TicketStatus, number> => ({ todo: 0, running: 0, done: 0, failed: 0, blocked: 0, paused: 0 });
+  const empty = (): Record<TicketStatus, number> => ({ backlog: 0, todo: 0, running: 0, done: 0, failed: 0, blocked: 0, paused: 0 });
   const nodes = new Map<number, ProjectNode>();
   for (const p of all) nodes.set(p.id, { ...p, depth: 0, children: [], counts: empty(), own: empty() });
   for (const r of rows) {
@@ -218,6 +218,8 @@ export interface NewTicket {
   tags?: Record<string, string>;
   labels?: string[];
   priority?: number;
+  /** `backlog` (default): saved, does not run until queued. `todo`: queued now. */
+  status?: 'backlog' | 'todo';
 }
 
 const TICKET_VIEW_SQL = `
@@ -229,7 +231,7 @@ export function createTicket(db: Database, t: NewTicket): TicketView {
   try {
     db.run(
       `INSERT INTO tickets (project_id, name, query, tags, labels, priority, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'todo', ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         t.project_id,
         t.name,
@@ -237,6 +239,7 @@ export function createTicket(db: Database, t: NewTicket): TicketView {
         JSON.stringify(t.tags ?? {}),
         JSON.stringify(t.labels ?? []),
         t.priority ?? 3,
+        t.status ?? 'backlog',
         ts,
         ts,
       ],
@@ -248,6 +251,40 @@ export function createTicket(db: Database, t: NewTicket): TicketView {
   const id = db.query<{ id: number }, []>('SELECT last_insert_rowid() AS id').get()!.id;
   wakeOrchestrator();
   return getTicketById(db, id)!;
+}
+
+/**
+ * Queue a ticket: it becomes eligible to run (`todo`). Works from backlog and from finished states
+ * (done, failed, blocked: a re-queue, which also clears the error and the attempt count).
+ * `now` also puts it at the front. A running ticket is left alone.
+ */
+export function queueTicket(db: Database, id: number, o: { now?: boolean } = {}): TicketView {
+  const t = getTicketById(db, id);
+  if (!t) throw new CliError(`no ticket with id ${id}`);
+  if (t.status === 'running') throw new CliError(`"${t.name}" is already running`);
+  if (t.status === 'todo' && !o.now) return t;
+  const patch: Parameters<typeof updateTicket>[2] = { status: 'todo', attempts: 0, error: null, finished_at: null };
+  if (o.now) patch.priority = 0;
+  const out = updateTicket(db, id, patch);
+  wakeOrchestrator();
+  return out;
+}
+
+/** Take a queued ticket back to the backlog. Anything else (running, paused, finished) is refused. */
+export function unqueueTicket(db: Database, id: number): TicketView {
+  const t = getTicketById(db, id);
+  if (!t) throw new CliError(`no ticket with id ${id}`);
+  if (t.status === 'backlog') return t;
+  if (t.status !== 'todo') throw new CliError(`"${t.name}" is ${t.status}; only a queued ticket can go back to the backlog`);
+  return updateTicket(db, id, { status: 'backlog' });
+}
+
+/** Queue every backlog ticket (optionally only in these projects). Returns how many. */
+export function queueAll(db: Database, o: { projectIds?: number[] } = {}): number {
+  const where = o.projectIds?.length ? ` AND project_id IN (${o.projectIds.map(() => '?').join(',')})` : '';
+  const r = db.run(`UPDATE tickets SET status = 'todo', updated_at = ? WHERE status = 'backlog'${where}`, [now(), ...(o.projectIds ?? [])]);
+  if (r.changes) wakeOrchestrator();
+  return r.changes;
 }
 
 export function getTicketById(db: Database, id: number): TicketView | null {
@@ -286,7 +323,7 @@ export function listTickets(db: Database, f: ListFilter = {}): TicketView[] {
     vals.push(...s);
   }
   const sql = `${TICKET_VIEW_SQL} ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-    ORDER BY CASE t.status WHEN 'running' THEN 0 WHEN 'paused' THEN 1 WHEN 'todo' THEN 2 WHEN 'blocked' THEN 3 WHEN 'failed' THEN 4 ELSE 5 END,
+    ORDER BY CASE t.status WHEN 'running' THEN 0 WHEN 'paused' THEN 1 WHEN 'todo' THEN 2 WHEN 'backlog' THEN 3 WHEN 'blocked' THEN 4 WHEN 'failed' THEN 5 ELSE 6 END,
              t.priority ASC, t.created_at ASC`;
   return db.query<TicketView, any[]>(sql).all(...vals);
 }
@@ -341,7 +378,7 @@ export function countTickets(db: Database, projectId?: number, recursive = true)
   const rows = projectId
     ? db.query<{ status: TicketStatus; c: number }, number[]>(`SELECT status, COUNT(*) AS c FROM tickets WHERE project_id IN (${ids.map(() => '?').join(',')}) GROUP BY status`).all(...ids)
     : db.query<{ status: TicketStatus; c: number }, []>('SELECT status, COUNT(*) AS c FROM tickets GROUP BY status').all();
-  const out: Record<TicketStatus, number> = { todo: 0, running: 0, done: 0, failed: 0, blocked: 0, paused: 0 };
+  const out: Record<TicketStatus, number> = { backlog: 0, todo: 0, running: 0, done: 0, failed: 0, blocked: 0, paused: 0 };
   for (const r of rows) out[r.status] = r.c;
   return out;
 }

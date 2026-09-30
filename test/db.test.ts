@@ -61,10 +61,10 @@ describe('tickets', () => {
   test('create, list ordering, unique per project, delete', () => {
     const p = createProject(db, { name: 'p', path: '/tmp/p' });
     const q = createProject(db, { name: 'q', path: '/tmp/q' });
-    const t1 = createTicket(db, { project_id: p.id, name: 'one', query: 'do one', priority: 3 });
-    const t2 = createTicket(db, { project_id: p.id, name: 'two', query: 'do two', priority: 1 });
-    const t3 = createTicket(db, { project_id: q.id, name: 'one', query: 'other project same name' });
-    expect(() => createTicket(db, { project_id: p.id, name: 'one', query: 'dup' })).toThrow(/already exists/);
+    const t1 = createTicket(db, { status: 'todo', project_id: p.id, name: 'one', query: 'do one', priority: 3 });
+    const t2 = createTicket(db, { status: 'todo', project_id: p.id, name: 'two', query: 'do two', priority: 1 });
+    const t3 = createTicket(db, { status: 'todo', project_id: q.id, name: 'one', query: 'other project same name' });
+    expect(() => createTicket(db, { status: 'todo', project_id: p.id, name: 'one', query: 'dup' })).toThrow(/already exists/);
     expect(listTickets(db).map((t) => t.id)).toEqual([t2.id, t1.id, t3.id]);
     expect(listTickets(db, { projectId: q.id }).map((t) => t.id)).toEqual([t3.id]);
     expect(resolveTicket(db, 'two').id).toBe(t2.id);
@@ -78,11 +78,11 @@ describe('tickets', () => {
 
   test('claimNextTicket: paused first, then priority, then age; skips excluded models', () => {
     const p = createProject(db, { name: 'p', path: '/tmp/p', defaultModel: 'opus' });
-    const older = createTicket(db, { project_id: p.id, name: 'older', query: 'x', priority: 2 });
-    const newer = createTicket(db, { project_id: p.id, name: 'newer', query: 'x', priority: 2 });
+    const older = createTicket(db, { status: 'todo', project_id: p.id, name: 'older', query: 'x', priority: 2 });
+    const newer = createTicket(db, { status: 'todo', project_id: p.id, name: 'newer', query: 'x', priority: 2 });
     updateTicket(db, newer.id, { created_at: older.created_at + 10 } as any);
-    const top = createTicket(db, { project_id: p.id, name: 'top', query: 'x', priority: 1, tags: { model: 'sonnet' } });
-    const paused = createTicket(db, { project_id: p.id, name: 'paused', query: 'x', priority: 5 });
+    const top = createTicket(db, { status: 'todo', project_id: p.id, name: 'top', query: 'x', priority: 1, tags: { model: 'sonnet' } });
+    const paused = createTicket(db, { status: 'todo', project_id: p.id, name: 'paused', query: 'x', priority: 5 });
     updateTicket(db, paused.id, { status: 'paused', session_id: 'sess-1' });
 
     // Opus is exhausted: only sonnet tickets are claimable (paused one inherits opus).
@@ -103,7 +103,7 @@ describe('tickets', () => {
 
   test('runs', () => {
     const p = createProject(db, { name: 'p', path: '/tmp/p' });
-    const t = createTicket(db, { project_id: p.id, name: 't', query: 'x' });
+    const t = createTicket(db, { status: 'todo', project_id: p.id, name: 't', query: 'x' });
     const r = createRun(db, t.id, '/tmp/log.jsonl');
     finishRun(db, r.id, { outcome: 'done', turns: 3, cost_usd: 0.05 });
     const l = latestRun(db, t.id)!;
