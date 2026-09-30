@@ -36,6 +36,8 @@ it. It needs git, and a private repo needs you to be logged in (gh auth login or
 Example: salu add project web --clone https://github.com/you/web --path ~/code/web
 
 Workers use ${DEFAULT_MODEL} at effort ${DEFAULT_EFFORT} unless the ticket (model=, effort=) or its project says otherwise.
+--sandbox runs the project's workers in the kernel: their own copy of the code under ~/.salu/kernel,
+with shell commands fenced in by the OS (see salu push / salu export to get the result out).
 Tools: tools=standard|readonly|edit|none|allow:Read,Grep,Bash(git *)[;deny:Bash(rm *)] (default standard).`;
 
 export async function add(p: Parsed): Promise<number> {
@@ -70,6 +72,7 @@ export async function add(p: Parsed): Promise<number> {
       defaultEffort: effort ? validateEffort(effort) : null,
       defaultTools: tools ? validateTools(tools) : null,
       concurrency: flagNum(p, 'concurrency') ?? null,
+      sandbox: flagBool(p, 'sandbox'),
     });
     console.log(`${green('✓')} project ${parent ? `${parent.name}/` : ''}${project.name} ${dim(`→ ${project.path}`)}${project.is_default ? dim(' (default)') : ''}`);
     return 0;

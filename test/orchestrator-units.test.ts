@@ -19,7 +19,7 @@ function tv(over: Partial<TicketView> = {}): TicketView {
     project: 'web', project_path: '/work/web', ...over,
   };
 }
-const proj = (over: Partial<Project> = {}): Project => ({ id: 1, name: 'web', path: '/work/web', is_default: 1, default_model: null, default_effort: null, default_tools: null, concurrency: null, created_at: 0, parent_id: null, ...over });
+const proj = (over: Partial<Project> = {}): Project => ({ id: 1, name: 'web', path: '/work/web', is_default: 1, default_model: null, default_effort: null, default_tools: null, sandbox: 0, concurrency: null, created_at: 0, parent_id: null, ...over });
 
 describe('TICKET: trailer', () => {
   test.each([
