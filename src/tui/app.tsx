@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { render, useAnimation, useApp, useInput, useWindowSize } from 'ink';
+import { Box, render, useAnimation, useApp, useInput, useWindowSize } from 'ink';
 import type { Database } from 'bun:sqlite';
 import type { TicketStatus, TicketView } from '../db/types.ts';
 import { ticketLabels, ticketTags } from '../db/types.ts';
@@ -14,8 +14,12 @@ import { loadDetail, loadSnapshot, snapshotKey, type Snapshot, type TicketDetail
 import { DetailView } from './components/DetailView.tsx';
 import { FormView, type FormValues } from './components/FormView.tsx';
 import { HelpView } from './components/HelpView.tsx';
+import { CommandLine } from './components/CommandLine.tsx';
+import { ResultView } from './components/ResultView.tsx';
 import { ListView, listInnerWidth } from './components/ListView.tsx';
 import type { Message } from './messages.ts';
+import { runCommand } from './command.ts';
+import { complete } from './complete.ts';
 
 export interface AppProps {
   db: Database;
@@ -37,10 +41,10 @@ export interface AppProps {
 
 export type FormResult = { action: 'added' | 'saved'; ticket: TicketView } | { action: 'cancelled' } | null;
 
-type Mode = 'list' | 'detail' | 'form' | 'help';
+type Mode = 'list' | 'detail' | 'form' | 'help' | 'result';
 
-/** Lines around the ticket rows: header, two border lines, footer, plus one spare for the cursor. */
-const CHROME_LINES = 5;
+/** Lines around the ticket rows: header, two border lines, footer, the command line, plus one spare for the cursor. */
+const CHROME_LINES = 6;
 
 function formValuesFor(t: TicketView | null | undefined): FormValues {
   if (!t) return { name: '', query: '', tags: '', priority: '3' };
@@ -82,6 +86,16 @@ export function App(p: AppProps) {
   const [detail, setDetail] = useState<TicketDetail | null>(null);
   const [log, setLog] = useState<LogLine[]>([]);
   const [, setTick] = useState(0);
+
+  // Command line (`:`): same dispatcher as the shell CLI, with history and tab completion.
+  const [cmdEditing, setCmdEditing] = useState(false);
+  const [cmdValue, setCmdValue] = useState('');
+  const [cmdNonce, setCmdNonce] = useState(0);
+  const [cmdBusy, setCmdBusy] = useState(false);
+  const cmdHistory = useRef<string[]>([]);
+  const cmdIdx = useRef(-1);
+  const cmdDraft = useRef('');
+  const [result, setResult] = useState<{ command: string; lines: string[]; ok: boolean; offset: number } | null>(null);
 
   // ----- derived -------------------------------------------------------------------------
   const visible = useMemo(() => applyFilter(snapshot.tickets, filter), [snapshot, filter]);
@@ -247,12 +261,86 @@ export function App(p: AppProps) {
     refresh(true);
   };
 
+  const setCmd = (v: string) => {
+    setCmdValue(v);
+    setCmdNonce((n) => n + 1);
+  };
+
+  const recall = (older: boolean) => {
+    const h = cmdHistory.current;
+    if (!h.length) return;
+    if (older) {
+      if (cmdIdx.current === -1) {
+        cmdDraft.current = cmdValue;
+        cmdIdx.current = h.length - 1;
+      } else cmdIdx.current = Math.max(0, cmdIdx.current - 1);
+    } else {
+      if (cmdIdx.current === -1) return;
+      cmdIdx.current++;
+      if (cmdIdx.current >= h.length) {
+        cmdIdx.current = -1;
+        return setCmd(cmdDraft.current);
+      }
+    }
+    setCmd(h[cmdIdx.current]!);
+  };
+
+  const tabComplete = () => {
+    const r = complete(cmdValue, { projects: snapshot.projects.map((pr) => pr.name), tickets: snapshot.tickets.map((t) => t.name) });
+    if (r.value !== cmdValue) setCmd(r.value);
+    if (r.options.length > 1) say(r.options.slice(0, 12).join('  ') + (r.options.length > 12 ? '  …' : ''), 'info');
+  };
+
+  const execute = async (line: string) => {
+    const text = line.trim();
+    if (!text || cmdBusy) return;
+    cmdHistory.current.push(text);
+    cmdIdx.current = -1;
+    setCmdValue('');
+    setCmdNonce((n) => n + 1);
+    setCmdBusy(true);
+    try {
+      const r = await runCommand(text);
+      if (r.quit) return exit();
+      if (r.openForm) {
+        setCmdEditing(false);
+        return openForm('add');
+      }
+      refresh(true);
+      if (r.lines.length > 1) {
+        setResult({ command: text, lines: r.lines, ok: r.ok, offset: 0 });
+        setMode('result');
+      } else {
+        say(r.lines[0]?.replace(/^[✓✗]\s*/, '').replace(/^error:\s*/, '') || 'done', r.ok ? 'ok' : 'err');
+      }
+    } finally {
+      setCmdBusy(false);
+    }
+  };
+
   // ----- keys ----------------------------------------------------------------------------
   useInput(
     (input, key) => {
       if (mode === 'help') {
         setMode('list');
         return;
+      }
+      if (mode === 'result') {
+        if (key.upArrow || input === 'k') setResult((r) => (r ? { ...r, offset: Math.max(0, r.offset - 1) } : r));
+        else if (key.downArrow || input === 'j') setResult((r) => (r ? { ...r, offset: Math.min(Math.max(0, r.lines.length - rowsAvail), r.offset + 1) } : r));
+        else setMode('list');
+        return;
+      }
+      if (cmdEditing) {
+        if (key.escape || (key.ctrl && input === 'c')) {
+          setCmdEditing(false);
+          setCmd('');
+          cmdIdx.current = -1;
+        } else if (key.return) void execute(cmdValue);
+        else if (key.upArrow) recall(true);
+        else if (key.downArrow) recall(false);
+        else if (key.tab) tabComplete();
+        return; // the TextField consumes the rest
       }
       if (confirm) {
         if (input === 'y' || input === 'Y' || key.return) doDelete(confirm);
@@ -298,6 +386,7 @@ export function App(p: AppProps) {
       }
       if (input === 'a') return openForm('add');
       if (input === '/') return setFilterEditing(true);
+      if (input === ':') return setCmdEditing(true);
       if (key.tab) return cycleScope(key.shift ? -1 : 1);
       if (input === '?') return setMode('help');
       if (key.escape) {
@@ -325,13 +414,17 @@ export function App(p: AppProps) {
       />
     );
   }
+  if (mode === 'result' && result) {
+    return <ResultView columns={columns} rows={rowsAvail} scopeName={scopeName} command={result.command} lines={result.lines} ok={result.ok} offset={result.offset} />;
+  }
   if (mode === 'help') return <HelpView columns={columns} scopeName={scopeName} />;
   if (mode === 'detail' && detail) {
     return (
-      <DetailView columns={columns} rows={rowsAvail + 1} detail={detail} log={log} scopeName={scopeName} now={now} spinner={frame} confirm={confirm} message={message} />
+      <DetailView columns={columns} rows={rowsAvail + 2} detail={detail} log={log} scopeName={scopeName} now={now} spinner={frame} confirm={confirm} message={message} />
     );
   }
   return (
+    <Box flexDirection="column">
     <ListView
       columns={columns}
       rows={rowsAvail}
@@ -355,6 +448,8 @@ export function App(p: AppProps) {
       now={now}
       spinner={frame}
     />
+    <CommandLine columns={columns} focused={cmdEditing} value={cmdValue} onChange={setCmdValue} busy={cmdBusy} nonce={cmdNonce} />
+    </Box>
   );
 }
 

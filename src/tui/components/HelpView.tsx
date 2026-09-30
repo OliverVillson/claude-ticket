@@ -14,6 +14,7 @@ const KEYS: Array<[string, string]> = [
   ['r', 'run the selected ticket next, ahead of the queue'],
   ['p', 'pause or resume the orchestrator'],
   ['/', 'filter as you type: bug  #label  status:running  p1  p<=2  @project  model:opus  -done'],
+  [':', 'command line: any salu command, e.g. add "fix login"  add project web  run  status  (tab completes, ↑↓ history)'],
   ['tab  shift-tab', 'switch project (all projects, then each one)'],
   ['esc', 'clear the filter, close the ticket, or quit'],
   ['q  ctrl-c', 'quit'],
