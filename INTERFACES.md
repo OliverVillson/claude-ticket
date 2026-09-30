@@ -15,7 +15,7 @@ isolated folder in every test (never touch `~/.salu`).
   `updateTicket(id, patch)`, `deleteTicket`, `countTickets`, `claimNextTicket({projectIds, excludeModels})`,
   `effectiveModel`), runs (`createRun`, `finishRun`, `listRuns`, `latestRun`), state (`getState`, `setState`, `getAllState`).
 - Every write that matters to the orchestrator calls `wakeOrchestrator()` (touches `wakeFile()`).
-- Ticket statuses: `todo | running | done | failed | blocked | paused`. Priority 1..5 (1 highest, default 3).
+- Ticket statuses: `backlog | todo | running | done | failed | blocked | paused`. `backlog` = saved, never runs by itself (`createTicket` default; pass `status: 'todo'` to queue on creation); `todo` = queued, the only status (besides `paused`) the orchestrator claims. `queueTicket` / `unqueueTicket` / `queueAll` move between them; `salu queue`, `salu unqueue`, and `salu run` (queues all saved, or the named tickets/project) are the CLI. Priority 1..5 (1 highest, default 3).
   **Priority 0 means "run now"** (set by the TUI's `r` key); never offered in the CLI parser, displayed as `now`.
 - `ticketTags(t)` / `ticketLabels(t)` parse the JSON columns. Tag keys the orchestrator reads:
   `model`, `effort`, `max-turns`, `permission` (`plan|default|acceptEdits|bypass|dontAsk`), `tools` (see `src/core/tools.ts`: presets `standard|readonly|edit|none`, or `allow:A,B(x *);deny:C`; project column `default_tools`, schema v3). Project defaults:

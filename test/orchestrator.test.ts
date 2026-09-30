@@ -10,6 +10,8 @@ import { fakeRunner } from '../src/orchestrator/fake.ts';
 import type { OrchestratorEvent } from '../src/orchestrator/types.ts';
 import { clearPause, getPause } from '../src/usage/index.ts';
 import { readStatus } from '../src/orchestrator/status.ts';
+import { dispatch } from '../src/cli/dispatch.ts';
+import { claimNextTicket, createTicket as rawCreate, queueAll, queueTicket, unqueueTicket } from '../src/db/queries.ts';
 
 let home: string;
 let projPath: string;
@@ -40,7 +42,7 @@ afterEach(() => {
 });
 
 function ticket(name: string, query: string, extra: { tags?: Record<string, string>; priority?: number; projectId?: number } = {}): TicketView {
-  return createTicket(db, { project_id: extra.projectId ?? project.id, name, query, tags: extra.tags, priority: extra.priority });
+  return createTicket(db, { status: 'todo', project_id: extra.projectId ?? project.id, name, query, tags: extra.tags, priority: extra.priority });
 }
 
 function make(o: { concurrency?: number; projectIds?: number[]; exitWhenEmpty?: boolean } = {}) {
@@ -418,5 +420,105 @@ describe('control', () => {
     expect(Date.now() - t0).toBeLessThan(1500);
     orch.stop('test');
     await run;
+  });
+});
+
+describe('saving does not start work', () => {
+  const saved = (name: string, query = 'FAKE:done') => rawCreate(db, { project_id: project.id, name, query });
+
+  test('createTicket saves to the backlog; queue, unqueue and queueAll move it', () => {
+    const a = saved('a');
+    expect(a.status).toBe('backlog');
+    expect(claimNextTicket(db)).toBeNull();
+    expect(queueTicket(db, a.id).status).toBe('todo');
+    expect(unqueueTicket(db, a.id).status).toBe('backlog');
+    saved('b');
+    expect(queueAll(db)).toBe(2);
+    expect(queueAll(db)).toBe(0);
+    expect(claimNextTicket(db)?.status).toBe('running');
+    expect(() => queueTicket(db, claimNextTicket(db)!.id)).toThrow(/already running/);
+    expect(rawCreate(db, { project_id: project.id, name: 'c', query: 'x', status: 'todo' }).status).toBe('todo');
+  });
+
+  test('re-queueing a failed ticket clears error and attempts; unqueue refuses anything but a queued ticket', () => {
+    const t = saved('f');
+    updateTicket(db, t.id, { status: 'failed', attempts: 7, error: 'boom' });
+    const q = queueTicket(db, t.id);
+    expect([q.status, q.attempts, q.error]).toEqual(['todo', 0, null]);
+    updateTicket(db, t.id, { status: 'done' });
+    expect(() => unqueueTicket(db, t.id)).toThrow(/only a queued ticket/);
+  });
+
+  test('a running orchestrator ignores a ticket saved while it idles, and runs it once queued', async () => {
+    const { orch, events } = make({ exitWhenEmpty: false });
+    const run = orch.start();
+    await until(() => events.some((e) => e.type === 'idle'));
+    const t = saved('late');
+    await sleep(700);
+    expect(status(t.id).status).toBe('backlog');
+    expect(listRuns(db, t.id).length).toBe(0);
+    queueTicket(db, t.id);
+    await until(() => status(t.id).status === 'done');
+    orch.stop('test');
+    await run;
+  });
+
+  test('the orchestrator draining its queue leaves backlog tickets alone', async () => {
+    const q = ticket('queued', 'FAKE:done');
+    const b = saved('saved');
+    const { orch } = make();
+    await orch.start();
+    expect(status(q.id).status).toBe('done');
+    expect(status(b.id).status).toBe('backlog');
+  });
+
+  test('CLI: add saves, --queue queues, queue/unqueue move, run starts everything saved', async () => {
+    const quiet = async (...a: string[]) => {
+      const log = console.log;
+      const err = console.error;
+      console.log = () => {};
+      console.error = () => {};
+      try {
+        return await dispatch(a);
+      } finally {
+        console.log = log;
+        console.error = err;
+      }
+    };
+    expect(await quiet('add', 'one', 'FAKE:done', '--project', 'demo')).toBe(0);
+    expect(await quiet('add', 'two', 'FAKE:done', '--project', 'demo', '--queue')).toBe(0);
+    const get = (n: string) => listTickets(db, {}).find((t) => t.name === n)!;
+    expect([get('one').status, get('two').status]).toEqual(['backlog', 'todo']);
+    expect(await quiet('queue', 'one')).toBe(0);
+    expect(get('one').status).toBe('todo');
+    expect(await quiet('unqueue', 'one')).toBe(0);
+    expect(get('one').status).toBe('backlog');
+    expect(await quiet('add', 'three', 'FAKE:done', '--project', 'demo')).toBe(0);
+    // `salu run` keeps waiting for tickets once the queue is empty; stop it like ctrl-c would.
+    const running = quiet('run', '--plain');
+    await until(() => ['one', 'two', 'three'].every((n) => get(n).status === 'done'));
+    process.emit('SIGINT');
+    expect(await running).toBe(0);
+    expect(['one', 'two', 'three'].map((n) => get(n).status)).toEqual(['done', 'done', 'done']);
+  });
+
+  test('CLI: run with a ticket name queues only that ticket', async () => {
+    const a = saved('a');
+    const b = saved('b');
+    const log = console.log;
+    const err = console.error;
+    console.log = () => {};
+    console.error = () => {};
+    try {
+      const running = dispatch(['run', 'a', '--plain']);
+      await until(() => status(a.id).status === 'done');
+      await sleep(300);
+      process.emit('SIGINT');
+      expect(await running).toBe(0);
+    } finally {
+      console.log = log;
+      console.error = err;
+    }
+    expect([status(a.id).status, status(b.id).status]).toEqual(['done', 'backlog']);
   });
 });

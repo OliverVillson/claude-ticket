@@ -7,6 +7,7 @@
  */
 export interface Glyphs {
   /** ticket statuses */
+  backlog: string;
   todo: string;
   running: string;
   paused: string;
@@ -35,6 +36,7 @@ export interface Glyphs {
 }
 
 export const UNICODE_GLYPHS: Glyphs = {
+  backlog: '◌',
   todo: '○',
   running: '●',
   paused: '‖',
@@ -56,6 +58,7 @@ export const UNICODE_GLYPHS: Glyphs = {
 };
 
 export const ASCII_GLYPHS: Glyphs = {
+  backlog: '.',
   todo: 'o',
   running: '*',
   paused: '=',

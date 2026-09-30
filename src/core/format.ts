@@ -21,6 +21,7 @@ export function statusColor(s: TicketStatus | string): (x: string) => string {
 
 export function statusIcon(s: TicketStatus | string): string {
   switch (s) {
+    case 'backlog':
     case 'running':
     case 'done':
     case 'failed':
