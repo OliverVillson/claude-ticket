@@ -14,10 +14,15 @@ Requires [Bun](https://bun.sh) 1.3+ and a logged-in Claude Code (`claude auth st
 
 ```sh
 bun install
-bun link            # puts `ticket` on your PATH (from src/, no build step)
-# or build one binary:
-bun run build       # dist/ticket (code-split: commands start in about 30-40 ms)
+bun run install-cli   # puts `ticket` on your PATH (next to `bun`, in ~/.bun/bin)
+ticket '?'            # quote the ? in zsh
 ```
+
+`install-cli` writes a tiny launcher that runs this checkout, so `git pull` updates it. Options:
+`--binary` (compile `dist/ticket` and install that), `--dir <folder>`, `--force`; `bun run uninstall-cli` removes it.
+If the folder is not on your PATH it prints the `export PATH=...` line to add to `~/.zshrc`.
+
+`bun link` alone is not enough on recent Bun: it only registers the package and never puts `ticket` on PATH.
 
 ## Quick start
 
