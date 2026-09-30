@@ -45,8 +45,12 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-const repo = () => process.env.SALU_REPO || 'OliverVillson/claude-ticket';
-const releasesUrl = () => (process.env.SALU_RELEASES_URL || `https://github.com/${repo()}/releases`).replace(/\/$/, '');
+/** The repository's current name first, then the one it had before the rename (GitHub redirects it, but a repo created under the old name later would not be). */
+const DEFAULT_REPOS = ['OliverVillson/salu', 'OliverVillson/claude-ticket'];
+const repos = () => (process.env.SALU_REPO ? [process.env.SALU_REPO] : DEFAULT_REPOS);
+const repo = () => repos()[0]!;
+const releaseBases = () =>
+  (process.env.SALU_RELEASES_URL ? [process.env.SALU_RELEASES_URL] : repos().map((r) => `https://github.com/${r}/releases`)).map((b) => b.replace(/\/$/, ''));
 
 /** True when this process is a compiled salu binary (not `bun src/index.ts` or a bun-link launcher). */
 export function isCompiledBinary(execPath: string): boolean {
@@ -63,17 +67,24 @@ async function gh(args: string[]): Promise<{ ok: boolean; out: string; err: stri
   }
 }
 
-/** Latest release tag: follow github.com/<repo>/releases/latest's redirect (no API rate limit), else ask gh. */
-async function latestTag(): Promise<{ tag: string; viaGh: boolean }> {
-  try {
-    const res = await fetch(`${releasesUrl()}/latest`, { redirect: 'manual' });
-    const m = /\/tag\/([^/?#]+)/.exec(res.headers.get('location') ?? '');
-    if (m) return { tag: decodeURIComponent(m[1]!), viaGh: false };
-  } catch {
-    /* fall through to gh */
+/**
+ * Latest release tag: follow <releases>/latest's redirects (no API rate limit; this also follows a
+ * repository rename's redirect), else ask gh.
+ */
+async function latestTag(): Promise<{ tag: string; viaGh: boolean; base: string }> {
+  for (const base of releaseBases()) {
+    try {
+      const res = await fetch(`${base}/latest`, { method: 'HEAD', redirect: 'follow' });
+      const m = /\/tag\/([^/?#]+)/.exec(res.url ?? '');
+      if (m) return { tag: decodeURIComponent(m[1]!), viaGh: false, base };
+    } catch {
+      /* try the next name, then gh */
+    }
   }
-  const r = await gh(['release', 'view', '--repo', repo(), '--json', 'tagName', '-q', '.tagName']);
-  if (r.ok && r.out) return { tag: r.out, viaGh: true };
+  for (const r of repos()) {
+    const out = await gh(['release', 'view', '--repo', r, '--json', 'tagName', '-q', '.tagName']);
+    if (out.ok && out.out) return { tag: out.out, viaGh: true, base: releaseBases()[0]! };
+  }
   throw new CliError(
     `could not find a published release of ${repo()}.\n` +
       '  • no release yet? the maintainer needs to push a version tag (git tag v0.1.0 && git push --tags)\n' +
@@ -81,9 +92,21 @@ async function latestTag(): Promise<{ tag: string; viaGh: boolean }> {
   );
 }
 
-async function download(tag: string, asset: string, dest: string, viaGh: boolean): Promise<void> {
+/** The release location that has this asset (a named version skips latestTag). */
+async function baseWith(tag: string, asset: string): Promise<string> {
+  for (const base of releaseBases()) {
+    try {
+      if ((await fetch(`${base}/download/${tag}/${asset}`, { method: 'HEAD', redirect: 'follow' })).ok) return base;
+    } catch {
+      /* next */
+    }
+  }
+  return releaseBases()[0]!;
+}
+
+async function download(base: string, tag: string, asset: string, dest: string, viaGh: boolean): Promise<void> {
   if (!viaGh) {
-    const res = await fetch(`${releasesUrl()}/download/${tag}/${asset}`);
+    const res = await fetch(`${base}/download/${tag}/${asset}`);
     if (res.ok) {
       await Bun.write(dest, res);
       return;
@@ -119,11 +142,13 @@ export async function performUpdate(o: UpdateOptions): Promise<number> {
 
   let tag: string;
   let viaGh = false;
+  let base: string;
   if (o.version) {
     if (!parseVersion(o.version)) throw new CliError(`"${o.version}" is not a version like v0.2.0`);
     tag = o.version.startsWith('v') ? o.version : `v${o.version}`;
+    base = await baseWith(tag, asset);
   } else {
-    ({ tag, viaGh } = await latestTag());
+    ({ tag, viaGh, base } = await latestTag());
   }
 
   const cmp = compareVersions(tag, o.current);
@@ -153,8 +178,8 @@ export async function performUpdate(o: UpdateOptions): Promise<number> {
   };
   try {
     o.log(`downloading ${asset} ${tag}…`);
-    await download(tag, asset, tmp, viaGh);
-    await download(tag, `${asset}.sha256`, `${tmp}.sha256`, viaGh);
+    await download(base, tag, asset, tmp, viaGh);
+    await download(base, tag, `${asset}.sha256`, `${tmp}.sha256`, viaGh);
     const want = (await Bun.file(`${tmp}.sha256`).text()).trim().split(/\s+/)[0];
     const got = await sha256(tmp);
     if (!want || want !== got) throw new CliError(`checksum mismatch for ${asset} (expected ${want || 'none'}, got ${got}); nothing was changed`);

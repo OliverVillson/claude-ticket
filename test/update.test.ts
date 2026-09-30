@@ -23,6 +23,8 @@ beforeAll(() => {
     port: 0,
     fetch(req) {
       const path = new URL(req.url).pathname;
+      if (path === '/renamed/releases/latest') return new Response(null, { status: 301, headers: { location: '/releases/latest' } });
+      if (path === '/renamed/releases/download/v1.0.0/' + ASSET || path.startsWith('/renamed/releases/download/')) return new Response(null, { status: 301, headers: { location: path.replace('/renamed', '') } });
       if (path === '/releases/latest') {
         return hasRelease ? new Response(null, { status: 302, headers: { location: `/releases/tag/${latest}` } }) : new Response('nope', { status: 404 });
       }
@@ -88,6 +90,22 @@ describe('salu update', () => {
     expect(run()).toBe('salu 1.0.0');
     expect(readdirSync(dir)).toEqual(['salu']);
     expect(lines.join('\n')).toContain('0.1.0 → v1.0.0');
+  });
+
+  test('follows a repository rename: the old name redirects to the new one', async () => {
+    const real = process.env.SALU_RELEASES_URL;
+    process.env.SALU_RELEASES_URL = `http://localhost:${server.port}/renamed/releases`;
+    try {
+      latest = 'v1.2.0';
+      expect(await performUpdate(opts({ check: true }))).toBe(0);
+      expect(lines.join('\n')).toContain('v1.2.0');
+      expect(await performUpdate(opts())).toBe(0);
+      expect(run()).toBe('salu 1.2.0');
+      expect(await performUpdate(opts({ version: 'v1.0.0', current: '1.2.0' }))).toBe(0); // pinned, through the redirect too
+      expect(run()).toBe('salu 1.0.0');
+    } finally {
+      process.env.SALU_RELEASES_URL = real;
+    }
   });
 
   test('says so when already up to date and changes nothing', async () => {

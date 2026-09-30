@@ -16,7 +16,7 @@ single prebuilt binary, checks its SHA-256, puts `salu` in `~/.local/bin`, adds 
 shell's PATH if it is missing, and tells you how to start.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/OliverVillson/claude-ticket/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/OliverVillson/salu/main/scripts/install.sh | bash
 ```
 
 Workers run through a logged-in Claude Code (`claude auth status`).
