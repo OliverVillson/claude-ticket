@@ -10,6 +10,7 @@ import type { Database } from 'bun:sqlite';
 import { statSync, watch, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
 import { recordRemoteEvent } from '../sync/events.ts';
+import { isRemoteOut } from '../sync/store.ts';
 import { addTurn, claimNextTicket, createRun, listTurns, markFollowUpsDelivered, pendingFollowUps, finishRun, getProjectById, getState, inheritedProject, getTicketById, listProjects, listTickets, setState, updateTicket, type TicketPatch } from '../db/queries.ts';
 import { STATE, type Run, type TicketStatus, type TicketView } from '../db/types.ts';
 import { CliError } from '../core/errors.ts';
@@ -463,7 +464,8 @@ export class Orchestrator {
   }
 
   private queuedCount(): number {
-    const rows = listTickets(this.db, { status: ['todo', 'paused'] });
+    // Tickets sent to a box (salu remote) only show as queued here; this machine never runs them.
+    const rows = listTickets(this.db, { status: ['todo', 'paused'] }).filter((r) => !isRemoteOut(this.db, r.id));
     return this.opts.projectIds ? rows.filter((r) => this.opts.projectIds!.includes(r.project_id)).length : rows.length;
   }
 

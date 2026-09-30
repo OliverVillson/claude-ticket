@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { dbPath, ensureHome } from '../core/paths.ts';
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 6;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -68,42 +68,12 @@ export function openDb(path?: string): Database {
   return db;
 }
 
-function migrate(db: Database) {
-  const row = db.query<{ user_version: number }, []>('PRAGMA user_version;').get();
-  const version = row?.user_version ?? 0;
-  if (version < 1) {
-    db.exec(SCHEMA);
-  }
-  if (version < 2) {
-    // Subprojects: existing projects stay top level (parent_id NULL). Deleting a parent deletes its subtree.
-    db.exec('ALTER TABLE projects ADD COLUMN parent_id INTEGER REFERENCES projects(id) ON DELETE CASCADE;');
-    db.exec('CREATE INDEX IF NOT EXISTS projects_parent ON projects(parent_id);');
-  }
-  if (version < 3) {
-    db.exec('ALTER TABLE projects ADD COLUMN default_tools TEXT;');
-  }
-  if (version < 4) {
-    // Tool uses the worker was refused (JSON array), so a blocked ticket can say what permission it needs.
-    db.exec('ALTER TABLE tickets ADD COLUMN denied TEXT;');
-  }
-  if (version < 5) {
-    // Opt-in kernel sandbox per project (0 = off, 1 = on).
-    db.exec('ALTER TABLE projects ADD COLUMN sandbox INTEGER NOT NULL DEFAULT 0;');
-  }
-  if (version < 6) {
-    // The conversation on a ticket after its first prompt: your follow-ups and the worker's replies.
-    db.exec(`CREATE TABLE IF NOT EXISTS turns (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
-      role TEXT NOT NULL,
-      body TEXT NOT NULL,
-      delivered INTEGER NOT NULL DEFAULT 1,
-      created_at INTEGER NOT NULL
-    );`);
-    db.exec('CREATE INDEX IF NOT EXISTS turns_ticket ON turns(ticket_id, id);');
-  }
-  if (version < 7) {
-    // Git sync transport: a project's remote, the tickets that cross it, and the orchestrator's messages.
+/**
+ * Git sync tables. Idempotent and not tied to a schema version, so the numbering of migrations that
+ * other changes add at the same time cannot skip them.
+ */
+function ensureSyncTables(db: Database) {
+  // Git sync transport: a project's remote, the tickets that cross it, and the orchestrator's messages.
     db.exec(`
       CREATE TABLE IF NOT EXISTS remotes (
         project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
@@ -144,8 +114,44 @@ function migrate(db: Database) {
         PRIMARY KEY (project_id, id)
       );
     `);
+}
+
+function migrate(db: Database) {
+  const row = db.query<{ user_version: number }, []>('PRAGMA user_version;').get();
+  const version = row?.user_version ?? 0;
+  if (version < 1) {
+    db.exec(SCHEMA);
   }
-  if (version < SCHEMA_VERSION) db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
+  if (version < 2) {
+    // Subprojects: existing projects stay top level (parent_id NULL). Deleting a parent deletes its subtree.
+    db.exec('ALTER TABLE projects ADD COLUMN parent_id INTEGER REFERENCES projects(id) ON DELETE CASCADE;');
+    db.exec('CREATE INDEX IF NOT EXISTS projects_parent ON projects(parent_id);');
+  }
+  if (version < 3) {
+    db.exec('ALTER TABLE projects ADD COLUMN default_tools TEXT;');
+  }
+  if (version < 4) {
+    // Tool uses the worker was refused (JSON array), so a blocked ticket can say what permission it needs.
+    db.exec('ALTER TABLE tickets ADD COLUMN denied TEXT;');
+  }
+  if (version < 5) {
+    // Opt-in kernel sandbox per project (0 = off, 1 = on).
+    db.exec('ALTER TABLE projects ADD COLUMN sandbox INTEGER NOT NULL DEFAULT 0;');
+  }
+  if (version < 6) {
+    // The conversation on a ticket after its first prompt: your follow-ups and the worker's replies.
+    db.exec(`CREATE TABLE IF NOT EXISTS turns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+      role TEXT NOT NULL,
+      body TEXT NOT NULL,
+      delivered INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL
+    );`);
+    db.exec('CREATE INDEX IF NOT EXISTS turns_ticket ON turns(ticket_id, id);');
+  }
+  ensureSyncTables(db);
+  if (version < SCHEMA_VERSION)  if (version < SCHEMA_VERSION) db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
 }
 
 export function closeDb() {
