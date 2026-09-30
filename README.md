@@ -138,6 +138,26 @@ Not covered: the OS sandbox fences shell commands; the file tools are fenced by 
 Anything an agent can read inside the kernel can be sent to any site it can reach. Linux needs
 `sudo apt-get install bubblewrap socat`. `SALU_SANDBOX=off` switches it off everywhere.
 
+## The runner (an always-on Linux box)
+
+Write a ticket, go do something else: on a rented Linux VPS salu runs one orchestrator per project under
+systemd, each with its own data folder (`/var/lib/salu/<project>`: database, log, kernel). A crash or a
+reboot brings every orchestrator back; tickets a dead run left `running` go back to the queue and resume
+their Claude session. Runner projects have the sandbox on by default.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/OliverVillson/salu/main/scripts/install-runner.sh | sudo bash
+sudo -iu salu            # once: run `claude`, then /login   (skip with --auth api-key below)
+sudo salu runner add web --clone https://github.com/you/web
+salu runner list         # service state and ticket counts per project
+salu runner logs web -f
+```
+
+`--auth subscription` (default, the box's Claude login) or `--auth api-key --api-key-file <file>`: the key
+is stored only in `/etc/salu/<project>.env` (root-readable). Check Anthropic's terms for unattended use of
+a subscription login before relying on it. `salu runner --help` lists `setup`, `start|stop|restart`,
+`remove [--purge]` and `doctor`. `salu run --no-queue` is what the service runs: start, but never queue the backlog.
+
 ## Interactive list (demo: `bun run src/tui/demo.ts`)
 
 | Key | Action |

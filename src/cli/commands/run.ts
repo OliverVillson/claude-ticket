@@ -9,13 +9,14 @@ import { CliError } from '../../core/errors.ts';
 import { helpIf, isTTY } from './_shared.ts';
 import { applyAuthPolicy } from '../../core/env.ts';
 
-const HELP = `salu run [project|"name"...] [--concurrency N] [--detach] [--plain]
+const HELP = `salu run [project|"name"...] [--concurrency N] [--detach] [--plain] [--no-queue]
 
 Queues every saved ticket (backlog), or only the tickets you name, or those in the project you name,
 then starts the orchestrator. Adding a ticket never starts anything by itself. The orchestrator: claims tickets by priority then age, runs each as its own Claude
 Code session (up to the concurrency cap, default 2), pauses on a rate limit and resumes
 when the window resets. Foreground by default with a live view; --plain logs lines
-instead; --detach runs it in the background (salu stop ends it).`;
+instead; --detach runs it in the background (salu stop ends it). --no-queue starts the orchestrator
+without queueing anything (what the always-on runner uses, so a restart never queues the backlog).`;
 
 export async function run(p: Parsed): Promise<number> {
   if (helpIf(p, HELP)) return 0;
@@ -47,7 +48,9 @@ export async function run(p: Parsed): Promise<number> {
   }
   const scope = project ? subtreeIds(db, project.id) : undefined;
   let queued = 0;
-  if (tickets.length) {
+  if (flagBool(p, 'no-queue')) {
+    /* start only what is already queued */
+  } else if (tickets.length) {
     for (const id of tickets) {
       const t = getTicketById(db, id);
       if (t && t.status !== 'running' && t.status !== 'paused') {
