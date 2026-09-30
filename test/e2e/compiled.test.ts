@@ -47,7 +47,7 @@ maybe('compiled salu binary', () => {
     expect(r.err).toContain('could not find Claude Code');
     expect(r.err).not.toContain('Native CLI binary');
     const t = (await tickets(e))[0];
-    expect(t.status).toBe('todo');
+    expect(t.status).toBe('backlog');
     expect(t.attempts).toBe(0);
   });
 
