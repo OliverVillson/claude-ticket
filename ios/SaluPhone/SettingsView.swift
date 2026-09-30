@@ -56,6 +56,20 @@ struct SettingsView: View {
                 .listRowBackground(Salu.surface)
 
                 Section {
+                    SecureField("", text: $store.signingKey, prompt: Text("off").foregroundStyle(Salu.chrome))
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    Button("Paste key") {
+                        if let s = UIPasteboard.general.string { store.signingKey = s.trimmed }
+                    }
+                } header: {
+                    label("signing key (optional)")
+                } footer: {
+                    note("The same secret as SALU_REMOTE_KEY on your computer and the box. With it, the phone signs what it sends and ignores messages without a valid signature. Leave it empty if the box doesn't use one. It stays in the iOS Keychain, on this phone only.")
+                }
+                .listRowBackground(Salu.surface)
+
+                Section {
                     Button {
                         Task {
                             checking = true
@@ -114,6 +128,7 @@ struct SettingsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .onChange(of: store.repo) { check = nil }
             .onChange(of: store.token) { check = nil }
+            .onChange(of: store.signingKey) { check = nil }
         }
     }
 

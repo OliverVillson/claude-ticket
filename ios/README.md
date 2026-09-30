@@ -27,7 +27,10 @@ After pulling new Swift files, run `xcodegen generate` again so Xcode sees them.
   "Jump the queue" is `--now`. The ticket shows as "sent" until the box answers; the draft is kept per ticket.
 - **New ticket** (the green button at the bottom): type what it should do; the name comes from the first words unless
   you give one. Run now or backlog, priority p1 to p5. The draft is kept if you close the sheet.
-- **Settings**: repo (owner/name or a pasted github.com link), project, token, and Test connection.
+- **Settings**: repo (owner/name or a pasted github.com link), project, token, an optional signing key, and Test
+  connection. The signing key is `SALU_REMOTE_KEY` from the computer and the box: with it the phone signs every ticket
+  and reply (`sig`, HMAC-SHA256 of the canonical JSON, `Signing.swift` = `signFile` in format.ts) and ignores
+  messages without a valid signature. Like the CLI it skips inbox files over 64 KB and anything that isn't a file.
 
 Look: `Theme.swift` holds the palette from `src/ui/theme.ts` and the TUI glyphs; `Dog.swift` draws the TUI's dog
 sprites (`src/tui/dog/sprites.ts`).

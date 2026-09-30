@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 enum SaluError: LocalizedError {
@@ -24,7 +25,9 @@ struct GitHubClient {
     let owner: String
     let repo: String
     let token: String
+    var key: SymmetricKey? = nil  // inbox signing, when set
     static let branch = "salu/inbox"
+    static let maxFileBytes = 64 * 1024  // MAX_FILE_BYTES in format.ts
 
     /// `owner/name` from what someone typed or pasted: `owner/name`, a github.com URL, or an ssh remote.
     static func parseRepo(_ text: String) -> (owner: String, repo: String)? {
@@ -58,35 +61,44 @@ struct GitHubClient {
         return data
     }
 
-    private struct Entry: Decodable { let name: String; let path: String }
+    private struct Entry: Decodable { let name: String; let path: String; let type: String; let size: Int }
     private struct FileBody: Decodable { let content: String }
 
-    /// Newest first. Files are write-once, so `known` ids never need fetching again.
-    func messages(known: [String: SaluMessage]) async throws -> [SaluMessage] {
+    /// Newest first. Files are write-once, so `known` ids never need fetching again, and `rejected` ones
+    /// (unsigned or badly signed while a key is set) are not fetched again either; the second value
+    /// is the updated rejected set.
+    func messages(known: [String: SaluMessage], rejected: Set<String>) async throws -> ([SaluMessage], Set<String>) {
         let listing: [Entry]
         do {
             listing = try JSONDecoder().decode([Entry].self, from: try await request("contents/salu-inbox/messages?ref=\(Self.branch)"))
         } catch SaluError.http(404, _) {
-            return []  // the box has not sent anything yet
+            return ([], rejected)  // the box has not sent anything yet
         }
         var out: [SaluMessage] = []
+        var bad = rejected
         var seen = Set<String>()  // a file's id comes from its content: never list one twice
-        for e in listing where e.name.hasSuffix(".json") {
+        // like the CLI: only regular files, never symlinks, nothing over 64 KB
+        for e in listing where e.name.hasSuffix(".json") && e.type == "file" && e.size <= Self.maxFileBytes {
             let id = String(e.name.dropLast(5))
             if let m = known[id] {
                 if seen.insert(m.id).inserted { out.append(m) }
                 continue
             }
+            if bad.contains(id) { continue }
             let path = e.path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""  // a name from the remote: keep ? and # out of the URL
             let f = try JSONDecoder().decode(FileBody.self, from: try await request("contents/\(path)?ref=\(Self.branch)"))
             let raw = Data(base64Encoded: f.content.replacingOccurrences(of: "\n", with: "")) ?? Data()
+            guard raw.count <= Self.maxFileBytes, Signing.verify(raw, key: key) else {
+                bad.insert(id)
+                continue
+            }
             if let m = try? JSONDecoder().decode(SaluMessage.self, from: raw), m.v == 1, seen.insert(m.id).inserted { out.append(m) }
         }
-        return out.sorted { $0.id > $1.id }
+        return (out.sorted { $0.id > $1.id }, bad)
     }
 
     func send(_ t: SaluTicket) async throws {
-        let json = try JSONEncoder().encode(t)
+        let json = try Signing.encode(t, key: key)
         let payload: [String: Any] = [
             "message": "salu ticket \(t.id)",
             "content": json.base64EncodedString(),
@@ -96,7 +108,7 @@ struct GitHubClient {
     }
 
     func send(_ r: SaluReply) async throws {
-        let json = try JSONEncoder().encode(r)
+        let json = try Signing.encode(r, key: key)
         let payload: [String: Any] = [
             "message": "salu reply \(r.id)",
             "content": json.base64EncodedString(),

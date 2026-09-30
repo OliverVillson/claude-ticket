@@ -10,6 +10,14 @@ final class Store: ObservableObject {
     @Published var project: String { didSet { defaults.set(project, forKey: "project") } }
     /// fine-grained GitHub token, kept in the Keychain
     @Published var token: String { didSet { Keychain.set(token, for: "github-token") } }
+    /// SALU_REMOTE_KEY of the computer and the box, when the inbox is signed. Kept in the Keychain.
+    @Published var signingKey: String {
+        didSet {
+            Keychain.set(signingKey.trimmed, for: "remote-key")
+            messages = []  // what was accepted under the old key is checked again
+            rejected = []
+        }
+    }
 
     @Published private(set) var read: Set<String> { didSet { defaults.set(Array(read), forKey: "readIds") } }
     /// Tickets this phone sent, newest first.
@@ -20,6 +28,8 @@ final class Store: ObservableObject {
     @Published var replyDrafts: [String: String] { didSet { defaults.set(replyDrafts, forKey: "replyDrafts") } }
 
     @Published var messages: [SaluMessage] = []
+    /// Message ids whose signature failed: not fetched again, counted in the inbox.
+    @Published private(set) var rejected: Set<String> = []
     @Published var error: String?
     @Published var loading = false
     @Published var lastSync: Date?
@@ -41,6 +51,7 @@ final class Store: ObservableObject {
             defaults.set(true, forKey: "keychainThisDeviceOnly")
         }
         token = t
+        signingKey = Keychain.get("remote-key") ?? ""
 
         var ids = Set(defaults.stringArray(forKey: "readIds") ?? [])
         if let old = defaults.string(forKey: "read") {
@@ -66,7 +77,7 @@ final class Store: ObservableObject {
 
     private var client: GitHubClient? {
         guard let r = GitHubClient.parseRepo(repo), !token.isEmpty else { return nil }
-        return GitHubClient(owner: r.owner, repo: r.repo, token: token)
+        return GitHubClient(owner: r.owner, repo: r.repo, token: token, key: Signing.key(signingKey))
     }
     private var repoKey: String { GitHubClient.parseRepo(repo).map { "\($0.owner)/\($0.repo)".lowercased() } ?? "" }
 
@@ -98,10 +109,13 @@ final class Store: ObservableObject {
         guard !loading else { return }
         loading = true
         defer { loading = false }
+        let keyAtStart = signingKey
         do {
             let known = Dictionary(messages.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-            let fresh = try await c.messages(known: known)
+            let (fresh, bad) = try await c.messages(known: known, rejected: rejected)
+            guard signingKey == keyAtStart else { return }  // checked under a key that has since changed
             if fresh != messages { messages = fresh }
+            if bad != rejected { rejected = bad }
             lastSync = Date()
             error = nil
         } catch {

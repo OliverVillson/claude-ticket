@@ -47,6 +47,9 @@ struct InboxView: View {
                     if let e = store.error {
                         Banner(glyph: "✗", text: e, color: Salu.error).bareRow()
                     }
+                    if !store.rejected.isEmpty {
+                        Banner(glyph: "!", text: rejectedText, color: Salu.warn).bareRow()
+                    }
                     if let p = store.pause {
                         Banner(glyph: "‖", text: pauseText(p), color: Salu.paused).bareRow()
                     }
@@ -102,6 +105,11 @@ struct InboxView: View {
             }
             .saluDestinations()
         }
+    }
+
+    private var rejectedText: String {
+        let n = store.rejected.count
+        return "\(n) message\(n == 1 ? "" : "s") ignored: no valid signature. Check that the signing key in Settings matches SALU_REMOTE_KEY on the box."
     }
 
     private func readButton(_ m: SaluMessage) -> some View {
