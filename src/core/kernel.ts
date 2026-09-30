@@ -186,14 +186,14 @@ export function fileToolGuard(dir: string, o: { home?: string; tmp?: string } = 
     }
     for (const raw of paths) {
       const real = canon(raw, kernel, home);
-      // A hard link is another name for the same file, which may live outside the kernel (`ln ~/.ssh/id_rsa here`).
-      if (multiplyLinked(real) && !within(real, join(kernel, '.git', 'objects'))) return `${tool} refused: ${real} has several hard links, so it may be the same file as one outside the kernel`;
       if (writes) {
         const ok = within(real, kernel) ? !protectedInKernel(real.slice(kernel.length + 1)) : tmps.some((t) => within(real, t));
         if (!ok) return `${tool} may only change files inside the kernel folder ${kernel} (not ${real})`;
       } else if (!readable.some((r) => within(real, r)) && !toolResult(real, home)) {
         return `${tool} may only read inside the kernel folder ${kernel} (not ${real})`;
       }
+      // A hard link is another name for the same file, which may live outside the kernel (`ln ~/.ssh/id_rsa here`).
+      if (multiplyLinked(real) && !within(real, join(kernel, '.git', 'objects'))) return `${tool} refused: ${real} has several hard links, so it may be the same file as one outside the kernel`;
     }
     return null;
   };
