@@ -6,6 +6,7 @@ import { resolveProject } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
 import { dim, green, red } from '../../core/ansi.ts';
 import { insideWorker, originUrl } from '../../core/kernel.ts';
+import { unsignedWarning } from '../../sync/format.ts';
 import { checkRemote } from '../../sync/git.ts';
 import { getRemote, listRemotes, pendingMessages, pendingOutReplies, pendingOutTickets, removeRemote, setRemote, unreadCount } from '../../sync/store.ts';
 import { boxName, syncAll, syncProject, type SyncSummary } from '../../sync/sync.ts';
@@ -45,6 +46,11 @@ function describe(s: SyncSummary): string {
   return bits.length ? bits.join(', ') : 'nothing new';
 }
 
+const warnUnsigned = () => {
+  const w = unsignedWarning();
+  if (w) console.error(`${red('!')} ${w}`);
+};
+
 export async function remote(p: Parsed): Promise<number> {
   if (helpIf(p, HELP)) return 0;
   if (insideWorker()) throw new CliError('salu remote is for you, not for agents.');
@@ -65,6 +71,7 @@ export async function remote(p: Parsed): Promise<number> {
       setRemote(db, { project_id: project.id, url, role, name: flagStr(p, 'name') ?? (role === 'box' ? boxName() : '') });
       console.log(`${green('✓')} ${project.name} ${dim(`→ ${url}`)} ${dim(role === 'box' ? '(this machine runs its tickets)' : '(tickets you add are sent to the box)')}`);
       if (role === 'box') console.log(dim('  keep it in sync with: salu remote sync --watch'));
+      warnUnsigned();
       return 0;
     }
     case 'list':
@@ -102,6 +109,7 @@ export async function remote(p: Parsed): Promise<number> {
     case 'sync': {
       const only = rest[0] ? [resolveProject(db, rest[0]).id] : undefined;
       if (!listRemotes(db).length) throw new CliError('no remotes yet. Try: salu remote add <project> [git-url] [--box]');
+      warnUnsigned();
       const once = (): boolean => {
         let bad = false;
         for (const r of syncAll(db, only)) {

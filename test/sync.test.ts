@@ -7,7 +7,7 @@ import { addTurn, listTurns, replyToTicket, claimNextTicket, createProject, crea
 import { addRemoteTicket, enqueueMessage, listNotifications, markRead, setRemote, unreadCount } from '../src/sync/store.ts';
 import { publishReply, publishTicket, syncProject } from '../src/sync/sync.ts';
 import { recordRemoteEvent } from '../src/sync/events.ts';
-import { signFile, stripControl, parseReplyFile, parseMessageFile, parseTicketFile, newId } from '../src/sync/format.ts';
+import { unsignedWarning, signFile, stripControl, parseReplyFile, parseMessageFile, parseTicketFile, newId } from '../src/sync/format.ts';
 import { git } from '../src/sync/git.ts';
 
 let root: string;
@@ -253,6 +253,25 @@ describe('untrusted remote', () => {
     enqueueMessage(box.db, box.project.id, 'web', 'box', { type: 'note', level: 'info', title: 'hello' });
     expect(() => sync(box)).toThrow(/not safe|outside/);
     expect(existsSync(outside) && Bun.spawnSync(['ls', outside]).stdout.toString().trim()).toBe('');
+  });
+
+  test('a symlinked top folder or a planted link at the file path is never written through', () => {
+    const outside = join(root, 'outside2');
+    mkdirSync(outside);
+    const evil = join(root, 'evil3');
+    git(root, ['init', '-q', evil]);
+    symlinkSync(outside, join(evil, 'salu-inbox'));
+    git(evil, ['add', '-A']);
+    git(evil, ['-c', 'user.name=x', '-c', 'user.email=x@x', 'commit', '-qm', 'evil']);
+    git(evil, ['push', '-q', '-f', bare, 'HEAD:refs/heads/salu/inbox']);
+    enqueueMessage(box.db, box.project.id, 'web', 'box', { type: 'note', level: 'info', title: 'hello' });
+    expect(() => sync(box)).toThrow(/not safe|outside/);
+    expect(Bun.spawnSync(['ls', outside]).stdout.toString().trim()).toBe('');
+  });
+
+  test('unsignedWarning is loud without a key and silent with one', () => {
+    expect(unsignedWarning({})).toContain('NOT authenticated');
+    expect(unsignedWarning({ SALU_REMOTE_KEY: 'k' })).toBeNull();
   });
 
   test('tags that burn quota are stripped unless the box owner allows them', () => {

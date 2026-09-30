@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, lstatSync, unlinkSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { CliError } from '../core/errors.ts';
 import { folderSlug } from '../core/resolve.ts';
@@ -91,7 +91,17 @@ export function exchange(dir: string, url: string, files: Record<string, string>
       const p = join(dir, name);
       if (existsSync(p) || lstatOrNull(p)) continue;
       assertInside(dir, dirname(p));
-      writeFileSync(p, text, { flag: 'wx' });
+      // Write to a temp name in the verified folder, then rename: never onto an existing file or link.
+      const tmp = join(dirname(p), `.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`);
+      writeFileSync(tmp, text, { flag: 'wx' });
+      try {
+        linkSync(tmp, p); // fails if p exists (even as a dangling link), unlike rename
+      } catch (e: any) {
+        if (e?.code !== 'EPERM' && e?.code !== 'ENOTSUP' && e?.code !== 'EXDEV') throw e;
+        writeFileSync(p, text, { flag: 'wx' }); // a file system without hard links
+      } finally {
+        unlinkSync(tmp);
+      }
       added.push(name);
     }
     if (!added.length) return { added };

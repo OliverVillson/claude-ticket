@@ -108,6 +108,12 @@ export function remoteKey(env: NodeJS.ProcessEnv = process.env): string | null {
   return env.SALU_REMOTE_KEY?.trim() || null;
 }
 
+/** The loud warning for a box or client that syncs without SALU_REMOTE_KEY (null when a key is set). */
+export function unsignedWarning(env: NodeJS.ProcessEnv = process.env): string | null {
+  if (remoteKey(env)) return null;
+  return 'SALU_REMOTE_KEY is not set: the inbox is NOT authenticated, so anyone who can push to the git remote can send this box tickets and forge its messages. Set the same secret on your computer and the box (share it outside git), and use a private repository.';
+}
+
 function canonical(v: unknown): string {
   if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`;
   if (v && typeof v === 'object') {
