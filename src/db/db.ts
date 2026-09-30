@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { dbPath, ensureHome } from '../core/paths.ts';
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -78,6 +78,9 @@ function migrate(db: Database) {
     // Subprojects: existing projects stay top level (parent_id NULL). Deleting a parent deletes its subtree.
     db.exec('ALTER TABLE projects ADD COLUMN parent_id INTEGER REFERENCES projects(id) ON DELETE CASCADE;');
     db.exec('CREATE INDEX IF NOT EXISTS projects_parent ON projects(parent_id);');
+  }
+  if (version < 3) {
+    db.exec('ALTER TABLE projects ADD COLUMN default_tools TEXT;');
   }
   if (version < SCHEMA_VERSION) db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
 }

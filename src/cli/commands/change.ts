@@ -5,6 +5,7 @@ import { flagBool, flagNum, flagStr } from '../args.ts';
 import { openDb } from '../../db/db.ts';
 import { moveProject, setDefaultProject, updateProject, updateTicket, type TicketPatch } from '../../db/queries.ts';
 import { TICKET_STATUSES, type TicketStatus } from '../../db/types.ts';
+import { validateTools } from '../../core/tools.ts';
 import { parseTags, validateEffort, validateModel, validatePriority } from '../../core/tags.ts';
 import { resolveProjectRef, resolveProject, resolveTicket } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
@@ -12,7 +13,7 @@ import { dim, green } from '../../core/ansi.ts';
 import { helpIf, isTTY } from './_shared.ts';
 
 const HELP = `salu change "name" [--name N] [--query Q] [--tags T] [--priority P] [--status S] [--project P] [--id N]
-salu change project "name" [--in parent|none] [--name N] [--path P] [--model M] [--effort E] [--concurrency N] [--default]
+salu change project "name" [--in parent|none] [--name N] [--path P] [--model M] [--effort E] [--tools T] [--concurrency N] [--default]
 
 Edits one or more fields. --tags replaces the whole tag string. With no flags the ticket
 opens in an inline editor. --status todo re-queues a done, failed or blocked ticket.`;
@@ -42,6 +43,8 @@ export async function change(p: Parsed): Promise<number> {
     if (model !== undefined) patch.default_model = model ? validateModel(model) : null;
     const effort = flagStr(p, 'effort');
     if (effort !== undefined) patch.default_effort = effort ? validateEffort(effort) : null;
+    const tools = flagStr(p, 'tools');
+    if (tools !== undefined) patch.default_tools = tools ? validateTools(tools) : null;
     const conc = flagStr(p, 'concurrency');
     if (conc !== undefined) patch.concurrency = conc ? flagNum(p, 'concurrency')! : null;
     updateProject(db, project.id, patch);

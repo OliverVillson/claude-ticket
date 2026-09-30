@@ -4,13 +4,14 @@ import type { Parsed } from '../args.ts';
 import { flagBool, flagNum, flagStr } from '../args.ts';
 import { openDb } from '../../db/db.ts';
 import { createProject, createTicket } from '../../db/queries.ts';
+import { validateTools } from '../../core/tools.ts';
 import { DEFAULT_EFFORT, DEFAULT_MODEL, parseTags, validateEffort, validateModel, validatePriority } from '../../core/tags.ts';
 import { ensureProjectChain, folderSlug, projectForNewTicket, resolveProjectRef } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
 import { dim, green } from '../../core/ansi.ts';
 import { helpIf } from './_shared.ts';
 
-const HELP = `salu add project "name" [path] [--in parent] [--model M] [--effort E] [--concurrency N] [--default]
+const HELP = `salu add project "name" [path] [--in parent] [--model M] [--effort E] [--tools T] [--concurrency N] [--default]
 salu add "name" "query" ["tags"] [--project P] [--priority N] [--tags T]
 
 Adds a ticket. "query" is optional: when left out, the name is the instruction.
@@ -24,7 +25,8 @@ tickets also show up in every project above it. With no path it uses the current
 a git repository, otherwise a new folder "./<name>" (created for you). Workers run inside the
 project folder, so everything they write lands there.
 
-Workers use ${DEFAULT_MODEL} at effort ${DEFAULT_EFFORT} unless the ticket (model=, effort=) or its project says otherwise.`;
+Workers use ${DEFAULT_MODEL} at effort ${DEFAULT_EFFORT} unless the ticket (model=, effort=) or its project says otherwise.
+Tools: tools=standard|readonly|edit|none|allow:Read,Grep,Bash(git *)[;deny:Bash(rm *)] (default standard).`;
 
 export async function add(p: Parsed): Promise<number> {
   if (helpIf(p, HELP)) return 0;
@@ -43,6 +45,7 @@ export async function add(p: Parsed): Promise<number> {
     if (!existsSync(path)) mkdirSync(path, { recursive: true });
     const model = flagStr(p, 'model');
     const effort = flagStr(p, 'effort');
+    const tools = flagStr(p, 'tools');
     const project = createProject(db, {
       name,
       path,
@@ -50,6 +53,7 @@ export async function add(p: Parsed): Promise<number> {
       isDefault: flagBool(p, 'default'),
       defaultModel: model ? validateModel(model) : null,
       defaultEffort: effort ? validateEffort(effort) : null,
+      defaultTools: tools ? validateTools(tools) : null,
       concurrency: flagNum(p, 'concurrency') ?? null,
     });
     console.log(`${green('✓')} project ${parent ? `${parent.name}/` : ''}${project.name} ${dim(`→ ${project.path}`)}${project.is_default ? dim(' (default)') : ''}`);

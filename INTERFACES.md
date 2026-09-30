@@ -18,7 +18,7 @@ isolated folder in every test (never touch `~/.salu`).
 - Ticket statuses: `todo | running | done | failed | blocked | paused`. Priority 1..5 (1 highest, default 3).
   **Priority 0 means "run now"** (set by the TUI's `r` key); never offered in the CLI parser, displayed as `now`.
 - `ticketTags(t)` / `ticketLabels(t)` parse the JSON columns. Tag keys the orchestrator reads:
-  `model`, `effort`, `max-turns`, `permission` (`plan|default|acceptEdits|bypass|dontAsk`). Project defaults:
+  `model`, `effort`, `max-turns`, `permission` (`plan|default|acceptEdits|bypass|dontAsk`), `tools` (see `src/core/tools.ts`: presets `standard|readonly|edit|none`, or `allow:A,B(x *);deny:C`; project column `default_tools`, schema v3). Project defaults:
   `project.default_model`, `project.default_effort`, `project.concurrency`.
 - Orchestrator state (`src/orchestrator/status.ts`): `readStatus(db)` → `{alive, pid, heartbeat, startedAt, paused, workers, concurrency}`;
   `setPause / clearPause`; `writeWorkerInfo / clearWorkerInfo / clearAllWorkerInfo` (live per-worker rows under `worker:<ticketId>`).

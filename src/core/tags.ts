@@ -1,4 +1,5 @@
 import { CliError } from './errors.ts';
+import { validateTools } from './tools.ts';
 
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type Effort = (typeof EFFORTS)[number];
@@ -13,7 +14,7 @@ export const DEFAULT_EFFORT = 'medium';
 export const MODEL_ALIASES = ['opus', 'sonnet', 'haiku'] as const;
 
 /** Tag keys the orchestrator reads. Anything else with `key=value` is kept as a custom tag. */
-export const KNOWN_KEYS = ['project', 'model', 'effort', 'priority', 'max-turns', 'permission'] as const;
+export const KNOWN_KEYS = ['project', 'model', 'effort', 'priority', 'max-turns', 'permission', 'tools'] as const;
 
 export interface ParsedTags {
   /** key=value pairs (without project and priority, which are their own fields) */
@@ -32,6 +33,7 @@ export function tokenize(input: string): string[] {
   let cur = '';
   let quote: string | null = null;
   let has = false;
+  let depth = 0; // inside (...) nothing splits: tools=allow:Bash(git *)
   for (let i = 0; i < input.length; i++) {
     const ch = input[i]!;
     if (quote) {
@@ -44,7 +46,11 @@ export function tokenize(input: string): string[] {
       has = true;
       continue;
     }
-    if (/\s/.test(ch) || ch === ',') {
+    if (ch === '(') depth++;
+    else if (ch === ')' && depth > 0) depth--;
+    // a tools= value is itself a comma list, so commas belong to it
+    const keepComma = ch === ',' && /^tools=/i.test(cur);
+    if (depth === 0 && !keepComma && (/\s/.test(ch) || ch === ',')) {
       if (cur || has) out.push(cur);
       cur = '';
       has = false;
@@ -126,6 +132,9 @@ export function parseTags(input: string | string[] | undefined): ParsedTags {
         break;
       case 'permission':
         out.tags.permission = validatePermission(value);
+        break;
+      case 'tools':
+        out.tags.tools = validateTools(value);
         break;
       case 'max-turns':
       case 'maxturns':

@@ -95,6 +95,15 @@ Ticket names are unique within a project. When a name exists in several projects
 | `priority` | 1 (highest) to 5 | 3 |
 | `max-turns` | a number | 50 |
 | `permission` | `plan`, `default`, `acceptEdits`, `bypass`, `dontAsk` | `acceptEdits` |
+| `tools` | `standard`, `readonly`, `edit`, `none`, or `allow:Read,Grep,Bash(git *)` with optional `;deny:Bash(rm *)` | the project's default, else `standard` |
+
+`tools` picks what a worker may use. `standard` is Claude Code's regular toolset. `readonly` reads,
+searches and browses the web, `edit` adds file edits and local git, `none` gives the worker no tools.
+`allow:` lists the only tools available (a rule such as `Bash(git *)` also allows just those commands
+without asking) and `deny:` removes tools. Quote a value that contains spaces:
+`salu add "audit" "..." 'tools="allow:Read,Grep,Bash(git log *)"'`. Projects and subprojects can set a
+default with `--tools` (inherited down the tree). `permission` still decides prompts: `bypass` checks
+nothing but the `tools` restriction and any `deny:` still apply, and `plan` runs nothing.
 
 Any other token (`bug`, `docs`, `team=core`) is stored as a label or custom tag for filtering.
 
