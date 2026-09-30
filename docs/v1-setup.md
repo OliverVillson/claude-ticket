@@ -110,44 +110,22 @@ salu runner logs web -f          # the orchestrator's log; Ctrl-C leaves it runn
 
 The project's data lives in `/var/lib/salu/web`, it is sandboxed, and it starts now and on every boot.
 
-## 7. On the server: connect it to the private repo **[untested]**
+## 7. On the server: check the git sync **[untested]**
+
+`salu runner add` (step 6) also registers the box side of the git link and starts a second service,
+`salu-sync@web`, which runs `salu remote sync --watch` (restarts on failure, starts on boot). It takes the git
+url from `--clone`, or from `--remote <url>` if you want a different one; `--no-sync` runs the orchestrator
+only. If it printed "git sync is not in this salu build yet", your salu is older than the sync PR: update salu
+and run `salu runner add` again. Check:
 
 ```sh
-sudo -u salu env SALU_HOME=/var/lib/salu/web salu remote add web --box     # uses the clone's origin
-sudo -u salu env SALU_HOME=/var/lib/salu/web salu remote sync              # once, by hand: expect "nothing new"
+sudo systemctl status salu-sync@web         # active (running)
+journalctl -u salu-sync@web -f              # a line every time something moves
+sudo -u salu env SALU_HOME=/var/lib/salu/web salu remote list    # role box, "synced ... ago", no error
 ```
 
-### The missing piece: keep syncing running
-
-`salu runner add` starts the **orchestrator** only. Something must also keep running `salu remote sync --watch`
-on the box, or tickets never arrive and results never leave. **The v1 runner does not do this yet** (a gap found
-while writing this guide; it should become part of `salu runner add`). Until it does, add a second systemd
-service by hand:
-
-```sh
-sudo tee /etc/systemd/system/salu-sync@.service >/dev/null <<'EOF'
-[Unit]
-Description=salu git sync for %i
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-User=salu
-Environment=SALU_HOME=/var/lib/salu/%i
-Environment=HOME=/home/salu
-Environment=PATH=/home/salu/.local/bin:/usr/local/bin:/usr/bin:/bin
-WorkingDirectory=/var/lib/salu/%i
-ExecStart=/usr/local/bin/salu remote sync --watch
-Restart=always
-RestartSec=15
-
-[Install]
-WantedBy=multi-user.target
-EOF
-sudo systemctl daemon-reload
-sudo systemctl enable --now salu-sync@web
-journalctl -u salu-sync@web -f      # a line every time something moves
-```
+If `remote list` shows an error, it is almost always git access: the deploy key from step 5 is missing or lacks
+write access. `sudo salu runner start|stop|restart|logs <project>` cover both services.
 
 ## 8. On your Mac: connect the project and send a ticket
 
@@ -214,7 +192,7 @@ are untouched. Run the same on the box (`sudo -iu salu`, then `salu doctor --san
 | see the box's projects | `salu runner list` (on the box) |
 | watch the orchestrator | `salu runner logs web -f` |
 | restart / stop | `sudo salu runner restart web` / `stop web` |
-| update salu on the box | `sudo salu update`, then `sudo salu runner restart web` and `sudo systemctl restart salu-sync@web` |
+| update salu on the box | `sudo salu update`, then `sudo salu runner restart web` and `the same restart covers the sync service` |
 | drop a project | `sudo salu runner remove web` (`--purge` also deletes its data) |
 | add a second project | repeat steps 5 to 8 with a new name: it gets its own orchestrator and sync |
 
