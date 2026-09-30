@@ -16,6 +16,7 @@ import { detectLimit, parseLimitText, probeWindow } from '../usage/index.ts';
 import type { LimitHit } from '../usage/types.ts';
 import { CLAUDE_MISSING, EnvironmentError, claudeExecutableOption, environmentProblem, runningCompiled } from '../core/claude-bin.ts';
 import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../core/tags.ts';
+import { DEFAULT_TOOLS, toolsToSdk } from '../core/tools.ts';
 import { buildPrompt, buildResumePrompt, parseTrailer, systemAppend } from './prompt.ts';
 import type { WorkerInput, WorkerLive, WorkerResult, WorkerRunner } from './types.ts';
 
@@ -46,21 +47,11 @@ export function workerEnv(extra: Record<string, string> = {}): Record<string, st
   return { ...env, CLAUDE_AGENT_SDK_CLIENT_APP: 'salu/0.1.0', ...extra };
 }
 
-/**
- * Unattended workers cannot answer permission prompts, and acceptEdits denies git. The rules ask
- * for a commit on a `salu/<name>` branch, so local git is allowed; pushing and remote or config
- * changes never are.
- */
-export const DEFAULT_ALLOWED_TOOLS = [
-  'Bash(git status:*)', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)', 'Bash(git branch:*)',
-  'Bash(git checkout:*)', 'Bash(git switch:*)', 'Bash(git add:*)', 'Bash(git commit:*)', 'Bash(git stash:*)',
-];
-export const DEFAULT_DISALLOWED_TOOLS = ['Bash(git push:*)', 'Bash(git remote:*)', 'Bash(git config:*)'];
-
 export interface EffectiveSettings {
   model: string | null;
   effort: Effort | null;
   permission: Permission;
+  tools: string;
   maxTurns: number;
 }
 
@@ -72,6 +63,7 @@ export function effectiveSettings(t: TicketView, project: Project | null): Effec
     model: tags.model ?? project?.default_model ?? DEFAULT_MODEL,
     effort: ((tags.effort ?? project?.default_effort) as Effort | undefined) ?? (DEFAULT_EFFORT as Effort),
     permission: (tags.permission as Permission | undefined) ?? DEFAULT_PERMISSION,
+    tools: tags.tools ?? project?.default_tools ?? DEFAULT_TOOLS,
     maxTurns: Number.isInteger(maxTurns) && maxTurns > 0 ? maxTurns : DEFAULT_MAX_TURNS,
   };
 }
@@ -113,10 +105,7 @@ export function workerSdkOptions(t: TicketView, project: Project | null, extra: 
     default:
       opts.permissionMode = 'acceptEdits';
   }
-  if (s.permission !== 'bypass' && s.permission !== 'plan') {
-    opts.allowedTools = [...DEFAULT_ALLOWED_TOOLS];
-    opts.disallowedTools = [...DEFAULT_DISALLOWED_TOOLS];
-  }
+  Object.assign(opts, toolsToSdk(s.tools, s.permission));
   if (extra.resume) opts.resume = extra.resume;
   return opts;
 }

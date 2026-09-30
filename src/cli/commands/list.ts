@@ -42,7 +42,7 @@ export async function list(p: Parsed): Promise<number> {
         ],
         flattenProjectTree(listProjectTree(db)).map((pr) => {
           const c = pr.counts; // the project's own tickets plus every subproject's
-          const defaults = [pr.default_model && `model=${pr.default_model}`, pr.default_effort && `effort=${pr.default_effort}`, pr.concurrency && `concurrency=${pr.concurrency}`]
+          const defaults = [pr.default_model && `model=${pr.default_model}`, pr.default_effort && `effort=${pr.default_effort}`, pr.default_tools && `tools=${pr.default_tools}`, pr.concurrency && `concurrency=${pr.concurrency}`]
             .filter(Boolean)
             .join(' ');
           const indent = pr.depth ? `${'  '.repeat(pr.depth - 1)}└ ` : '';

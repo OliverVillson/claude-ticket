@@ -10,6 +10,7 @@ export interface Project {
   is_default: number; // 0 | 1
   default_model: string | null;
   default_effort: string | null;
+  default_tools: string | null;
   concurrency: number | null;
   created_at: number; // epoch ms
   parent_id: number | null; // null = top-level project

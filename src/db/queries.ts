@@ -27,6 +27,7 @@ export interface NewProject {
   isDefault?: boolean;
   defaultModel?: string | null;
   defaultEffort?: string | null;
+  defaultTools?: string | null;
   concurrency?: number | null;
   parentId?: number | null;
 }
@@ -38,9 +39,9 @@ export function createProject(db: Database, p: NewProject): Project {
   const tx = db.transaction(() => {
     if (isDefault) db.run('UPDATE projects SET is_default = 0');
     db.run(
-      `INSERT INTO projects (name, path, is_default, default_model, default_effort, concurrency, created_at, parent_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [p.name, p.path, isDefault, p.defaultModel ?? null, p.defaultEffort ?? null, p.concurrency ?? null, now(), p.parentId ?? null],
+      `INSERT INTO projects (name, path, is_default, default_model, default_effort, default_tools, concurrency, created_at, parent_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [p.name, p.path, isDefault, p.defaultModel ?? null, p.defaultEffort ?? null, p.defaultTools ?? null, p.concurrency ?? null, now(), p.parentId ?? null],
     );
   });
   try {
@@ -79,7 +80,7 @@ export function setDefaultProject(db: Database, id: number) {
 export function updateProject(
   db: Database,
   id: number,
-  patch: Partial<Pick<Project, 'name' | 'path' | 'default_model' | 'default_effort' | 'concurrency'>>,
+  patch: Partial<Pick<Project, 'name' | 'path' | 'default_model' | 'default_effort' | 'default_tools' | 'concurrency'>>,
 ) {
   const sets: string[] = [];
   const vals: any[] = [];
@@ -177,7 +178,7 @@ export function moveProject(db: Database, id: number, parentId: number | null): 
   db.run('UPDATE projects SET parent_id = ? WHERE id = ?', [parentId, id]);
 }
 
-/** The project with model, effort and concurrency filled in from the nearest ancestor that sets them. */
+/** The project with model, effort, tools and concurrency filled in from the nearest ancestor that sets them. */
 export function inheritedProject(db: Database, p: Project): Project {
   const out = { ...p };
   for (let cur = p, guard = 0; cur.parent_id != null && guard < 64; guard++) {
@@ -185,6 +186,7 @@ export function inheritedProject(db: Database, p: Project): Project {
     if (!parent) break;
     out.default_model ??= parent.default_model;
     out.default_effort ??= parent.default_effort;
+    out.default_tools ??= parent.default_tools;
     out.concurrency ??= parent.concurrency;
     cur = parent;
   }
