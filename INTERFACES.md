@@ -71,3 +71,23 @@ export function openRunView(o: { projectIds?: number[]; concurrency: number; sto
 - Run view: same frame; one row per active worker (from `readStatus().workers`): name, elapsed, turns, last tool call; below it the next few queued tickets; polls twice a second; header shows paused reason + countdown; `q` calls `stop()`; `p` pauses/resumes. Events from `subscribe` append to a short scrolling activity log (last ~8 lines).
 - `salu change "name"` with no flags calls `openTicketForm({ticketId})`; `salu list` calls `openList`.
 - Keep imports of Ink out of every module except `src/tui/*` (startup speed). Provide a smoke test with `ink-testing-library` (add as devDependency) that renders the list with a few tickets and checks the names appear.
+
+## Subprojects (core)
+
+Projects form a tree: `projects.parent_id` (NULL = top level; schema version 2 migrates old databases with every project top level; deleting a project deletes its subtree). Project names stay globally unique; `a/b/c` path forms resolve through `resolveProjectRef`. A project's tickets view includes every descendant; a subproject shows only its own subtree.
+
+`src/db/queries.ts`
+- `createProject(db, { name, path, parentId?, isDefault?, defaultModel?, defaultEffort?, concurrency? }): Project`
+- `listProjectTree(db): ProjectNode[]` (roots; `ProjectNode = Project & { depth, children, counts /* subtree */, own }`)
+- `flattenProjectTree(nodes, isExpanded?): ProjectNode[]` (DFS rows; collapsed nodes hide their children)
+- `subtreeIds(db, id): number[]`, `getChildren(db, parentId | null): Project[]`, `projectQualifiedName(db, id): string`
+- `listTickets(db, { projectId?, recursive? = true, status? })`, `countTickets(db, projectId?, recursive = true)`
+- `moveProject(db, id, parentId | null)` (refuses cycles; folders are not moved), `deleteProject(db, id)` (subtree + tickets)
+- `inheritedProject(db, project): Project` fills model, effort and concurrency from the nearest ancestor; the orchestrator and the planner use it, rows stay as set.
+
+`src/core/resolve.ts`
+- `resolveProjectRef(db, "name" | "parent/sub"): Project`
+- `newSubproject(db, parentId, name, path?, extra?): Project` (folder defaults to `<parent folder>/<slug(name)>`, created)
+- `ensureProjectChain(db, ["a", "b", "c"], cwd?): Project` (creates missing projects and folders)
+
+CLI: `salu add project "sub" --in parent` or `salu add project "parent/sub"`; `salu change project "x" --in parent|none`; `salu remove project "p"` asks first and names the tickets and subprojects it deletes (folders on disk are never touched); `salu run <project>` runs the whole subtree; `salu list --projects` shows the tree.

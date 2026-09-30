@@ -4,7 +4,7 @@
 import { createInterface } from 'node:readline';
 import type { TicketView } from '../db/types.ts';
 import { openDb } from '../db/db.ts';
-import { createTicket, getProjectById, getTicket, updateTicket } from '../db/queries.ts';
+import { createTicket, getProjectById, inheritedProject, getTicket, updateTicket } from '../db/queries.ts';
 import { CliError } from '../core/errors.ts';
 import { bold, cyan, dim, green, yellow } from '../core/ansi.ts';
 import { parseTags } from '../core/tags.ts';
@@ -72,7 +72,8 @@ export function fakePlan(t: TicketView): PlannedTicket[] {
 
 async function askClaude(t: TicketView): Promise<PlannedTicket[]> {
   const db = openDb();
-  const project = getProjectById(db, t.project_id);
+  const base = getProjectById(db, t.project_id);
+  const project = base ? inheritedProject(db, base) : null;
   const s = effectiveSettings(t, project);
   const { query } = await import('@anthropic-ai/claude-agent-sdk');
   const options: Record<string, any> = {

@@ -3,16 +3,16 @@ import { existsSync } from 'node:fs';
 import type { Parsed } from '../args.ts';
 import { flagBool, flagNum, flagStr } from '../args.ts';
 import { openDb } from '../../db/db.ts';
-import { getProjectByName, setDefaultProject, updateProject, updateTicket, type TicketPatch } from '../../db/queries.ts';
+import { moveProject, setDefaultProject, updateProject, updateTicket, type TicketPatch } from '../../db/queries.ts';
 import { TICKET_STATUSES, type TicketStatus } from '../../db/types.ts';
 import { parseTags, validateEffort, validateModel, validatePriority } from '../../core/tags.ts';
-import { resolveProject, resolveTicket } from '../../core/resolve.ts';
+import { resolveProjectRef, resolveProject, resolveTicket } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
 import { dim, green } from '../../core/ansi.ts';
 import { helpIf, isTTY } from './_shared.ts';
 
 const HELP = `salu change "name" [--name N] [--query Q] [--tags T] [--priority P] [--status S] [--project P] [--id N]
-salu change project "name" [--name N] [--path P] [--model M] [--effort E] [--concurrency N] [--default]
+salu change project "name" [--in parent|none] [--name N] [--path P] [--model M] [--effort E] [--concurrency N] [--default]
 
 Edits one or more fields. --tags replaces the whole tag string. With no flags the ticket
 opens in an inline editor. --status todo re-queues a done, failed or blocked ticket.`;
@@ -23,8 +23,12 @@ export async function change(p: Parsed): Promise<number> {
   if (p.positional[0] === 'project') {
     const name = p.positional[1];
     if (!name) throw new CliError('usage: salu change project "name" [--path P] ...');
-    const project = getProjectByName(db, name);
-    if (!project) throw new CliError(`no project named "${name}"`);
+    const project = resolveProjectRef(db, name);
+    const inFlag = flagStr(p, 'in');
+    if (inFlag !== undefined) {
+      const parent = inFlag === '' || inFlag === 'none' || inFlag === 'top' ? null : resolveProjectRef(db, inFlag);
+      moveProject(db, project.id, parent?.id ?? null);
+    }
     const patch: Parameters<typeof updateProject>[2] = {};
     const newName = flagStr(p, 'name');
     if (newName) patch.name = newName;

@@ -1,6 +1,7 @@
 import type { Parsed } from '../args.ts';
 import { flagBool, flagNum, flagStr } from '../args.ts';
 import { openDb } from '../../db/db.ts';
+import { subtreeIds } from '../../db/queries.ts';
 import { resolveProject } from '../../core/resolve.ts';
 import { helpIf, isTTY } from './_shared.ts';
 import { applyAuthPolicy } from '../../core/env.ts';
@@ -22,7 +23,7 @@ export async function run(p: Parsed): Promise<number> {
   const concurrency = flagNum(p, 'concurrency');
   const { startOrchestratorCommand } = await import('../../orchestrator/index.ts');
   return startOrchestratorCommand({
-    projectIds: project ? [project.id] : undefined,
+    projectIds: project ? subtreeIds(db, project.id) : undefined,
     concurrency,
     detach: flagBool(p, 'detach'),
     plain: flagBool(p, 'plain') || !isTTY(),

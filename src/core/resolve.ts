@@ -2,7 +2,7 @@ import type { Database } from 'bun:sqlite';
 import type { Project, TicketView } from '../db/types.ts';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
-import { createProject, findProjectForCwd, findTicketsByName, getDefaultProject, getProjectByName, getTicket, getTicketById, listProjects } from '../db/queries.ts';
+import { createProject, findProjectForCwd, getProjectById, projectQualifiedName, findTicketsByName, getDefaultProject, getProjectByName, getTicket, getTicketById, listProjects } from '../db/queries.ts';
 import { CliError } from './errors.ts';
 
 /**
@@ -10,17 +10,52 @@ import { CliError } from './errors.ts';
  * Order: explicit name > the registered project whose folder contains cwd > the default project.
  */
 export function resolveProject(db: Database, name?: string | null, cwd = process.cwd()): Project {
-  if (name) {
-    const p = getProjectByName(db, name);
-    if (!p) throw new CliError(`no project named "${name}" (see \`salu list --projects\`)`);
-    return p;
-  }
+  if (name) return resolveProjectRef(db, name);
   const byCwd = findProjectForCwd(db, cwd);
   if (byCwd) return byCwd;
   const def = getDefaultProject(db);
   if (def) return def;
   if (listProjects(db).length === 0) throw new CliError('nothing here yet: run `salu add "what you want done"` and salu makes the project for you');
   throw new CliError('no default project: run `salu add project "name" [path]` or pass project=<name>');
+}
+
+/**
+ * A project by name, or by path `parent/sub` (names are globally unique, so the last segment
+ * finds the project and the rest is checked against its ancestors).
+ */
+export function resolveProjectRef(db: Database, ref: string): Project {
+  const parts = ref.split('/').map((s) => s.trim()).filter(Boolean);
+  const last = parts[parts.length - 1];
+  const p = last ? getProjectByName(db, last) : null;
+  if (!p) throw new CliError(`no project named "${ref}" (see \`salu list --projects\`)`);
+  if (parts.length > 1 && projectQualifiedName(db, p.id) !== parts.join('/') && !projectQualifiedName(db, p.id).endsWith('/' + parts.join('/')))
+    throw new CliError(`"${last}" is in ${projectQualifiedName(db, p.id)}, not in ${parts.slice(0, -1).join('/')}`);
+  return p;
+}
+
+/** Walks `a/b/c`, creating any project that does not exist yet (top level under cwd, the rest as subprojects); returns the last. */
+export function ensureProjectChain(db: Database, segments: string[], cwd = process.cwd()): Project {
+  let cur: Project | null = null;
+  for (const seg of segments) {
+    const existing = getProjectByName(db, seg);
+    if (existing) {
+      if ((existing.parent_id ?? null) !== (cur?.id ?? null)) throw new CliError(`"${seg}" is already a project in ${projectQualifiedName(db, existing.id)}`);
+      cur = existing;
+    } else {
+      cur = cur ? newSubproject(db, cur.id, seg) : newProjectInFolder(db, seg, cwd);
+    }
+  }
+  if (!cur) throw new CliError('empty project name');
+  return cur;
+}
+
+/** A subproject of `parentId`. The folder defaults to `<parent folder>/<slug(name)>` and is created. */
+export function newSubproject(db: Database, parentId: number, name: string, path?: string, extra: { defaultModel?: string | null; defaultEffort?: string | null; concurrency?: number | null } = {}): Project {
+  const parent = getProjectById(db, parentId);
+  if (!parent) throw new CliError(`no project with id ${parentId}`);
+  const dir = path ?? join(parent.path, folderSlug(name));
+  mkdirSync(dir, { recursive: true });
+  return createProject(db, { name, path: dir, parentId, ...extra });
 }
 
 /** `my ticket` -> `my-ticket`: a safe folder name. */
@@ -35,6 +70,11 @@ export function folderSlug(name: string): string {
  */
 export function projectForNewTicket(db: Database, ticketName: string, explicit?: string | null, cwd = process.cwd()): { project: Project; created: boolean } {
   const name = explicit || undefined;
+  if (name?.includes('/')) {
+    const segs = name.split('/').map((s) => s.trim()).filter(Boolean);
+    const existed = !!getProjectByName(db, segs[segs.length - 1] ?? '');
+    return { project: ensureProjectChain(db, segs, cwd), created: !existed };
+  }
   if (name) {
     const p = getProjectByName(db, name);
     return p ? { project: p, created: false } : { project: newProjectInFolder(db, name, cwd), created: true };

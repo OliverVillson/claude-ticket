@@ -1,7 +1,7 @@
 import type { Parsed } from '../args.ts';
 import { flagBool, flagStr } from '../args.ts';
 import { openDb } from '../../db/db.ts';
-import { countTickets, listProjects, listTickets } from '../../db/queries.ts';
+import { countTickets, flattenProjectTree, listProjectTree, listProjects, listTickets } from '../../db/queries.ts';
 import { TICKET_STATUSES, ticketLabels, ticketTags, type TicketStatus } from '../../db/types.ts';
 import { formatTags } from '../../core/tags.ts';
 import { resolveProject } from '../../core/resolve.ts';
@@ -40,13 +40,14 @@ export async function list(p: Parsed): Promise<number> {
           { key: 'tickets', title: 'tickets', align: 'right' },
           { key: 'defaults', title: 'defaults' },
         ],
-        projects.map((pr) => {
-          const c = countTickets(db, pr.id);
+        flattenProjectTree(listProjectTree(db)).map((pr) => {
+          const c = pr.counts; // the project's own tickets plus every subproject's
           const defaults = [pr.default_model && `model=${pr.default_model}`, pr.default_effort && `effort=${pr.default_effort}`, pr.concurrency && `concurrency=${pr.concurrency}`]
             .filter(Boolean)
             .join(' ');
+          const indent = pr.depth ? `${'  '.repeat(pr.depth - 1)}└ ` : '';
           return {
-            name: pr.is_default ? `${pr.name} ${dim('(default)')}` : pr.name,
+            name: indent + (pr.is_default ? `${pr.name} ${dim('(default)')}` : pr.name),
             path: pr.path,
             tickets: `${c.todo + c.running + c.paused + c.blocked}/${Object.values(c).reduce((a, b) => a + b, 0)}`,
             defaults,
