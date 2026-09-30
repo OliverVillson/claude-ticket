@@ -363,12 +363,24 @@ export interface MountOptions {
   stdin?: NodeJS.ReadStream;
   /** Ink's default: Ctrl-C exits. The run view turns this off and asks the orchestrator to stop instead. */
   exitOnCtrlC?: boolean;
+  /** take over the whole terminal like `claude` does (alternate screen); the shell is restored on exit */
+  fullscreen?: boolean;
 }
+
+const LEAVE_ALT_SCREEN = '\u001b[?1049l\u001b[?25h';
 
 /** Mount a screen and resolve with the value passed to `exit()` when it closes. */
 export async function mount<T = unknown>(node: React.ReactElement, opts: MountOptions = {}): Promise<T | undefined> {
+  const out = opts.stdout ?? process.stdout;
+  // Only a real terminal gets the alternate screen; pipes and test streams stay inline.
+  const fullscreen = !!opts.fullscreen && !!out.isTTY;
+  // Safety net for hard exits (uncaught crash, process.exit): Ink restores on a clean unmount,
+  // this covers the rest. Leaving the alternate screen twice is harmless.
+  const restore = () => out.write(LEAVE_ALT_SCREEN);
+  if (fullscreen) process.on('exit', restore);
   const instance = render(node, {
-    stdout: opts.stdout ?? process.stdout,
+    alternateScreen: fullscreen,
+    stdout: out,
     stdin: opts.stdin ?? process.stdin,
     exitOnCtrlC: opts.exitOnCtrlC ?? true,
     patchConsole: true,
@@ -378,5 +390,6 @@ export async function mount<T = unknown>(node: React.ReactElement, opts: MountOp
     return (await instance.waitUntilExit()) as T | undefined;
   } finally {
     instance.cleanup();
+    if (fullscreen) process.off('exit', restore);
   }
 }

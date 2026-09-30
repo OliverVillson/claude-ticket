@@ -29,7 +29,7 @@ export function renderRow(t: TicketView, o: RowOptions): string {
   let out = '';
   if (o.gutter !== false) out += o.selected ? st.accent(CURSOR_GLYPH) + ' ' : '  ';
   out += paintStatus(st, t.status, glyph) + ' ';
-  out += o.selected ? paint(st, 'accent', nc.name, { bold: true }) : nc.name;
+  out += o.selected ? paint(st, 'accent', nc.name, { bold: true }) : st.text(nc.name);
   if (nc.labels) out += st.dim(nc.labels);
   if (layout.project) out += '  ' + st.dim(fit(t.project, layout.project));
   if (layout.priority) out += '  ' + paintPriority(st, t.priority, fit(priorityText(t.priority), layout.priority));

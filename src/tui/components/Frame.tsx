@@ -3,6 +3,7 @@ import { Box, Text } from 'ink';
 import { displayWidth, truncate } from '../format.ts';
 import { style as st } from '../style.ts';
 import { paint } from '../theme.ts';
+import { MARK, WORDMARK, hex } from '../../ui/theme.ts';
 
 /**
  * The frame every screen shares: a one-line header above a rounded, dim border and a one-line
@@ -37,7 +38,7 @@ export function Frame(p: FrameProps) {
   return (
     <Box flexDirection="column" width={cols}>
       <Text wrap="truncate-end">{joinLine(p.header.left, p.header.right, cols)}</Text>
-      <Box borderStyle="round" borderDimColor flexDirection="column" paddingX={1} width={cols}>
+      <Box borderStyle="round" {...(st.enabled ? { borderColor: st.level >= 2 ? hex('chrome') : 'green' } : { borderDimColor: true })} flexDirection="column" paddingX={1} width={cols}>
         {p.children}
       </Box>
       {isPair(p.footer) ? <Text wrap="truncate-end">{joinLine(p.footer.left, p.footer.right, cols)}</Text> : p.footer}
@@ -45,9 +46,9 @@ export function Frame(p: FrameProps) {
   );
 }
 
-/** "✻ tickets › project › …" with the accent on the spark and the last crumb. */
+/** "▌salu › project › …": the wordmark in bright green, the last crumb accented. */
 export function titleText(crumbs: string[]): string {
-  let out = st.accent('✻') + ' ' + st.bold('tickets');
+  let out = st.accent(MARK) + st.bold(st.accent(WORDMARK));
   crumbs.forEach((c, i) => {
     out += st.dim(' › ') + (i === crumbs.length - 1 ? st.accent(c) : c);
   });
@@ -55,7 +56,7 @@ export function titleText(crumbs: string[]): string {
 }
 
 export function titleWidth(crumbs: string[]): number {
-  return displayWidth('✻ tickets') + crumbs.reduce((a, c) => a + 3 + displayWidth(c), 0);
+  return displayWidth(MARK + WORDMARK) + crumbs.reduce((a, c) => a + 3 + displayWidth(c), 0);
 }
 
 /** "key action · key action" hints; keys are brighter than actions. Drops items that do not fit. */
