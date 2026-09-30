@@ -23,10 +23,63 @@ describe('dog sprites', () => {
   });
 });
 
+describe('sleeping dog', () => {
+  const has = (f: string[], re: RegExp) => f.some((r) => re.test(r));
+  test('is 8 rows, four frames, and each frame differs', () => {
+    expect(SLEEP.length).toBe(4);
+    expect(SLEEP[0]!.length).toBe(16);
+    expect(renderDog(0, { mode: 'sleep', level: 3 }).length).toBe(8);
+    expect(new Set(SLEEP.map((f) => f.join('\n'))).size).toBe(4);
+  });
+  test('reads as a dog: ear, snout, closed eye, paws and tail are drawn', () => {
+    const f = SLEEP[0]!;
+    const px = (x: number, y: number) => f[y]![x];
+    // pointed ear above the head, higher than the back
+    const top = f.findIndex((r) => /[AM]/.test(r.slice(18, 26)));
+    const backTop = f.findIndex((r) => /A/.test(r.slice(8, 16)));
+    expect(top).toBeLessThan(backTop);
+    // closed eye: two dark pixels inside the head
+    expect(px(26, 11)).toBe('D');
+    expect(px(27, 11)).toBe('D');
+    // muzzle sticks out to the right of the head, with a dark nose at its tip
+    const nose = f[11]!.lastIndexOf('D');
+    expect(nose).toBeGreaterThan(30);
+    // front paws run along the ground, tail (light tip) at the far left
+    expect(f[14]!.slice(24, 36)).toMatch(/M{6}/);
+    expect(f[9]!.slice(0, 5)).toContain('T');
+  });
+  test('a small z, then higher, then a big Z float up beside the head', () => {
+    const zs = SLEEP.map((f) => f.map((r, y) => [...r].map((c, x) => (c === 'T' && x > 24 ? `${x},${y}` : null)).filter(Boolean)).flat());
+    expect(zs.every((z) => z.length > 0)).toBe(true);
+    const minY = zs.map((z) => Math.min(...z.map((p) => +p!.split(',')[1]!)));
+    expect(minY[1]!).toBeLessThan(minY[0]!);
+    expect(minY[2]!).toBeLessThan(minY[1]!);
+  });
+  test('sleeping frames advance slowly, ascii sleep is 4 frames of 14', () => {
+    expect(renderDog(3, { mode: 'sleep', level: 3 })).toEqual(renderDog(0, { mode: 'sleep', level: 3 }));
+    expect(renderDog(4, { mode: 'sleep', level: 3 })).not.toEqual(renderDog(0, { mode: 'sleep', level: 3 }));
+    expect(ASCII_SLEEP.length).toBe(4);
+    expect(has(ASCII_SLEEP[2]!, /Z/)).toBe(true);
+  });
+});
+
+describe('running dog', () => {
+  test('is 20 pixel rows by 36, four distinct frames, nose and ear present', () => {
+    expect(RUN.length).toBe(4);
+    for (const f of RUN) {
+      expect(f.length).toBe(20);
+      expect(f[0]!.length).toBe(36);
+      expect(f[5]!.slice(30)).toMatch(/A/); // muzzle
+      expect(f.slice(0, 3).join('')).toMatch(/M/); // ear
+    }
+    expect(new Set(RUN.map((f) => f.join('\n'))).size).toBe(4);
+  });
+});
+
 describe('renderDog', () => {
-  test('full dog is 6 rows of 22 cells at truecolor', () => {
+  test('full dog is 10 rows of at most 36 cells at truecolor', () => {
     const lines = renderDog(0, { level: 3 });
-    expect(lines.length).toBe(6);
+    expect(lines.length).toBe(10);
     for (const l of lines) expect(visibleWidth(l)).toBeLessThanOrEqual(dogWidth('full', 3));
     expect(lines.some((l) => l.includes('▀') || l.includes('▄') || l.includes('█'))).toBe(true);
   });
@@ -110,8 +163,8 @@ describe('single-line api', () => {
       expect(dogFrame(4, { level })).toBe(fs[0]!);
     }
   });
-  test('level 0 is ascii and dogLines is 6 rows', () => {
+  test('level 0 is ascii and dogLines is 10 rows', () => {
     expect(dogFrame(1, { level: 0 })).not.toContain('\u001b');
-    expect(dogLines(0, { level: 3 }).length).toBe(6);
+    expect(dogLines(0, { level: 3 }).length).toBe(10);
   });
 });

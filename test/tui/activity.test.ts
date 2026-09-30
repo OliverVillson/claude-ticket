@@ -54,4 +54,13 @@ describe('idle state', () => {
       expect(out.join('\n')).toContain('no tickets running');
     }
   });
+  test('tall enough shows the whole sleeping dog; shorter shows a one-line sleeper, never a cropped sprite', () => {
+    const st = makeStyle(true, 3);
+    const tall = idleLines(80, 14, st, 0);
+    expect(tall.filter((l) => /[▀▄█]/.test(l)).length).toBeGreaterThanOrEqual(6);
+    expect(tall.length).toBeGreaterThanOrEqual(11);
+    const short = idleLines(80, 6, st, 0);
+    expect(short.filter((l) => /[▀▄█]/.test(l)).length).toBe(0);
+    expect(short.join('')).toContain('=-.-=');
+  });
 });

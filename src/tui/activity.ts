@@ -82,9 +82,10 @@ export function visibleWindow(all: string[], height: number, back: number): { li
 export function idleLines(width: number, height: number, st: Style, tick: number): string[] {
   const dog = renderDog(tick, { mode: 'sleep', size: 'full', level: st.level });
   const text = st.dim('no tickets running');
-  const block = [...dog, text];
   const pad = (s: string) => ' '.repeat(Math.max(0, Math.floor((width - displayWidth(s)) / 2))) + s;
-  const shown = height >= block.length ? block : height >= 2 ? [dog[dog.length - 1] ?? '', text] : [text];
+  // Too short for the whole dog: one line with a tiny sleeper instead of a cropped sprite.
+  const fits = height >= dog.length + 2 && width >= displayWidth(dog[0] ?? '') + 2;
+  const shown = fits ? [...dog, '', text] : height >= 1 ? [st.accent('=-.-=') + st.dim(' z Z  no tickets running')] : [];
   const top = Math.max(0, Math.floor((height - shown.length) / 2));
   return [...Array(top).fill(''), ...shown.map(pad)];
 }
