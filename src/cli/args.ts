@@ -4,7 +4,7 @@ export interface Parsed {
 }
 
 const BOOLEAN_FLAGS = new Set([
-  'plain', 'yes', 'detach', 'follow', 'json', 'projects', 'help', 'version', 'all', 'default', 'raw', 'force', 'no-color', 'quiet', 'check', 'queue', 'save', 'now', 'refresh', 'sandbox', 'no-sandbox', 'git', 'dry-run',
+  'plain', 'yes', 'detach', 'follow', 'json', 'projects', 'help', 'version', 'all', 'default', 'raw', 'force', 'no-color', 'quiet', 'check', 'queue', 'save', 'backlog', 'now', 'refresh', 'sandbox', 'no-sandbox', 'git', 'dry-run',
 ]);
 const SHORT: Record<string, string> = { y: 'yes', f: 'follow', h: 'help', v: 'version', p: 'project', n: 'limit', c: 'concurrency', a: 'all', q: 'quiet' };
 

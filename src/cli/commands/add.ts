@@ -18,7 +18,7 @@ salu add project "name" [path|--path folder] [--clone git-url] [--in parent] [--
 salu add "name" "query" ["tags"] [--project P] [--priority N] [--tags T]
 
 A new ticket is queued at once: a running orchestrator (salu run --detach, or the one on your server)
-picks it up, so you can write an idea and walk away. --save only saves it (status backlog); it then
+picks it up, so you can write an idea and walk away. --save (alias --backlog) only saves it (status backlog); it then
 waits until you start it with salu queue "name", salu run, or u / r in the TUI.
 
 Adds a ticket. "query" is optional: when left out, the name is the instruction.
@@ -88,7 +88,7 @@ export async function add(p: Parsed): Promise<number> {
   const priorityFlag = flagStr(p, 'priority');
   const priority = priorityFlag !== undefined ? validatePriority(priorityFlag) : (parsed.priority ?? 3);
   // Queue by default; --save (or --no-queue) keeps it in the backlog. --queue is accepted and is the default.
-  const saveOnly = flagBool(p, 'save') || p.flags.queue === false;
+  const saveOnly = flagBool(p, 'save') || flagBool(p, 'backlog') || p.flags.queue === false;
   const { project, created } = projectForNewTicket(db, name, flagStr(p, 'project') ?? parsed.project);
   if (created) console.log(`${green('✓')} project ${project.name} ${dim(`→ ${project.path}`)}`);
   const t = createTicket(db, {
