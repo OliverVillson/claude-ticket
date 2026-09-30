@@ -69,12 +69,30 @@ export function sgr(role: Role, level: ColorLevel): string | null {
 
 export type Painter = (s: string) => string;
 
-/** A painter for `role` at `level`; identity when colour is off. */
-export function painter(role: Role, level: ColorLevel): Painter {
+/**
+ * A painter for `role` at `level`; identity when colour is off. `restore` is the escape written
+ * after the span instead of "default foreground", so plain text following a painted span stays
+ * green rather than falling back to the terminal's own colour.
+ */
+export function painter(role: Role, level: ColorLevel, restore = '\u001b[39m'): Painter {
   const open = sgr(role, level);
   if (!open) return (s) => s;
   const pre = `\u001b[${open}m`;
-  return (s) => (s ? pre + s + '\u001b[39m' : s);
+  return (s) => (s ? pre + s + restore : s);
+}
+
+/** Escape that sets the base text colour at `level` ('' when colour is off). */
+export function baseOpen(level: ColorLevel): string {
+  const open = sgr('text', level);
+  return open ? `\u001b[${open}m` : '';
+}
+
+/**
+ * Colour for Ink's `color` prop (a hex string, downsampled by Ink), or undefined when colour is
+ * off so NO_COLOR is honoured. Use this instead of `dimColor` or hardcoded hex.
+ */
+export function inkColor(role: Role, level: ColorLevel = detectColorLevel(process.env, true)): string | undefined {
+  return level === 0 ? undefined : hex(role);
 }
 
 export const WORDMARK = 'salu';

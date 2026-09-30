@@ -81,9 +81,9 @@ export function ListView(p: ListViewProps) {
     footer = (
       <Text wrap="truncate-end">
         {' '}
-        <Text color="#D97757">{'/ '}</Text>
+        <Text>{st.accent('/ ')}</Text>
         <TextField value={p.filter} onChange={p.onFilterChange} focus placeholder="name, #label, status:running, p1, @project" width={fieldWidth} />
-        <Text dimColor>{trail}</Text>
+        <Text>{st.dim(trail)}</Text>
       </Text>
     );
   } else if (p.confirm) {

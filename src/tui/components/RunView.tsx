@@ -215,7 +215,7 @@ export function RunView(p: RunViewProps) {
     <Frame columns={columns} header={{ left: titleText(crumbs), right: headerRight }} footer={footer}>
       {lines.map((l, i) => (
         <Text key={i} wrap="truncate-end">
-          {l || ' '}
+          {st.base(l || ' ')}
         </Text>
       ))}
     </Frame>

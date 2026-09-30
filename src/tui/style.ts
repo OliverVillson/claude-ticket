@@ -4,7 +4,7 @@
  * 4 ms for the whole frame. So rows, headers and hints are composed as strings here and handed
  * to Ink as a single Text each.
  */
-import { detectColorLevel, painter, type ColorLevel } from '../ui/theme.ts';
+import { baseOpen, detectColorLevel, painter, type ColorLevel } from '../ui/theme.ts';
 
 export interface Style {
   enabled: boolean;
@@ -25,6 +25,8 @@ export interface Style {
   accent: (s: string) => string;
   /** light green body text */
   text: (s: string) => string;
+  /** make `s` green by default: unstyled text and the gaps between painted spans use the text colour */
+  base: (s: string) => string;
 }
 
 /** True unless NO_COLOR is set or the terminal is dumb. */
@@ -36,18 +38,20 @@ export function colorsWanted(env: NodeJS.ProcessEnv = process.env): boolean {
 export function makeStyle(enabled: boolean, level: ColorLevel = detectColorLevel(process.env, true)): Style {
   const lv: ColorLevel = enabled ? (level || 1) : 0;
   const wrap = (open: string, close: string) => (s: string) => (lv && s ? `\u001b[${open}m${s}\u001b[${close}m` : s);
+  const restore = baseOpen(lv) || '\u001b[39m';
   return {
     enabled: lv > 0,
     level: lv,
     bold: wrap('1', '22'),
-    dim: painter('chrome', lv),
+    dim: painter('chrome', lv, restore),
     inverse: wrap('7', '27'),
-    red: painter('error', lv),
-    green: painter('ok', lv),
-    yellow: painter('warn', lv),
-    magenta: painter('paused', lv),
-    accent: painter('accent', lv),
-    text: painter('text', lv),
+    red: painter('error', lv, restore),
+    green: painter('ok', lv, restore),
+    yellow: painter('warn', lv, restore),
+    magenta: painter('paused', lv, restore),
+    accent: painter('accent', lv, restore),
+    text: painter('text', lv, restore),
+    base: (s) => (lv && s ? restore + s + '\u001b[39m' : s),
   };
 }
 

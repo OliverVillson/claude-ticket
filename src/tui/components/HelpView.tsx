@@ -26,8 +26,7 @@ export function HelpView({ columns, scopeName }: { columns: number; scopeName: s
     <Frame columns={columns} header={{ left: titleText(crumbs) }} footer={{ left: st.dim('any key closes help') }}>
       {KEYS.map(([k, a]) => (
         <Text key={k} wrap="truncate-end">
-          <Text>{k.padEnd(keyW)}</Text>
-          <Text dimColor>{a}</Text>
+          <Text>{st.text(k.padEnd(keyW)) + st.dim(a)}</Text>
         </Text>
       ))}
     </Frame>

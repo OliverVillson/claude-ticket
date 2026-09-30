@@ -22,11 +22,11 @@ export interface FrameProps {
 /** " left      right": one leading space, right side pushed to the far edge, cut to fit. */
 export function joinLine(left: string, right: string | undefined, columns: number): string {
   const lw = displayWidth(left);
-  if (!right) return ' ' + left;
+  if (!right) return st.base(' ' + left);
   const rw = displayWidth(right);
   const gap = columns - 1 - lw - rw;
-  if (gap >= 2) return ' ' + left + ' '.repeat(gap) + right;
-  return ' ' + left; // no room: the left side wins
+  if (gap >= 2) return st.base(' ' + left + ' '.repeat(gap) + right);
+  return st.base(' ' + left); // no room: the left side wins
 }
 
 function isPair(x: unknown): x is { left: string; right?: string } {
@@ -68,14 +68,14 @@ export function hintsText(items: Array<[string, string]>, width: number): string
     const segW = displayWidth(`${k} ${a}`) + (i ? 3 : 0);
     if (w + segW > width) break;
     w += segW;
-    out += (i ? st.dim(' · ') : '') + k + st.dim(' ' + a);
+    out += (i ? st.dim(' · ') : '') + st.text(k) + st.dim(' ' + a);
   }
   return out;
 }
 
 /** Yellow question with y/n hints, used by the delete confirm. */
 export function confirmText(text: string): string {
-  return paint(st, 'yellow', text) + '  y' + st.dim(' confirm · ') + 'n' + st.dim(' cancel');
+  return paint(st, 'yellow', text) + '  ' + st.text('y') + st.dim(' confirm · ') + st.text('n') + st.dim(' cancel');
 }
 
 export { truncate };

@@ -37,7 +37,7 @@ export function renderRow(t: TicketView, o: RowOptions): string {
   out += '  ' + paintStatus(st, t.status, fit(info.label, layout.status));
   if (layout.age) out += '  ' + st.dim(fit(relTime(t.updated_at, o.now), layout.age, 'right'));
   if (layout.cost) out += '  ' + st.dim(fit(fmtCost(t.cost_usd), layout.cost, 'right'));
-  return out;
+  return st.base(out);
 }
 
 /** Column headings matching `renderRow`, for the plain table. */

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Text, useInput } from 'ink';
 import { displayWidth } from '../format.ts';
+import { style as st } from '../style.ts';
 
 export interface TextFieldProps {
   value: string;
@@ -79,8 +80,8 @@ export function TextField({ value, onChange, focus, placeholder, width }: TextFi
   );
 
   if (!focus) {
-    if (!value) return <Text dimColor>{placeholder ?? ''}</Text>;
-    return <Text>{width ? sliceToWidth(chars, 0, width) : value}</Text>;
+    if (!value) return <Text>{st.dim(placeholder ?? '')}</Text>;
+    return <Text>{st.text(width ? sliceToWidth(chars, 0, width) : value)}</Text>;
   }
 
   const at = Math.min(cursor, chars.length);
@@ -99,16 +100,13 @@ export function TextField({ value, onChange, focus, placeholder, width }: TextFi
   if (!value && placeholder) {
     return (
       <Text>
-        <Text inverse>{placeholder[0] ?? ' '}</Text>
-        <Text dimColor>{placeholder.slice(1)}</Text>
+        {st.inverse(st.accent(placeholder[0] ?? ' ')) + st.dim(placeholder.slice(1))}
       </Text>
     );
   }
   return (
     <Text>
-      {before}
-      <Text inverse>{cur}</Text>
-      {after}
+      {st.text(before) + st.inverse(st.accent(cur)) + st.text(after)}
     </Text>
   );
 }
