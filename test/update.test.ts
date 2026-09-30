@@ -69,6 +69,12 @@ describe('versions', () => {
     expect(compareVersions('v0.10.0', '0.9.0')).toBeGreaterThan(0);
     expect(compareVersions('1.0.0', 'v1.0.0')).toBe(0);
     expect(compareVersions('0.1.0', '0.1.1')).toBeLessThan(0);
+    // four-part versions: v0.2.2.1 is newer than v0.2.2 and older than v0.2.3
+    expect(compareVersions('v0.2.2.1', '0.2.2')).toBeGreaterThan(0);
+    expect(compareVersions('0.2.2', 'v0.2.2.1')).toBeLessThan(0);
+    expect(compareVersions('v0.2.3', 'v0.2.2.1')).toBeGreaterThan(0);
+    expect(compareVersions('v0.2.2.10', 'v0.2.2.9')).toBeGreaterThan(0);
+    expect(compareVersions('v0.2.2.0', 'v0.2.2')).toBe(0);
   });
   test('tells a compiled binary from bun running source', () => {
     expect(isCompiledBinary('/home/me/.local/bin/salu')).toBe(true);
