@@ -1,14 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Box, render, useAnimation, useApp, useInput, useWindowSize } from 'ink';
+import { render, useAnimation, useApp, useInput, useWindowSize } from 'ink';
 import type { Database } from 'bun:sqlite';
 import type { TicketStatus, TicketView } from '../db/types.ts';
 import { ticketLabels, ticketTags } from '../db/types.ts';
-import { getProjectById, getTicketById } from '../db/queries.ts';
+import { getProjectById, getTicketById, latestRun } from '../db/queries.ts';
 import { formatTags } from '../core/tags.ts';
 import type { TuiActions } from './actions.ts';
 import { applyFilter } from './filter.ts';
-import { priorityText } from './format.ts';
+import { priorityText, truncate } from './format.ts';
 import { clampCursor, computeLayout, scrollTop, viewportRows } from './layout.ts';
+import { activityLines, idleLines, pickTarget, visibleWindow } from './activity.ts';
+import { statSync } from 'node:fs';
 import { ancestorsOf, buildRows, pathNames, renderTreeRow, revealed, subtreeIds, treeKey, type TreeKey } from './tree.ts';
 import { tailLog, type LogLine } from './log-tail.ts';
 import { loadDetail, loadSnapshot, snapshotKey, type Snapshot, type TicketDetail } from './store.ts';
@@ -45,13 +47,24 @@ export type FormResult = { action: 'added' | 'saved'; ticket: TicketView } | { a
 
 type Mode = 'list' | 'detail' | 'form' | 'help' | 'result';
 
-/** Lines around the ticket rows: header, two border lines, footer, the command line, plus one spare for the cursor. */
-const CHROME_LINES = 6;
+/** Lines around the panes: header, two border lines, the boxed command line (3), the hint bar, plus one spare. */
+const CHROME_LINES = 8;
+
+/** Terminals at least this tall get the live-activity area between the panes and the command line. */
+export const ACTIVITY_MIN_ROWS = 28;
 
 /** Terminals at least this wide get the project tree beside the tickets; narrower ones get one pane. */
 export const TWO_PANE_MIN_COLUMNS = 104;
 
 export const TICKET_PANE_HINTS: Array<[string, string]> = [['↑↓', 'move'], ['tab', 'switch pane'], ...LIST_HINTS.filter(([k]) => k !== 'tab' && k !== '↑↓')];
+
+export const COMMAND_HINTS: Array<[string, string]> = [
+  ['⏎', 'run'],
+  ['tab', 'complete or next window'],
+  ['⇧tab', 'previous window'],
+  ['↑↓', 'history'],
+  ['esc', 'back to the lists'],
+];
 
 export const TREE_HINTS: Array<[string, string]> = [
   ['↑↓', 'project'],
@@ -136,7 +149,10 @@ export function App(p: AppProps) {
   selectedIdRef.current = selected?.id ?? null;
   const scopeName = scope == null ? null : snapshot.projects.find((pr) => pr.id === scope)?.name ?? null;
   const scopeCrumbs = pathNames(snapshot.projects, scope);
-  const rowsAvail = viewportRows(termRows, CHROME_LINES);
+  const showActivity = (termRows || 24) >= ACTIVITY_MIN_ROWS;
+  const actH = showActivity ? Math.min(14, Math.max(4, Math.floor(((termRows || 24) - CHROME_LINES) * 0.4))) : 0;
+  const rowsAvail = viewportRows(termRows, CHROME_LINES + (showActivity ? actH + 2 : 0));
+  const textRows = viewportRows(termRows, 6);
   const overflow = visible.length > rowsAvail;
   const rows = overflow ? Math.max(1, rowsAvail - 1) : rowsAvail;
   const top = scrollTop(topRef.current, safeCursor, rows, visible.length);
@@ -148,6 +164,37 @@ export function App(p: AppProps) {
   const working = snapshot.status.workers.length > 0 || snapshot.tickets.some((t) => t.status === 'running');
   const anyRunningVisible = (mode === 'list' && working) || (mode === 'list' ? visible.slice(top, top + rows).some((t) => t.status === 'running') : mode === 'detail' && selected?.status === 'running');
   const { frame } = useAnimation({ interval: 200, isActive: anyRunningVisible });
+
+  // Live activity: follow one running ticket's worker log (the file `salu log` reads). The file is
+  // stat'ed twice a second and only re-read when it grew, and only while there is a target.
+  const [pinnedId, setPinnedId] = useState<number | null>(null);
+  const [actBack, setActBack] = useState(0);
+  const [actLog, setActLog] = useState<LogLine[]>([]);
+  const target = useMemo(() => (showActivity ? pickTarget(snapshot.tickets, selected, pinnedId) : null), [showActivity, snapshot.tickets, selected, pinnedId]);
+  const targetId = target?.id ?? null;
+  const targetStamp = target ? `${target.updated_at}:${target.attempts}` : '';
+  const logPath = useMemo(() => (targetId == null ? null : latestRun(db, targetId)?.log_path ?? null), [db, targetId, targetStamp]);
+  useEffect(() => setActBack(0), [targetId]);
+  useEffect(() => {
+    if (!logPath) return setActLog([]);
+    let last = -1;
+    const load = () => {
+      let size = -1;
+      try {
+        size = statSync(logPath).size;
+      } catch {
+        /* not written yet */
+      }
+      if (size === last) return;
+      last = size;
+      setActLog(tailLog(logPath, 400));
+    };
+    load();
+    const i = setInterval(load, 500);
+    return () => clearInterval(i);
+  }, [logPath]);
+  const actInner = Math.max(10, columns - 4);
+  const actAll = useMemo(() => activityLines(actLog, actInner, st), [actLog, actInner]);
 
   // ----- data refresh --------------------------------------------------------------------
   const refresh = useCallback(
@@ -345,6 +392,13 @@ export function App(p: AppProps) {
     const r = complete(cmdValue, { projects: snapshot.projects.map((pr) => pr.name), tickets: snapshot.tickets.map((t) => t.name) });
     if (r.value !== cmdValue) setCmd(r.value);
     if (r.options.length > 1) say(r.options.slice(0, 12).join('  ') + (r.options.length > 12 ? '  …' : ''), 'info');
+    return r.value !== cmdValue || r.options.length > 1;
+  };
+
+  /** Tab / Shift+Tab out of the command line back to the lists. */
+  const leaveCommand = (back: boolean) => {
+    setCmdEditing(false);
+    setPane(back || !twoPane ? 'tickets' : 'tree');
   };
 
   const execute = async (line: string) => {
@@ -395,7 +449,11 @@ export function App(p: AppProps) {
         } else if (key.return) void execute(cmdValue);
         else if (key.upArrow) recall(true);
         else if (key.downArrow) recall(false);
-        else if (key.tab) tabComplete();
+        else if (key.tab) {
+          // Tab completes while there is something to complete, otherwise it moves the focus on.
+          if (!key.shift && cmdValue.trim() && tabComplete()) return;
+          leaveCommand(!!key.shift);
+        }
         return; // the TextField consumes the rest
       }
       if (projConfirm) {
@@ -423,6 +481,7 @@ export function App(p: AppProps) {
         if (key.downArrow || input === 'j') return treeStep('down');
         if (key.rightArrow || input === 'l') return treeStep('right');
         if (key.leftArrow || input === 'h') return treeStep('left');
+        if (key.tab && key.shift) return setCmdEditing(true);
         if (key.return || key.tab) return setPane('tickets');
         if (input === 'a') {
           setCmdEditing(true);
@@ -436,7 +495,21 @@ export function App(p: AppProps) {
         }
         if (input === 'e' || input === 'r' || input === 'g' || input === 'G' || key.pageUp || key.pageDown || key.home || key.end) return;
       }
-      if (twoPane && mode === 'list' && pane === 'tickets' && key.leftArrow) return setPane('tree');
+      if (mode === 'list' && (!twoPane || pane === 'tickets') && key.leftArrow) return twoPane ? setPane('tree') : cycleScope(-1);
+      if (mode === 'list' && !twoPane && key.rightArrow) return cycleScope(1);
+      if (mode === 'list' && showActivity && input === '[') return setActBack((b) => Math.min(b + 5, Math.max(0, actAll.length - actH)));
+      if (mode === 'list' && showActivity && input === ']') return setActBack((b) => Math.max(0, b - 5));
+      if (mode === 'list' && showActivity && input === 'f') {
+        if (pinnedId != null) {
+          setPinnedId(null);
+          return say('following the running ticket again', 'info');
+        }
+        if (target) {
+          setPinnedId(target.id);
+          return say(`pinned to "${target.name}"`, 'info');
+        }
+        return;
+      }
       // Shared navigation (list and detail).
       if (key.upArrow || input === 'k') return move(-1);
       if (key.downArrow || input === 'j') return move(1);
@@ -468,7 +541,7 @@ export function App(p: AppProps) {
       if (input === 'a') return openForm('add');
       if (input === '/') return setFilterEditing(true);
       if (input === ':') return setCmdEditing(true);
-      if (key.tab) return twoPane ? setPane('tree') : cycleScope(key.shift ? -1 : 1);
+      if (key.tab) return key.shift && twoPane ? setPane('tree') : setCmdEditing(true);
       if (input === '?') return setMode('help');
       if (key.escape) {
         if (filter) setFilter('');
@@ -496,12 +569,12 @@ export function App(p: AppProps) {
     );
   }
   if (mode === 'result' && result) {
-    return <ResultView columns={columns} rows={rowsAvail} scopeName={scopeName} command={result.command} lines={result.lines} ok={result.ok} offset={result.offset} />;
+    return <ResultView columns={columns} rows={textRows} scopeName={scopeName} command={result.command} lines={result.lines} ok={result.ok} offset={result.offset} />;
   }
   if (mode === 'help') return <HelpView columns={columns} scopeName={scopeName} />;
   if (mode === 'detail' && detail) {
     return (
-      <DetailView columns={columns} rows={rowsAvail + 2} detail={detail} log={log} scopeName={scopeName} now={now} spinner={frame} confirm={confirm} message={message} />
+      <DetailView columns={columns} rows={viewportRows(termRows, 4)} detail={detail} log={log} scopeName={scopeName} now={now} spinner={frame} confirm={confirm} message={message} />
     );
   }
   let sidebar: { width: number; lines: string[] } | undefined;
@@ -525,15 +598,32 @@ export function App(p: AppProps) {
       lines: rowsAll.slice(from, from + height).map((r) => renderTreeRow(r, { st, selected: r.id === scope, focused: pane === 'tree', width: leftW, count: countOf(r.id) })),
     };
   }
+  let activity: { title: string; lines: string[]; height: number } | undefined;
+  if (showActivity) {
+    let lines: string[];
+    let back = 0;
+    if (!target) lines = idleLines(actInner, actH, st, 0);
+    else if (actAll.length === 0) lines = [st.dim('waiting for the worker…')];
+    else {
+      const w = visibleWindow(actAll, actH, actBack);
+      lines = w.lines;
+      back = w.back;
+    }
+    const keys = pinnedId != null ? 'f unpin' : 'f pin';
+    const title = target ? `activity · ${truncate(target.name, 30)}${pinnedId != null ? ' (pinned)' : ''}${back ? ` · ↑${back}` : ''} · ${keys} · [ ] scroll` : 'activity';
+    activity = { title: truncate(title, Math.max(8, actInner - 6)), lines, height: actH };
+  }
   return (
-    <Box flexDirection="column">
     <ListView
-      working={working}
       sidebar={sidebar}
+      activity={activity}
+      commandFocus={cmdEditing}
+      command={<CommandLine columns={columns} focused={cmdEditing} value={cmdValue} onChange={setCmdValue} busy={cmdBusy} nonce={cmdNonce} />}
+      working={working}
       ticketFocus={!twoPane || pane === 'tickets'}
       crumbs={scopeCrumbs}
       projectConfirm={projConfirm ? `remove project "${projConfirm.name}" and its tickets?` : null}
-      hints={twoPane ? (pane === 'tree' ? TREE_HINTS : TICKET_PANE_HINTS) : undefined}
+      hints={cmdEditing ? COMMAND_HINTS : twoPane ? (pane === 'tree' ? TREE_HINTS : TICKET_PANE_HINTS) : LIST_HINTS}
       columns={columns}
       rows={rowsAvail}
       tickets={visible}
@@ -556,8 +646,6 @@ export function App(p: AppProps) {
       now={now}
       spinner={frame}
     />
-    <CommandLine columns={columns} focused={cmdEditing} value={cmdValue} onChange={setCmdValue} busy={cmdBusy} nonce={cmdNonce} />
-    </Box>
   );
 }
 

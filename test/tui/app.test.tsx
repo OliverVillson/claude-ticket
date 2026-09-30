@@ -94,8 +94,8 @@ describe('list view', () => {
     const lines = last.split('\n');
     expect(lines.filter((l) => l.includes('❯') && l.includes('ticket ')).length).toBe(1);
     // the last row of the sorted list (done tickets sort last) is the selected one, on the last body line
-    const body = lines.filter((l) => l.startsWith('│'));
-    expect(body.at(-2)).toContain('❯');
+    const sel = lines.findIndex((l) => l.includes('❯') && l.includes('ticket '));
+    expect(lines.slice(sel + 1).filter((l) => l.includes('ticket ')).length).toBe(0);
     // no line is wider than the terminal
     expect(lines.every((l) => [...l].length <= 100)).toBe(true);
   });
@@ -129,22 +129,22 @@ describe('list view', () => {
     expect(term.lastFrame()).toContain('nothing matches "zzzz"');
   });
 
-  test('tab cycles projects and shows only their tickets', async () => {
+  test('in one pane the left and right arrows cycle projects and show only their tickets', async () => {
     const { db } = seedDb(12);
     const { term } = mountApp({ db });
     await term.waitFor((s) => s.includes('all projects'));
-    await term.press(KEY.tab);
+    await term.press(KEY.right);
     let f = await term.waitFor((s) => s.includes('salu › web'), 'web');
     expect(f).toContain('ticket 001');
     expect(f).not.toContain('ticket 002');
-    await term.press(KEY.tab);
+    await term.press(KEY.right);
     f = await term.waitFor((s) => s.includes('salu › api'), 'api');
     expect(f).toContain('ticket 002');
     expect(f).not.toContain('ticket 001');
-    await term.press(KEY.tab);
+    await term.press(KEY.right);
     await term.waitFor((s) => s.includes('all projects'), 'all again');
-    await term.press(KEY.shiftTab);
-    await term.waitFor((s) => s.includes('salu › api'), 'shift-tab goes back');
+    await term.press(KEY.left);
+    await term.waitFor((s) => s.includes('salu › api'), 'left goes back');
   });
 
   test('a status scope from --status shows in the header and limits rows', async () => {
@@ -672,19 +672,30 @@ describe('two panes: project tree and tickets', () => {
     expect(f).toContain('┏━ ▌projects');
     expect(f).toContain('╭─ tickets');
     expect(f).toContain('tab switch pane');
-    await term.press(KEY.tab);
+    await term.press(KEY.tab); // tickets
     f = term.lastFrame();
     expect(f).toContain('╭─ projects');
     expect(f).toContain('┏━ ▌tickets');
     expect(f).toContain('tab switch pane');
     expect(f.match(/▌/g)!.length).toBe(2); // wordmark + the active pane's title
-    await term.press(KEY.tab);
+    await term.press(KEY.tab); // command line: both panes go quiet, the prompt gets the heavy box
+    f = term.lastFrame();
+    expect(f).toContain('╭─ projects');
+    expect(f).toContain('╭─ tickets');
+    expect(f).toContain('┃ ▌❯');
+    expect(f).toContain('esc back to the lists');
+    await term.press(KEY.tab); // round again to the tree
     expect(term.lastFrame()).toContain('┏━ ▌projects');
+    expect(term.lastFrame()).not.toContain('┃ ▌❯');
     await term.press(KEY.tab);
-    await term.press(KEY.left);
+    await term.press(KEY.left); // arrows still move between the two panes
     expect(term.lastFrame()).toContain('┏━ ▌projects');
+    await term.press(KEY.shiftTab); // reverse: tree -> command line -> tickets
+    expect(term.lastFrame()).toContain('┃ ▌❯');
     await term.press(KEY.shiftTab);
     expect(term.lastFrame()).toContain('┏━ ▌tickets');
+    await term.press(KEY.shiftTab);
+    expect(term.lastFrame()).toContain('┏━ ▌projects');
   });
 
   test('narrow terminals fall back to a single pane', async () => {
@@ -722,5 +733,85 @@ describe('two panes: project tree and tickets', () => {
     const { term } = mountApp({ db }, [130, 30]);
     const f = await term.waitFor((s) => /[▀▄█]/.test(s.split('\n')[0] ?? ''), 'dog in header');
     expect(f.split('\n')[0]).toMatch(/[▀▄█]/);
+  });
+});
+
+describe('three windows and the live activity area', () => {
+  function withLog(db: any, home: string, ticketId: number, lines: object[], name = 'w.jsonl') {
+    mkdirSync(join(home, 'logs'), { recursive: true });
+    const path = join(home, 'logs', name);
+    writeFileSync(path, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+    createRun(db, ticketId, path);
+    return path;
+  }
+  const say = (text: string) => ({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
+  const tool = (name: string, file: string) => ({ type: 'assistant', message: { content: [{ type: 'tool_use', name, input: { file_path: file } }] } });
+
+  test('tab reaches the command line, plain typing goes straight in, esc returns to the last pane', async () => {
+    const { db } = seedDb(3);
+    const { term } = mountApp({ db }, [130, 32]);
+    await term.waitFor((s) => s.includes('ticket 001'));
+    await term.press(KEY.tab); // tickets
+    await term.press(KEY.tab); // command line
+    for (const ch of 'add "typed straight in"') await term.press(ch, 5);
+    expect(term.lastFrame()).toContain('add "typed straight in"');
+    await term.press(KEY.esc);
+    expect(term.lastFrame()).toContain('┏━ ▌tickets'); // back where it came from
+    expect(term.lastFrame()).not.toContain('typed straight in');
+  });
+
+  test('the activity area streams the running ticket, follows the selection, and pins', async () => {
+    const { db, home, ids } = seedDb(6); // ticket 001 (ids[0]) runs, 007 would too but only 6 here
+    const running = listTickets(db).filter((t) => t.status === 'running');
+    expect(running.length).toBe(1);
+    withLog(db, home, ids[0]!, [{ type: 'ticket_start', options: { model: 'claude-opus-5-5' } }, say('Looking at the auth middleware'), tool('Read', 'src/auth.ts'), tool('Edit', 'src/auth.ts')]);
+    const { term } = mountApp({ db }, [130, 34]);
+    let f = await term.waitFor((s) => s.includes('Read(src/auth.ts)'), 'worker output');
+    expect(f).toContain('activity · ticket 001');
+    expect(f).toContain('Looking at the auth middleware');
+    expect(f).toContain('Edit(src/auth.ts)');
+    expect(f).toContain('f pin');
+    await term.press(KEY.tab); // tickets pane: selection is the running ticket
+    await term.press('f');
+    f = term.lastFrame();
+    expect(f).toContain('(pinned)');
+    expect(f).toContain('f unpin');
+    await term.press('f');
+    expect(term.lastFrame()).not.toContain('(pinned)');
+  });
+
+  test('[ and ] scroll the activity back and forward', async () => {
+    const { db, home, ids } = seedDb(6);
+    const many = Array.from({ length: 40 }, (_, i) => say(`step number ${i + 1}`));
+    withLog(db, home, ids[0]!, many);
+    const { term } = mountApp({ db }, [130, 34]);
+    let f = await term.waitFor((s) => s.includes('step number 40'), 'newest step');
+    expect(f).not.toContain('step number 20');
+    for (let i = 0; i < 4; i++) await term.press('[');
+    f = term.lastFrame();
+    expect(f).toContain('↑');
+    expect(f).not.toContain('step number 40');
+    for (let i = 0; i < 6; i++) await term.press(']');
+    expect(term.lastFrame()).toContain('step number 40');
+  });
+
+  test('nothing running: a calm sleeping-dog empty state', async () => {
+    const { db } = seedDb(0);
+    const { term } = mountApp({ db }, [130, 34]);
+    const f = await term.waitFor((s) => s.includes('no tickets running'), 'empty state');
+    expect(f).toContain('activity');
+  });
+
+  test('short terminals drop the activity area; narrow ones stack the panes', async () => {
+    const { db } = seedDb(6);
+    const short = mountApp({ db }, [130, 24]);
+    let f = await short.term.waitFor((s) => s.includes('ticket 001'));
+    expect(f).not.toContain('activity');
+    expect(f).toContain('┏━ ▌projects');
+    const narrow = mountApp({ db }, [90, 34]);
+    f = await narrow.term.waitFor((s) => s.includes('ticket 001'));
+    expect(f).toContain('activity');
+    expect(f).toContain('┏━ ▌tickets');
+    expect(f).not.toContain('projects ─');
   });
 });
