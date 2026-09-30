@@ -947,6 +947,18 @@ describe('ticket properties (right arrow on a ticket)', () => {
     await term.waitFor((s) => !s.includes('properties') && s.includes('ticket 001'), 'back to list');
   });
 
+  test('escape bytes in a ticket name or query never reach the properties panel', async () => {
+    const { db, ids } = seedDb(12);
+    updateTicket(db, ids[0]!, { name: 'ticket 001\u001b]52;c;ZXZpbA==\u0007', query: 'do\u001b]0;pwned\u0007 it' });
+    const { term } = mountApp({ db });
+    await term.waitFor((s) => s.includes('ticket 001'));
+    await term.press(KEY.right);
+    const f = await term.waitFor((s) => s.includes('properties'), 'props');
+    expect(f).not.toContain('\u001b');
+    expect(f).not.toContain('\u0007');
+    expect(f).toContain('do]0;pwned it');
+  });
+
   test('a text property is edited in place and saved through salu change', async () => {
     const { db, ids } = seedDb(12);
     const { term } = mountApp({ db });
