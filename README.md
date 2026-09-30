@@ -124,7 +124,7 @@ project's workers in a kernel:
   They can write only in the kernel folder, cannot read your home folder (SSH keys, git login, other projects),
   and can reach any site. `SALU_SANDBOX_DOMAINS=github.com,*.npmjs.org` limits them to a list instead.
 - The agents' file tools (Read, Edit, Write, Glob, Grep), which the OS sandbox does not cover, go through a
-  check on real paths (symlinks and `..` resolved): they can change files only inside the kernel folder (and
+  check on real paths (symlinks and `..` resolved, hard-linked files refused): they can change files only inside the kernel folder (and
   temp, never its `.git/hooks`, `.git/config` or `.claude`) and read only the kernel, temp, runtime folders
   and system libraries. Other projects' kernels, your real project folder and your home folder are closed.
 - Agents get an allow-list environment (PATH, locale, proxy and CA settings, Claude/Anthropic variables), not

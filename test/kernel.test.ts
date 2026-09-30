@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { allowedDomains, fileToolGuard, fileToolHook, kernelOptions, prepareKernel, sandboxSupport, scrubSecrets, requireHuman, setHumanTty } from '../src/core/kernel.ts';
@@ -126,6 +126,13 @@ describe('kernel', () => {
     expect(g('Read', { file_path: join(k, 'loop-a') })).toContain('only read');
     expect(g('Write', { file_path: join(k, 'inside-link') })).toBeNull(); // a link that stays inside is fine
     expect(g('Write', { file_path: join(k, 'notes.txt', 'sub') })).toContain('inside the kernel');
+    // hard links to files outside the kernel
+    linkSync(join(home, '.ssh', 'id_rsa'), join(k, 'hard'));
+    expect(g('Read', { file_path: join(k, 'hard') })).toContain('hard links');
+    expect(g('Write', { file_path: join(k, 'hard') })).toContain('hard links');
+    expect(g('Edit', { file_path: 'hard' })).toContain('hard links');
+    writeFileSync(join(k, 'plain.txt'), 'x');
+    expect(g('Read', { file_path: join(k, 'plain.txt') })).toBeNull(); // ordinary files unaffected
     // reads
     expect(g('Read', { file_path: join(k, 'a.txt') })).toBeNull();
     expect(g('Read', { file_path: '/usr/lib/x' })).toBeNull();

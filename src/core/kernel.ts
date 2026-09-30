@@ -149,6 +149,15 @@ function protectedInKernel(rel: string): boolean {
   return /^(\.git\/(hooks|config)(\/|$)|\.claude(\/|$)|\.mcp\.json$|\.gitconfig$|\.gitmodules$)/.test(rel);
 }
 
+function multiplyLinked(real: string): boolean {
+  try {
+    const st = lstatSync(real);
+    return st.isFile() && st.nlink > 1;
+  } catch {
+    return false; // does not exist (yet)
+  }
+}
+
 /** Big command output is saved by Claude Code under ~/.claude/projects/<project>/<session>/tool-results and read back with Read. */
 const toolResult = (real: string, home: string) => within(real, join(home, '.claude', 'projects')) && /\/tool-results\/[^/]+$/.test(real);
 
@@ -177,6 +186,8 @@ export function fileToolGuard(dir: string, o: { home?: string; tmp?: string } = 
     }
     for (const raw of paths) {
       const real = canon(raw, kernel, home);
+      // A hard link is another name for the same file, which may live outside the kernel (`ln ~/.ssh/id_rsa here`).
+      if (multiplyLinked(real) && !within(real, join(kernel, '.git', 'objects'))) return `${tool} refused: ${real} has several hard links, so it may be the same file as one outside the kernel`;
       if (writes) {
         const ok = within(real, kernel) ? !protectedInKernel(real.slice(kernel.length + 1)) : tmps.some((t) => within(real, t));
         if (!ok) return `${tool} may only change files inside the kernel folder ${kernel} (not ${real})`;
