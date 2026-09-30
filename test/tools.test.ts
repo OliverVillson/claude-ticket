@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { parseTags, tokenize } from '../src/core/tags.ts';
-import { DEFAULT_ALLOWED_TOOLS, TOOL_PRESETS, describeTools, parseTools, toolsToSdk, validateTools } from '../src/core/tools.ts';
+import { DEFAULT_ALLOWED_TOOLS, TOOL_PRESETS, addAllowRules, alsoRules, bashRules, denialsFrom, describeTools, parseTools, toolsToSdk, validateTools } from '../src/core/tools.ts';
 import { effectiveSettings, workerSdkOptions } from '../src/orchestrator/worker.ts';
 import { createProject, inheritedProject } from '../src/db/queries.ts';
 import { openDb } from '../src/db/db.ts';
@@ -98,5 +98,46 @@ describe('project default tools inherit down the tree', () => {
     const c = createProject(db, { name: 'c', path: '/tmp/a/b/c', parentId: b.id, defaultTools: 'edit' });
     expect(inheritedProject(db, b).default_tools).toBe('readonly');
     expect(inheritedProject(db, c).default_tools).toBe('edit');
+  });
+});
+
+describe('also: extra allowed rules, and the denials they fix', () => {
+  test('standard pre-allows read-only network git but never push', () => {
+    const o = workerSdkOptions(tv(), proj());
+    for (const r of ['Bash(git clone:*)', 'Bash(git fetch:*)', 'Bash(git ls-remote:*)']) expect(o.allowedTools).toContain(r);
+    expect(o.allowedTools?.some((r) => r.includes('push'))).toBe(false);
+    expect(o.disallowedTools).toContain('Bash(git push:*)');
+  });
+  test('also: adds rules on top of the standard set, alone or after a preset', () => {
+    expect(validateTools('also:Bash(npm test *)')).toBe('also:Bash(npm test *)');
+    expect(validateTools('edit;also:Bash(npm test *)')).toBe('edit;also:Bash(npm test *)');
+    const o = workerSdkOptions(tv({ tools: 'also:Bash(npm test *)' }), proj());
+    expect(o.tools).toBeUndefined();
+    expect(o.allowedTools).toContain('Bash(npm test *)');
+    expect(o.allowedTools).toContain('Bash(git commit:*)');
+    const r = toolsToSdk('allow:Read;also:Bash(git clone *)', 'acceptEdits');
+    expect(r.tools).toEqual(['Read', 'Bash']);
+    expect(r.allowedTools).toEqual(['Read', 'Bash(git clone *)']);
+    expect(() => validateTools('readonly;allow:Read')).toThrow(/cannot be combined/);
+    expect(describeTools('also:WebFetch')).toContain('also allows WebFetch');
+  });
+  test('addAllowRules merges into any value and dedupes', () => {
+    expect(addAllowRules(null, ['Bash(git clone *)'])).toBe('standard;also:Bash(git clone *)');
+    expect(addAllowRules('allow:Read;deny:Bash(rm *)', ['Bash(git *)'])).toBe('allow:Read;deny:Bash(rm *);also:Bash(git *)');
+    expect(alsoRules(addAllowRules(addAllowRules('none', ['WebFetch']), ['WebFetch', 'Bash(make *)']))).toEqual(['WebFetch', 'Bash(make *)']);
+    expect(() => addAllowRules(null, ['not a rule!'])).toThrow(/not a tool name/);
+  });
+  test('denials become rules', () => {
+    expect(bashRules('git clone https://github.com/a/b 2>&1')).toEqual(['Bash(git clone *)']);
+    expect(bashRules('cd x && npm install && FOO=1 bun test')).toEqual(['Bash(npm install *)', 'Bash(bun test *)']);
+    expect(bashRules('curl -s https://x | jq .a')).toEqual(['Bash(curl *)', 'Bash(jq *)']);
+    const d = denialsFrom([
+      { tool_name: 'Bash', tool_use_id: 'a', tool_input: { command: 'git clone https://x/y' } },
+      { tool_name: 'WebFetch', tool_use_id: 'b', tool_input: { url: 'https://example.com' } },
+      { tool_name: 'Bash', tool_use_id: 'c', tool_input: { command: 'git clone https://x/z' } },
+    ]);
+    expect(d.map((x) => x.rule)).toEqual(['Bash(git clone *)', 'WebFetch']);
+    expect(d[1]!.input).toBe('https://example.com');
+    expect(denialsFrom(undefined)).toEqual([]);
   });
 });

@@ -5,6 +5,7 @@
  * Each tick: write the heartbeat, reconcile running workers with the database, ask the usage hooks
  * whether dispatch is held, then claim tickets into free slots and start one worker per ticket.
  */
+import type { Denial } from '../core/tools.ts';
 import type { Database } from 'bun:sqlite';
 import { statSync, watch, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
@@ -58,6 +59,13 @@ interface Active {
   live: WorkerLive;
   lastLiveWrite: number;
   promise: Promise<void>;
+}
+
+/** What to show on a blocked ticket: the permission it needs first (if the worker was refused something), then the worker's own words. */
+export function needsPermission(denials: Denial[] | undefined, message: string | null): string | null {
+  if (!denials?.length) return message;
+  const rules = [...new Set(denials.map((d) => d.rule))].join(', ');
+  return `needs permission: ${rules}${message ? ` · ${message}` : ''}`;
 }
 
 export class Orchestrator {
@@ -337,7 +345,8 @@ export class Orchestrator {
           break;
         case 'blocked':
           patch.status = 'blocked';
-          patch.error = result.message;
+          patch.error = needsPermission(result.denials, result.message);
+          patch.denied = result.denials?.length ? JSON.stringify(result.denials) : null;
           break;
         case 'rate_limited':
           // Parked with its session; not an attempt the ticket should be blamed for.
@@ -368,6 +377,7 @@ export class Orchestrator {
             if (!result.resumable) patch.session_id = null; // start clean next time
           }
           patch.error = result.message;
+          if (patch.status === 'failed') patch.denied = result.denials?.length ? JSON.stringify(result.denials) : null;
           break;
       }
       status = patch.status ?? null;

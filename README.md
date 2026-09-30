@@ -75,6 +75,7 @@ salu log "fix login" --follow                  # worker transcript
 | `salu add project "name" [path]` | Registers a project. With no `path` it uses the current folder if that is a git repo, else creates `./<name>`. Flags: `--model`, `--effort`, `--concurrency`, `--default`. |
 | `salu add "name" "query" ["tags"] [--queue]` | Saves a ticket (status `backlog`); it never runs by itself. `query` is the prompt the worker gets. Tags are `key=value` pairs and bare labels. `--queue` saves and queues it. |
 | `salu queue "name"... \| --all [project]` | Queues saved tickets (status `todo`, shown as queued): a running orchestrator starts them at once. Also re-queues a done, failed or blocked ticket. `--now` goes to the front. |
+| `salu allow "name" [--tool RULE]` | Unblocks a ticket that was refused a permission: adds the denied rule (or `--tool`) to its `tools` and queues it again. |
 | `salu unqueue "name"` | Takes a queued ticket that has not started back to the backlog. |
 | `salu remove "name" [--yes]` | Deletes a ticket; a running one is stopped first. `salu remove project "name"` deletes a project and its tickets. |
 | `salu change "name" [--name] [--query] [--tags] [--priority] [--status]` | Edits fields. No flags opens the inline editor. `--status todo` re-queues a ticket. `salu change project "name" --path/--model/--effort/--concurrency/--default` edits a project. |
@@ -107,6 +108,8 @@ without asking) and `deny:` removes tools. Quote a value that contains spaces:
 `salu add "audit" "..." 'tools="allow:Read,Grep,Bash(git log *)"'`. Projects and subprojects can set a
 default with `--tools` (inherited down the tree). `permission` still decides prompts: `bypass` checks
 nothing but the `tools` restriction and any `deny:` still apply, and `plan` runs nothing.
+`also:Bash(npm test *)` keeps the standard toolset and additionally lets those commands run
+without asking (it can follow a preset: `edit;also:...`).
 
 Any other token (`bug`, `docs`, `team=core`) is stored as a label or custom tag for filtering.
 
@@ -151,9 +154,15 @@ Any other token (`bug`, `docs`, `team=core`) is stored as a label or custom tag 
 Workers run headless, so nobody can answer a permission prompt. Under the default
 `permission=acceptEdits` file edits are allowed and most shell commands are denied (the worker
 then ends the ticket `blocked`). Local git is allowed so workers can commit on a
-`salu/<name>` branch; `git push`, `git remote` and `git config` are always denied. Tickets that
-must run builds or tests need `permission=bypass`, which runs with no permission checks at all, so
-use it only on projects you trust.
+`salu/<name>` branch, and read-only network git (`git clone`, `git fetch`, `git ls-remote`) is
+allowed too; `git push`, `git remote` and `git config` are always denied.
+
+When a worker is refused something else, the ticket ends `blocked` and records what it was refused:
+`salu list` shows `needs permission Bash(npm test *)`. `salu allow "name"` adds exactly that rule
+to the ticket (`tools=standard;also:Bash(npm test *)`) and queues it again; `--tool 'Bash(make *)'`
+names a rule yourself, and `salu change project "x" --tools 'also:Bash(make *)'` allows it for a
+whole project. Tickets that must run arbitrary builds or tests can instead use `permission=bypass`,
+which runs with no permission checks at all, so use it only on projects you trust.
 
 Workers use your Claude login unless `ANTHROPIC_API_KEY` is set: Claude Code prefers the key, so runs would bill API credits. `salu run` warns when it sees one; `SALU_AUTH=subscription` removes the key for the run, `SALU_AUTH=api-key` keeps it and silences the warning.
 

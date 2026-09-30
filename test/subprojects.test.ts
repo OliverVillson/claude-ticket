@@ -33,11 +33,12 @@ describe('subprojects', () => {
     const path = join(dir, 'old.db');
     const old = new Database(path);
     old.exec(`CREATE TABLE projects (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, path TEXT NOT NULL, is_default INTEGER NOT NULL DEFAULT 0, default_model TEXT, default_effort TEXT, concurrency INTEGER, created_at INTEGER NOT NULL);
+      CREATE TABLE tickets (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, name TEXT NOT NULL, query TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'todo', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
       INSERT INTO projects (name, path, created_at) VALUES ('legacy', '/x', 1); PRAGMA user_version = 1;`);
     old.close();
     const migrated = openDb(path);
     expect(migrated.query('SELECT parent_id FROM projects').get()).toEqual({ parent_id: null });
-    expect(migrated.query<{ user_version: number }, []>('PRAGMA user_version').get()!.user_version).toBe(3);
+    expect(migrated.query<{ user_version: number }, []>('PRAGMA user_version').get()!.user_version).toBe(4);
   });
 
   test('a subproject without a path gets a folder under its parent', () => {

@@ -38,6 +38,7 @@ export interface Ticket {
   session_id: string | null;
   cost_usd: number;
   error: string | null;
+  denied?: string | null; // JSON array of { tool, input, rule }: tool uses the last run was refused
   depends_on: string | null; // reserved
   created_at: number;
   updated_at: number;
