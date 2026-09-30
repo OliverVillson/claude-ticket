@@ -39,7 +39,7 @@ export function snapshotKey(s: Snapshot): string {
   let out = '';
   for (const t of s.tickets) out += `${t.id}:${t.status}:${t.priority}:${t.updated_at}:${t.cost_usd};`;
   out += '|';
-  for (const p of s.projects) out += `${p.id}:${p.name}:${p.is_default};`;
+  for (const p of s.projects) out += `${p.id}:${p.name}:${p.is_default}:${(p as { parent_id?: number | null }).parent_id ?? ""};`;
   const o = s.status;
   const p = o.paused;
   out += `|${o.alive ? 1 : 0}:${o.pid}:${p ? `${p.until}:${p.kind}:${p.manual ? 1 : 0}:${p.reason}:${p.models.join(',')}` : ''}`;

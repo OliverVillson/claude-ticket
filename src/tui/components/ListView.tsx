@@ -35,6 +35,16 @@ export interface ListViewProps {
   message: Message | null;
   now: number;
   spinner?: number;
+  /** two-pane layout: the project tree drawn to the left of the tickets (each line exactly `width` cells) */
+  sidebar?: { width: number; lines: string[] };
+  /** false while the tree has the focus: the ticket cursor is not drawn */
+  ticketFocus?: boolean;
+  /** breadcrumb path of the selected project (defaults to scopeName) */
+  crumbs?: string[];
+  /** pending project delete, shown in the footer like the ticket delete */
+  projectConfirm?: string | null;
+  /** hint bar override (the tree pane has its own keys) */
+  hints?: Array<[string, string]>;
 }
 
 export const LIST_HINTS: Array<[string, string]> = [
@@ -65,7 +75,7 @@ export function ListView(p: ListViewProps) {
   const end = Math.min(p.tickets.length, p.top + rows);
 
   // Header: crumbs on the left; counts and the orchestrator state on the right.
-  const crumbs = [p.scopeName ?? 'all projects'];
+  const crumbs = p.crumbs?.length ? [...p.crumbs] : [p.scopeName ?? 'all projects'];
   if (p.statuses?.length) crumbs.push(p.statuses.join(','));
   if (!p.filterEditing && p.filter.trim()) crumbs.push(`/${truncate(p.filter.trim(), 24)}`);
   const counts = p.filter.trim() ? `${p.tickets.length} of ${p.total} match` : countsText(p.counts);
@@ -87,6 +97,8 @@ export function ListView(p: ListViewProps) {
         <Text>{st.dim(trail)}</Text>
       </Text>
     );
+  } else if (p.projectConfirm) {
+    footer = { left: confirmText(p.projectConfirm), right: st.dim(position) };
   } else if (p.confirm) {
     const t = p.confirm;
     const text = `delete "${truncate(t.name, 40)}"?${t.status === 'running' ? ' (running: its worker is stopped)' : ''}`;
@@ -94,40 +106,43 @@ export function ListView(p: ListViewProps) {
   } else if (p.message) {
     footer = { left: messageText(p.message), right: st.dim(position) };
   } else {
-    footer = { left: hintsText(LIST_HINTS, Math.max(10, cols - 2 - displayWidth(position) - 3)), right: st.dim(position) };
+    footer = { left: hintsText(p.hints ?? LIST_HINTS, Math.max(10, cols - 2 - displayWidth(position) - 3)), right: st.dim(position) };
   }
 
-  let body: React.ReactNode;
+  // Ticket-pane lines as strings, so a sidebar can be joined on row by row (one Text per row).
+  let right: string[];
   if (p.tickets.length === 0) {
-    body = (
-      <Text wrap="truncate-end">
-        {p.total === 0
-          ? st.accent('▌') + st.text(' no tickets yet') + st.dim(' · press ') + st.accent('a') + st.dim(' to add one')
-          : st.yellow(`nothing matches "${truncate(p.filter.trim(), 30)}"`) + st.dim(' · esc clears the filter')}
-      </Text>
-    );
+    right = [
+      p.total === 0
+        ? st.accent('▌') + st.text(' no tickets yet') + st.dim(' · press ') + st.accent(p.sidebar ? ':' : 'a') + st.dim(p.sidebar ? ' then add "name"' : ' to add one')
+        : st.yellow(`nothing matches "${truncate(p.filter.trim(), 30)}"`) + st.dim(' · esc clears the filter'),
+    ];
   } else {
-    const lines: React.ReactNode[] = [];
+    right = [];
     for (let i = p.top; i < end; i++) {
       const t = p.tickets[i]!;
-      lines.push(
-        <Text key={t.id} wrap="truncate-end">
-          {renderRow(t, { layout: p.layout, now: p.now, style: st, selected: i === p.cursor, spinner: t.status === 'running' ? p.spinner : undefined })}
-        </Text>,
-      );
+      right.push(renderRow(t, { layout: p.layout, now: p.now, style: st, selected: p.ticketFocus !== false && i === p.cursor, spinner: t.status === 'running' ? p.spinner : undefined }));
     }
     if (overflow) {
       const parts: string[] = [];
       if (p.top) parts.push(`↑ ${p.top} more`);
       if (p.tickets.length - end > 0) parts.push(`↓ ${p.tickets.length - end} more`);
-      lines.push(
-        <Text key="more" wrap="truncate-end">
-          {st.dim('  ' + parts.join(' · '))}
-        </Text>,
-      );
+      right.push(st.dim('  ' + parts.join(' · ')));
     }
-    body = lines;
   }
+  let lines = right;
+  if (p.sidebar) {
+    const { width, lines: left } = p.sidebar;
+    const n = Math.max(left.length, right.length);
+    const blank = ' '.repeat(width);
+    lines = [];
+    for (let i = 0; i < n; i++) lines.push((left[i] ?? blank) + st.dim(' │ ') + (right[i] ?? ''));
+  }
+  const body = lines.map((l, i) => (
+    <Text key={i} wrap="truncate-end">
+      {l || ' '}
+    </Text>
+  ));
 
   return (
     <Frame columns={cols} header={{ left: titleText(crumbs), right: headerRight }} footer={footer}>
