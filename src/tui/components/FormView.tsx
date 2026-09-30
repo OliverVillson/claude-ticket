@@ -3,6 +3,8 @@ import { Text, useInput } from 'ink';
 import { Frame, hintsText, titleText } from './Frame.tsx';
 import { style as st } from '../style.ts';
 import { inkColor } from '../../ui/theme.ts';
+import { endCell, DEEPER_CELLS } from '../deeper.ts';
+import { truncate } from '../format.ts';
 import { TextField } from './TextField.tsx';
 import { TagEditor } from './TagEditor.tsx';
 import { GROUP_LABEL, type TagGroup } from '../tagRows.ts';
@@ -116,8 +118,7 @@ export function FormView(p: FormViewProps) {
             <React.Fragment key="tags">
               <Text wrap="truncate-end">
                 {label}
-                {values.tags ? st.text(values.tags) : st.dim(`${summary.modelEffort} · ${summary.tools}   → to choose`)}
-                {tagsOpen && group ? st.dim(`   ${GROUP_LABEL[group]}`) : ''}
+                {endCell(values.tags ? st.text(truncate(values.tags, Math.max(4, cols - 4 - labelW - DEEPER_CELLS))) : st.dim(truncate(`${summary.modelEffort} · ${summary.tools}`, Math.max(4, cols - 4 - labelW - DEEPER_CELLS))) + (tagsOpen && group ? st.dim(`   ${GROUP_LABEL[group]}`) : ''), cols - 4 - labelW, st, i === focus && !tagsOpen)}
               </Text>
               {tagsOpen ? (
                 <TagEditor
