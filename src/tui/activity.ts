@@ -80,14 +80,17 @@ export function visibleWindow(all: string[], height: number, back: number): { li
   return { lines: all.slice(Math.max(0, end - height), end), back: b };
 }
 
-/** Calm empty state: a sleeping dog and a line of text, centred in `width` x `height`. */
-export function idleLines(width: number, height: number, st: Style, tick: number): string[] {
-  const dog = renderDog(tick, { mode: 'sleep', size: 'full', level: st.level });
-  const text = st.dim('no tickets running');
+/**
+ * Calm empty state: a sleeping dog and a line of text, centred in `width` x `height`. `egg` swaps
+ * in an easter-egg frame (eggs.ts) for the dog, and its words for the text on the one-line version.
+ */
+export function idleLines(width: number, height: number, st: Style, tick: number, egg?: { lines: string[]; say?: string }): string[] {
+  const dog = egg?.lines ?? renderDog(tick, { mode: 'sleep', size: 'full', level: st.level });
+  const text = egg?.say ? st.bold(st.text(egg.say)) : st.dim('no tickets running');
   const pad = (s: string) => ' '.repeat(Math.max(0, Math.floor((width - displayWidth(s)) / 2))) + s;
   // Too short for the whole dog: one line with a tiny sleeper instead of a cropped sprite.
   const fits = height >= dog.length + 2 && width >= displayWidth(dog[0] ?? '') + 2;
-  const shown = fits ? [...dog, '', text] : height >= 1 ? [sleepFrame({ level: st.level }) + ' ' + text] : [];
+  const shown = fits ? [...dog, '', st.dim('no tickets running')] : height >= 1 ? [sleepFrame({ level: st.level }) + ' ' + text] : [];
   const top = Math.max(0, Math.floor((height - shown.length) / 2));
   return [...Array(top).fill(''), ...shown.map(pad)];
 }

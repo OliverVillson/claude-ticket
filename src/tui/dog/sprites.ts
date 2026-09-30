@@ -139,3 +139,54 @@ export const ASCII_SLEEP: string[][] = [
 export const ASCII_LINE_RUN: string[] = ['~(__)>', '-(__)>', '~(__)>', '_(__)>'];
 export const ASCII_LINE_SLEEP: string[] = ['(__)z ', '(__) Z'];
 export const ASCII_LINE_WIDTH = 6;
+
+/**
+ * Easter eggs: the sleeping dog barks (dojjan) or yawns (eskil). Same 26 x 12 canvas and body as
+ * SLEEP; only the head moves. Each frame holds for `ms`; `say` is printed beside the head.
+ */
+export interface EggFrame {
+  px: string[];
+  ms: number;
+  say?: string;
+  ascii: string[];
+}
+const EGG_BODY = SLEEP_BODY.slice(5);
+const E26 = '..........................';
+const HEAD_SLEEP = ['..................D.......', '.................AA.......', '.................AAAA.....', '................AADDAAA...', '................AAAAAAAD..'];
+/** eye open */
+const HEAD_AWAKE = ['..................D.......', '.................AA.......', '.................AAAA.....', '................AA.AAAA...', '................AAAAAAAD..'];
+/** head jolted up a pixel, jaw dropped: the mouth is the gap under the snout */
+const HEAD_BARK = ['..................D.......', '.................AA.......', '.................AAAA.....', '................AA.AAAAD..', '................AAAA......', '................AAAAAA....'];
+/** eyes squeezed, mouth starting to open */
+const HEAD_YAWN1 = ['..................D.......', '.................AA.......', '.................AAAA.....', '................ADDDAAAD..', '................AAAA......', '................AAAAA.....'];
+/** head tipped back, mouth wide open, tongue showing */
+const HEAD_YAWN2 = ['.................D....AD..', '................AAAAAAA...', '................ADDAAA....', '................AAA.......', '................AA.TT.....', '................AAAAAAA...'];
+const STRETCH = '.TTTMMMTTTTT...MMTTTTTTTTT';
+
+const ASCII_SLEEPING = ['               ', '          /\\   ', ' .-------/ -\\__', '(__________/__)'];
+const ASCII_AWAKE = ['               ', '          /\\   ', ' .-------/ o\\__', '(__________/__)'];
+const ASCII_BARK = ['          /\\   ', ' .-------/ o\\__', '(__________/ <_', '               '].map((r, i) => (i === 3 ? '(__________/__)' : r));
+const ASCII_YAWN = ['          /\\ _ ', ' .-------/ =\\/ ', '(__________/ O)', '               '].map((r, i) => (i === 3 ? '(__________/__)' : r));
+
+const sleepPx = [E26, E26, ...HEAD_SLEEP, ...EGG_BODY];
+const awakePx = [E26, E26, ...HEAD_AWAKE, ...EGG_BODY];
+const barkPx = [E26, ...HEAD_BARK, ...EGG_BODY];
+const yawn1Px = [E26, ...HEAD_YAWN1, ...EGG_BODY];
+const yawn2Px = [E26, ...HEAD_YAWN2, ...EGG_BODY.slice(0, 4), STRETCH];
+
+/** dojjan: wakes, barks twice with a jolt, settles back to sleep (about 2.4 s). */
+export const BARK_FRAMES: EggFrame[] = [
+  { px: awakePx, ms: 450, ascii: ASCII_AWAKE },
+  { px: barkPx, ms: 260, say: 'WOOF!', ascii: ASCII_BARK },
+  { px: awakePx, ms: 200, ascii: ASCII_AWAKE },
+  { px: barkPx, ms: 260, say: 'WOOF!', ascii: ASCII_BARK },
+  { px: awakePx, ms: 700, ascii: ASCII_AWAKE },
+  { px: sleepPx, ms: 500, ascii: ASCII_SLEEPING },
+];
+/** eskil: squeezes its eyes, opens wide with a stretch, closes, back to sleep (about 2.6 s). */
+export const YAWN_FRAMES: EggFrame[] = [
+  { px: yawn1Px, ms: 350, ascii: ASCII_SLEEPING },
+  { px: yawn2Px, ms: 1100, say: 'yaaawn', ascii: ASCII_YAWN },
+  { px: yawn1Px, ms: 300, ascii: ASCII_SLEEPING },
+  { px: sleepPx, ms: 800, ascii: ASCII_SLEEPING },
+];

@@ -82,6 +82,13 @@ W = max((len(r) for r in grid), default=1)
 img = Image.new('RGB', (W * cw + 2 * cw, len(grid) * ch + ch), BG)
 d = ImageDraw.Draw(img)
 font = ImageFont.truetype(font_path, int(ch * 0.62))
+# DejaVu has no kana (the matrix egg's rain): borrow them from a Japanese font when one is installed.
+kana_font = font
+for kp in ('/usr/share/fonts/opentype/ipafont-gothic/ipag.ttf', '/System/Library/Fonts/Hiragino Sans GB.ttc', '/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc'):
+    try:
+        kana_font = ImageFont.truetype(kp, int(ch * 0.62)); break
+    except OSError:
+        pass
 
 def rect(x, y, fx0, fy0, fx1, fy1, col):
     d.rectangle([x + round(fx0 * cw), y + round(fy0 * ch), x + round(fx1 * cw) - 1, y + round(fy1 * ch) - 1], fill=col)
@@ -124,7 +131,7 @@ for r, row in enumerate(grid):
                     cy = y + (dy * 2 + 1) * ch / 8
                     d.ellipse([cx - rad, cy - rad, cx + rad, cy + rad], fill=fg)
         else:
-            d.text((x + cw / 2, y + ch / 2), chr_, font=font, fill=fg, anchor='mm')
+            d.text((x + cw / 2, y + ch / 2), chr_, font=kana_font if 0xFF61 <= o <= 0xFF9F else font, fill=fg, anchor='mm')
 
 img.save(out)
 print(out, img.size)
