@@ -94,6 +94,16 @@ struct GitHubClient {
         _ = try await request("contents/salu-inbox/tickets/\(t.id).json", method: "PUT", body: try JSONSerialization.data(withJSONObject: payload))
     }
 
+    func send(_ r: SaluReply) async throws {
+        let json = try JSONEncoder().encode(r)
+        let payload: [String: Any] = [
+            "message": "salu reply \(r.id)",
+            "content": json.base64EncodedString(),
+            "branch": Self.branch,
+        ]
+        _ = try await request("contents/salu-inbox/replies/\(r.id).json", method: "PUT", body: try JSONSerialization.data(withJSONObject: payload))
+    }
+
     /// Settings' connection test. Throws when the token can't see the repo; returns whether the box
     /// has made the salu/inbox branch yet.
     func check() async throws -> Bool {

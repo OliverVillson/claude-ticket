@@ -93,10 +93,12 @@ struct TicketRow: View {
 struct TicketDetail: View {
     @EnvironmentObject var store: Store
     let id: String
+    @State private var replying = false
 
     var body: some View {
+        let t = store.ticket(id)
         ScrollView {
-            if let t = store.ticket(id) {
+            if let t {
                 content(t)
             } else {
                 EmptyDog(title: "ticket gone", message: "The box no longer lists it.")
@@ -104,6 +106,14 @@ struct TicketDetail: View {
         }
         .background(Salu.bg)
         .navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .bottom) {
+            if let t, t.canReply, store.configured {
+                ReplyButton(number: t.number) { replying = true }
+            }
+        }
+        .sheet(isPresented: $replying) {
+            ReplySheet(ticketId: id).environmentObject(store)
+        }
     }
 
     private func content(_ t: TicketSummary) -> some View {
@@ -123,12 +133,13 @@ struct TicketDetail: View {
                 .font(Salu.mono(.footnote))
                 .foregroundStyle(Salu.chrome)
 
-            if t.state == .sent, let at = t.sentAt, Date().timeIntervalSince(at) > 10 * 60 {
+            if t.state == .sent, let at = t.lastSent, Date().timeIntervalSince(at) > 10 * 60 {
                 Banner(glyph: "?", text: "The box hasn't picked this up yet. Is `salu remote sync --watch` running on it?", color: Salu.warn)
             }
 
-            if let q = t.query {
-                Card(title: "what you asked") { Text(q).textSelection(.enabled) }
+            let turns = t.conversation
+            if !turns.isEmpty {
+                Conversation(turns: turns)
             }
 
             VStack(alignment: .leading, spacing: 0) {

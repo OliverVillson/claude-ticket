@@ -15,6 +15,18 @@ struct SaluMessage: Codable, Identifiable, Hashable {
     var question: String?
     var ticket: TicketRef?
     var until: Double?  // orchestrator.paused: epoch ms it resumes
+    var reply: String?  // ticket.done / ticket.blocked: the worker's whole final message (body is its one-line summary)
+
+    /// What the worker said, as fully as the box sent it.
+    var workerText: String? {
+        switch type {
+        case "ticket.done": return reply ?? body
+        case "ticket.blocked": return reply ?? question ?? body
+        case "ticket.failed": return reply ?? body
+        case "note" where ticket != nil && level == "warn": return title  // e.g. a reply the box refused
+        default: return nil
+        }
+    }
 
     var date: Date { Date(timeIntervalSince1970: at / 1000) }
     var untilDate: Date? { until.map { Date(timeIntervalSince1970: $0 / 1000) } }
@@ -37,6 +49,21 @@ struct SaluTicket: Codable {
     var labels: [String] = []
     var priority = 3
     var queue = true
+    var at: Double
+}
+
+/// A follow-up on a ticket the box already has (`salu reply` from the phone), ReplyFile in format.ts: the
+/// worker resumes the same conversation with `body`. Written once to salu-inbox/replies/<id>.json.
+/// The box finds the ticket by `ref` (the ticket file id, for tickets this phone sent), else by `name`,
+/// and always answers with a message: "Got your reply on …" or a warning.
+struct SaluReply: Codable {
+    var v = 1
+    var id: String
+    var project: String
+    var ref: String?
+    var name: String?
+    var body: String
+    var now = false  // jump the queue, like `salu reply --now`
     var at: Double
 }
 

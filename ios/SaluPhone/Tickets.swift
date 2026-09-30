@@ -25,6 +25,29 @@ struct SentTicket: Codable, Identifiable, Hashable {
     var date: Date { Date(timeIntervalSince1970: at / 1000) }
 }
 
+/// A reply this phone sent on a ticket, kept so the conversation shows it before the box answers.
+struct SentReply: Codable, Identifiable, Hashable {
+    var id: String       // the reply file's id
+    var repo: String
+    var ticket: String   // TicketSummary.id it belongs to
+    var body: String
+    var now: Bool
+    var at: Double
+
+    var date: Date { Date(timeIntervalSince1970: at / 1000) }
+}
+
+/// One line of a ticket's conversation: what you asked or answered, and what the worker said back.
+struct Turn: Identifiable, Hashable {
+    enum Who { case you, worker }
+    let id: String
+    let who: Who
+    let text: String
+    let date: Date
+    var type: String? = nil  // the worker's message type: done, blocked or failed
+    var pending = false      // yours, and the box has not picked it up yet
+}
+
 /// One ticket, put together from what this phone sent and every message the box sent about it.
 struct TicketSummary: Identifiable, Hashable {
     let id: String             // the ticket file id when known, else "box:<project>#<number>"
@@ -37,6 +60,25 @@ struct TicketSummary: Identifiable, Hashable {
     var query: String?         // only for tickets sent from this phone
     var priority: Int?
     var messages: [SaluMessage] = []  // newest first
+    var replies: [SentReply] = []     // oldest first
+    var lastSent: Date?        // the phone's latest write for it (the ticket or a reply) still waiting on the box
+
+    /// The box queues a follow-up on any ticket it knows, except one in the backlog (`salu reply` refuses those).
+    var canReply: Bool { number != nil && state != .backlog }
+
+    /// What you said and what the worker said, oldest first.
+    var conversation: [Turn] {
+        var turns: [Turn] = []
+        if let q = query, let at = sentAt { turns.append(Turn(id: "query", who: .you, text: q, date: at)) }
+        let lastBox = messages.first?.at ?? 0
+        for r in replies {
+            turns.append(Turn(id: r.id, who: .you, text: r.body, date: r.date, pending: r.at > lastBox))
+        }
+        for m in messages {
+            if let text = m.workerText { turns.append(Turn(id: m.id, who: .worker, text: text, date: m.date, type: m.type)) }
+        }
+        return turns.sorted { $0.date < $1.date }
+    }
 }
 
 enum Tickets {
@@ -53,14 +95,14 @@ enum Tickets {
     }
 
     /// Tickets newest activity first. Messages may come in any order.
-    static func build(messages: [SaluMessage], sent: [SentTicket]) -> [TicketSummary] {
+    static func build(messages: [SaluMessage], sent: [SentTicket], replies: [SentReply] = []) -> [TicketSummary] {
         var byKey: [String: TicketSummary] = [:]
         var alias: [String: String] = [:]  // "box:<project>#<n>" -> ticket file id
         var queueOf: [String: Bool] = [:]
 
         for s in sent {
             byKey[s.id] = TicketSummary(id: s.id, name: s.name, project: s.project, number: nil, state: .sent,
-                                        updated: s.date, sentAt: s.date, query: s.query, priority: s.priority)
+                                        updated: s.date, sentAt: s.date, query: s.query, priority: s.priority, lastSent: s.date)
             queueOf[s.id] = s.queue
         }
 
@@ -79,12 +121,26 @@ enum Tickets {
             s.number = t.id
             if !m.project.isEmpty { s.project = m.project }
             if var next = state(after: m.type) {
-                if next == .queued && queueOf[key] == false { next = .backlog }
+                if next == .queued && s.state == .sent && queueOf[key] == false { next = .backlog }
+                if next == .queued && s.state == .running { next = .running }  // a reply during a run: it stays running, the reply is its next turn
                 s.state = next
             }
             s.updated = max(s.updated, m.date)
+            s.lastSent = nil  // the box answered
             s.messages.insert(m, at: 0)
             byKey[key] = s
+        }
+
+        // A reply newer than anything the box said puts the ticket back to "sent" until the box answers.
+        for r in replies.sorted(by: { $0.at < $1.at }) {
+            guard var s = byKey[r.ticket] else { continue }
+            s.replies.append(r)
+            if r.at > (s.messages.first?.at ?? 0) {
+                s.state = .sent
+                s.lastSent = r.date
+                s.updated = max(s.updated, r.date)
+            }
+            byKey[r.ticket] = s
         }
         return byKey.values.sorted { $0.updated > $1.updated }
     }

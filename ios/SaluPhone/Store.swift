@@ -14,6 +14,10 @@ final class Store: ObservableObject {
     @Published private(set) var read: Set<String> { didSet { defaults.set(Array(read), forKey: "readIds") } }
     /// Tickets this phone sent, newest first.
     @Published private(set) var sent: [SentTicket] { didSet { defaults.set(try? JSONEncoder().encode(sent), forKey: "sentTickets") } }
+    /// Replies this phone sent, newest first.
+    @Published private(set) var replies: [SentReply] { didSet { defaults.set(try? JSONEncoder().encode(replies), forKey: "sentReplies") } }
+    /// Unsent reply text per ticket, so closing the sheet loses nothing.
+    @Published var replyDrafts: [String: String] { didSet { defaults.set(replyDrafts, forKey: "replyDrafts") } }
 
     @Published var messages: [SaluMessage] = []
     @Published var error: String?
@@ -46,6 +50,12 @@ final class Store: ObservableObject {
         } else {
             sent = []
         }
+        if let data = defaults.data(forKey: "sentReplies"), let list = try? JSONDecoder().decode([SentReply].self, from: data) {
+            replies = list
+        } else {
+            replies = []
+        }
+        replyDrafts = defaults.dictionary(forKey: "replyDrafts") as? [String: String] ?? [:]
     }
 
     // MARK: derived
@@ -61,7 +71,7 @@ final class Store: ObservableObject {
     func isRead(_ m: SaluMessage) -> Bool { read.contains(m.id) }
 
     var tickets: [TicketSummary] {
-        Tickets.build(messages: messages, sent: sent.filter { $0.repo == repoKey })
+        Tickets.build(messages: messages, sent: sent.filter { $0.repo == repoKey }, replies: replies.filter { $0.repo == repoKey })
     }
     func ticket(_ id: String) -> TicketSummary? { tickets.first { $0.id == id } }
     func ticket(for m: SaluMessage) -> TicketSummary? {
@@ -108,6 +118,23 @@ final class Store: ObservableObject {
             try await c.send(SaluTicket(id: id, project: project, name: name, query: query, priority: priority, queue: queue, at: ms))
             sent.insert(SentTicket(id: id, repo: repoKey, project: project, name: name, query: query, queue: queue, priority: priority, at: ms), at: 0)
             if sent.count > 200 { sent.removeLast(sent.count - 200) }
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// Writes a follow-up for the ticket to salu/inbox; the box resumes the worker's conversation with it.
+    /// Returns nil when it went, else what went wrong.
+    func reply(to t: TicketSummary, body: String, now: Bool) async -> String? {
+        guard let c = client else { return SaluError.notConfigured.localizedDescription }
+        let (id, ms) = newTicketId()
+        let ref = t.id.hasPrefix("box:") ? nil : t.id  // tickets this phone sent are keyed by their file id
+        do {
+            try await c.send(SaluReply(id: id, project: t.project, ref: ref, name: t.name, body: body, now: now, at: ms))
+            replies.insert(SentReply(id: id, repo: repoKey, ticket: t.id, body: body, now: now, at: ms), at: 0)
+            if replies.count > 500 { replies.removeLast(replies.count - 500) }
+            replyDrafts[t.id] = nil
             return nil
         } catch {
             return error.localizedDescription

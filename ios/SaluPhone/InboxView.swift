@@ -198,6 +198,7 @@ struct MessageRow: View {
 struct MessageDetail: View {
     @EnvironmentObject var store: Store
     let m: SaluMessage
+    @State private var replying = false
 
     var body: some View {
         ScrollView {
@@ -221,7 +222,7 @@ struct MessageDetail: View {
                         VStack(alignment: .leading, spacing: 10) {
                             Text(q).textSelection(.enabled)
                             if let t = m.ticket {
-                                Text("Allow it on your computer, then the box runs it again:")
+                                Text("Answer it with keep chatting. If it needs a permission, allow it on your computer and the box runs it again:")
                                     .font(Salu.mono(.caption))
                                     .foregroundStyle(Salu.dim)
                                 ShellCommand(command: "salu allow \"\(t.name)\"")
@@ -229,7 +230,11 @@ struct MessageDetail: View {
                         }
                     }
                 }
-                if let b = m.body {
+                if let r = m.reply, r != m.question {
+                    Card(title: "reply", tint: m.look.color) {
+                        Text(r).textSelection(.enabled)
+                    }
+                } else if let b = m.body {
                     Card(title: m.type == "ticket.failed" ? "error" : "detail", tint: m.type == "ticket.failed" ? Salu.error : Salu.chrome) {
                         Text(b).textSelection(.enabled)
                     }
@@ -265,6 +270,16 @@ struct MessageDetail: View {
         .navigationTitle(m.ticket.map { "#\($0.id)" as String } ?? "message")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { store.markRead(m) }
+        .safeAreaInset(edge: .bottom) {
+            if m.workerText != nil, let t = store.ticket(for: m), t.canReply, store.configured {
+                ReplyButton(number: t.number) { replying = true }
+            }
+        }
+        .sheet(isPresented: $replying) {
+            if let t = store.ticket(for: m) {
+                ReplySheet(ticketId: t.id).environmentObject(store)
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {

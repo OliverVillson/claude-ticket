@@ -20,7 +20,11 @@ After pulling new Swift files, run `xcodegen generate` again so Xcode sees them.
   unread / needs you. The header dog runs while a ticket runs and sleeps otherwise (tap it: it barks).
 - **Message**: blocked tickets show what they need and the `salu allow` command to copy; done ones their result branch.
 - **Tickets**: every ticket grouped by needs you / running / waiting / done, built from the messages plus the tickets
-  this phone sent (they show as "sent" until the box answers). A ticket opens its timeline.
+  this phone sent (they show as "sent" until the box answers). A ticket opens its conversation (what you asked, the
+  worker's replies, your follow-ups) and its timeline.
+- **Keep chatting** (bottom of a ticket, or of its done / blocked / failed message): one field, sent as a `ticket-reply`
+  to `salu-inbox/replies/<id>.json`, the phone's `salu reply`. The worker resumes the same session on the same branch.
+  "Jump the queue" is `--now`. The ticket shows as "sent" until the box answers; the draft is kept per ticket.
 - **New ticket** (the green button at the bottom): type what it should do; the name comes from the first words unless
   you give one. Run now or backlog, priority p1 to p5. The draft is kept if you close the sheet.
 - **Settings**: repo (owner/name or a pasted github.com link), project, token, and Test connection.
