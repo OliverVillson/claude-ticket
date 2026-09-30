@@ -27,7 +27,7 @@ export interface GitResult {
 }
 
 export function git(cwd: string, args: string[]): GitResult {
-  const r = Bun.spawnSync(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', ...args], { cwd, stdout: 'pipe', stderr: 'pipe', env: GIT_ENV() });
+  const r = Bun.spawnSync(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', '-c', 'core.symlinks=false', ...args], { cwd, stdout: 'pipe', stderr: 'pipe', env: GIT_ENV() });
   return { ok: r.exitCode === 0, out: r.stdout.toString(), err: r.stderr.toString() };
 }
 
