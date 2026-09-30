@@ -130,7 +130,7 @@ project's workers in a kernel:
 - Agents get an allow-list environment (PATH, locale, proxy and CA settings, Claude/Anthropic variables), not
   your tokens or database URLs. `SALU_ENV_PASS=NAME,OTHER` lets chosen variables through.
 - A sandbox that cannot start stops the ticket instead of running unprotected.
-- Nothing reaches your real project until you run, yourself, from a terminal (agents have none, and cannot write outside the kernel anyway):
+- Nothing reaches your real project until you run, yourself, from a terminal (a guard rail: the real barrier is that agents cannot write outside the kernel or use your git login):
   - `salu push [project] [--branch B] [--to url] [--dry-run]` pushes the `salu/*` branches to the project's git remote.
   - `salu export <folder> [project] [--git] [--force]` copies the files to a folder.
 

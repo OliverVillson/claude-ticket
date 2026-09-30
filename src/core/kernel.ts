@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, realpathSync, statSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import type { HookCallback, Options } from '@anthropic-ai/claude-agent-sdk';
@@ -41,9 +41,9 @@ export function setHumanTty(fn: (() => boolean) | null): void {
 }
 
 /**
- * salu push/export are for a person at a terminal. Two checks: the worker marker (a hint, a worker can
- * clear it), and a real terminal on stdin and stdout, which a worker's shell does not have.
- * The real barrier is the OS sandbox: a sandboxed shell cannot write outside the kernel or read your logins.
+ * salu push/export are for a person at a terminal. These checks are guard rails, not a barrier: a worker
+ * can clear the marker and can fake a terminal (`script`). What actually stops a worker is the OS sandbox
+ * and the file-tool fence: it cannot write outside the kernel, read your git login, or push with your credentials.
  */
 export function requireHuman(what: string): void {
   if (insideWorker() || !ttyCheck()) throw new CliError(`salu ${what} is for you, not for agents: run it yourself, from an interactive terminal.`);
@@ -110,22 +110,35 @@ export function scrubSecrets(env: Record<string, string | undefined>, pass: stri
   return out;
 }
 
-/** Real path of `p`, following symlinks in the part that exists (so a link inside the kernel cannot lead out). */
-function canon(p: string, cwd: string, home: string): string {
+/**
+ * Real path of `p`: symlinks are followed in the part that exists, including a link whose target does not
+ * exist yet (a dangling link is followed to where writing through it would land), and `..` is resolved.
+ * A link loop or an unreadable link resolves to a path that no allow-list contains.
+ */
+function canon(p: string, cwd: string, home: string, depth = 0): string {
+  if (depth > 40) return '/__salu_symlink_loop__';
   const expanded = p === '~' ? home : p.startsWith('~/') ? join(home, p.slice(2)) : p;
   let cur = resolve(isAbsolute(expanded) ? expanded : join(cwd, expanded));
   const rest: string[] = [];
-  for (let guard = 0; guard < 64; guard++) {
+  for (let guard = 0; guard < 4096; guard++) {
     try {
       return join(realpathSync(cur), ...rest.reverse());
     } catch {
+      try {
+        if (lstatSync(cur).isSymbolicLink()) {
+          // exists as a link (dangling or looping): continue from where it points
+          return canon(join(resolve(dirname(cur), readlinkSync(cur)), ...rest.reverse()), cwd, home, depth + 1);
+        }
+      } catch {
+        /* does not exist at all: go up */
+      }
       const up = dirname(cur);
       if (up === cur) break;
       rest.push(cur.slice(up.length).replace(/^[/\\]/, ''));
       cur = up;
     }
   }
-  return resolve(p);
+  return '/__salu_unresolvable__';
 }
 
 const within = (p: string, dir: string) => p === dir || p.startsWith(dir.endsWith(sep) ? dir : dir + sep);

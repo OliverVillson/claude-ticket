@@ -109,6 +109,23 @@ describe('kernel', () => {
     expect(g('Write', { file_path: join(k, '.git', 'hooks', 'pre-push') })).toContain('inside the kernel');
     expect(g('Write', { file_path: join(k, '.git', 'config') })).toContain('inside the kernel');
     expect(g('NotebookEdit', { notebook_path: join(real, 'n.ipynb') })).toContain('inside the kernel');
+    // links whose target does not exist yet, chains and loops
+    symlinkSync(join(home, '.zshenv'), join(k, 'notes.txt'));
+    symlinkSync(join(real, 'new.txt'), join(k, 'dangling-real'));
+    symlinkSync(join(k, 'dangling-real'), join(k, 'chain'));
+    symlinkSync(join(k, 'loop-b'), join(k, 'loop-a'));
+    symlinkSync(join(k, 'loop-a'), join(k, 'loop-b'));
+    symlinkSync(join(k, 'inside-target.txt'), join(k, 'inside-link'));
+    symlinkSync('../../../../.zshenv', join(k, 'relative-dangling'));
+    expect(g('Write', { file_path: join(k, 'notes.txt') })).toContain('inside the kernel'); // dangling link to ~/.zshenv
+    expect(g('Write', { file_path: 'notes.txt' })).toContain('inside the kernel');
+    expect(g('Write', { file_path: join(k, 'dangling-real') })).toContain('inside the kernel'); // into the real project
+    expect(g('Write', { file_path: join(k, 'chain') })).toContain('inside the kernel');
+    expect(g('Write', { file_path: join(k, 'relative-dangling') })).toContain('inside the kernel');
+    expect(g('Write', { file_path: join(k, 'loop-a') })).toContain('inside the kernel');
+    expect(g('Read', { file_path: join(k, 'loop-a') })).toContain('only read');
+    expect(g('Write', { file_path: join(k, 'inside-link') })).toBeNull(); // a link that stays inside is fine
+    expect(g('Write', { file_path: join(k, 'notes.txt', 'sub') })).toContain('inside the kernel');
     // reads
     expect(g('Read', { file_path: join(k, 'a.txt') })).toBeNull();
     expect(g('Read', { file_path: '/usr/lib/x' })).toBeNull();
