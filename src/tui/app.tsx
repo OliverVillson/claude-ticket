@@ -25,6 +25,9 @@ import { HelpView } from './components/HelpView.tsx';
 import { style as st } from './style.ts';
 import { CommandLine } from './components/CommandLine.tsx';
 import { ResultView } from './components/ResultView.tsx';
+import { NotifScreen } from './components/NotifView.tsx';
+import { isMouseInput } from './mouse.ts';
+import { fetchInBackground } from '../notif/index.ts';
 import { LIST_HINTS, ListView, listInnerWidth } from './components/ListView.tsx';
 import type { Message } from './messages.ts';
 import { runCommand } from './command.ts';
@@ -55,7 +58,7 @@ export interface AppProps {
 
 export type FormResult = { action: 'added' | 'saved'; ticket: TicketView } | { action: 'cancelled' } | null;
 
-type Mode = 'list' | 'detail' | 'props' | 'form' | 'help' | 'result';
+type Mode = 'list' | 'detail' | 'props' | 'form' | 'help' | 'result' | 'notif';
 
 /** Lines around the panes: header, two border lines, the boxed command line (3), the hint bar, plus one spare. */
 const CHROME_LINES = 8;
@@ -249,6 +252,14 @@ export function App(p: AppProps) {
     const i = setInterval(() => refresh(), p.pollMs ?? 1000);
     return () => clearInterval(i);
   }, [refresh, p.pollMs, standaloneForm]);
+
+  // The badge in the header counts messages already fetched; ask the git transport for new ones now and then.
+  useEffect(() => {
+    if (standaloneForm) return;
+    void fetchInBackground(db);
+    const i = setInterval(() => void fetchInBackground(db), 60_000);
+    return () => clearInterval(i);
+  }, [db, standaloneForm]);
 
   useEffect(() => {
     const i = setInterval(() => setTick((t) => t + 1), 30_000);
@@ -483,6 +494,10 @@ export function App(p: AppProps) {
         setCmdEditing(false);
         return openForm('add');
       }
+      if (r.openNotif) {
+        setCmdEditing(false);
+        return setMode('notif');
+      }
       refresh(true);
       if (r.lines.length > 1) {
         setResult({ command: text, lines: r.lines, ok: r.ok, offset: 0 });
@@ -498,6 +513,7 @@ export function App(p: AppProps) {
   // ----- keys ----------------------------------------------------------------------------
   useInput(
     (input, key) => {
+      if (isMouseInput(input)) return; // a stray mouse report (the notification window turns the mouse on)
       if (egg?.kind === 'rain') return setEgg(null); // any key ends the rain
       if (mode === 'help') {
         setMode('list');
@@ -614,6 +630,7 @@ export function App(p: AppProps) {
         return;
       }
       if (input === 'p') return doTogglePause();
+      if (input === 'n' && mode === 'list') return setMode('notif');
       if (input === 'q' || (key.ctrl && input === 'c')) return exit();
 
       if (mode === 'detail') {
@@ -635,7 +652,7 @@ export function App(p: AppProps) {
         else exit();
       }
     },
-    { isActive: mode !== 'form' && mode !== 'props' },
+    { isActive: mode !== 'form' && mode !== 'props' && mode !== 'notif' },
   );
 
   // ----- render --------------------------------------------------------------------------
@@ -683,6 +700,17 @@ export function App(p: AppProps) {
         onClose={() => setMode('list')}
       />;
   }
+  if (mode === 'notif')
+    return (
+      <NotifScreen
+        db={db}
+        scopeName={scopeName}
+        onClose={() => {
+          setMode('list');
+          refresh(true);
+        }}
+      />
+    );
   if (mode === 'help') return <HelpView columns={columns} scopeName={scopeName} />;
   if (mode === 'detail' && detail) {
     return (
@@ -734,6 +762,7 @@ export function App(p: AppProps) {
       sidebar={sidebar}
       activity={activity}
       commandFocus={cmdEditing}
+      unread={snapshot.unread}
       command={<CommandLine columns={columns} focused={cmdEditing} value={cmdValue} onChange={setCmdValue} busy={cmdBusy} nonce={cmdNonce} />}
       working={working}
       usage={usageSnap}

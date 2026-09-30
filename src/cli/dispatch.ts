@@ -23,6 +23,8 @@ Usage   (salu ?  |  salu help  |  salu --help  shows this list; quote the ? in z
   salu push [project] [--branch B] [--to url] [--dry-run]   send what agents made in the kernel to the project's git remote
   salu export <folder> [project] [--git] [--force]           copy what agents made in the kernel to a folder
   salu remote add|list|remove|sync            run a project on an always-on box through its git remote (salu remote --help)
+  salu notif [--all] [--json]                messages from your project orchestrators (done, blocked, failed); hover or Enter marks one read
+  salu notif read <id>... | --all            mark messages read from the shell
   salu pause | salu resume | salu stop
   salu status [--json]
   salu usage [--json] [--refresh]            how much of your Claude plan's 5-hour and weekly usage is left
@@ -77,6 +79,9 @@ export async function dispatch(argv: string[]): Promise<number> {
       return (await import('./commands/queue.ts')).unqueue(sub);
     case 'allow':
       return (await import('./commands/allow.ts')).allow(sub);
+    case 'notif':
+    case 'notifs':
+      return (await import('./commands/notif.ts')).notif(sub);
     case 'push':
       return (await import('./commands/push.ts')).push(sub);
     case 'export':

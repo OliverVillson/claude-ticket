@@ -7,6 +7,7 @@ import { bold, cyan, dim, green, magenta, red, yellow } from '../../core/ansi.ts
 import { formatClock, formatDuration, statusColor } from '../../core/format.ts';
 import { helpIf, isEmbedded } from './_shared.ts';
 import { formatUsageHeader, getPause, formatPause, peekUsageSnapshot, getUsageSnapshot, sdkFetcher } from '../../usage/index.ts';
+import { countUnread } from '../../notif/index.ts';
 import { GLYPHS } from '../../ui/glyphs.ts';
 
 const HELP = `salu status [--json]
@@ -20,6 +21,7 @@ export async function status(p: Parsed): Promise<number> {
   const now = Date.now();
   const st = readStatus(db, now);
   const counts = countTickets(db);
+  const unread = countUnread(db);
   // A read of the plan usage takes seconds and is cached for a minute. On the terminal wait for it;
   // inside the TUI show the cache and refresh in the background so the command answers at once.
   const fetcher = sdkFetcher({ timeoutMs: 8_000 });
@@ -27,7 +29,7 @@ export async function status(p: Parsed): Promise<number> {
   if (isEmbedded()) void getUsageSnapshot({ db, fetcher }).catch(() => {});
   else usage = await getUsageSnapshot({ db, fetcher }).catch(() => usage);
   if (flagBool(p, 'json')) {
-    console.log(JSON.stringify({ orchestrator: st, tickets: counts, projects: listProjects(db).length, usage }, null, 2));
+    console.log(JSON.stringify({ orchestrator: st, tickets: counts, projects: listProjects(db).length, unread, usage }, null, 2));
     return 0;
   }
   const lines: string[] = [];
@@ -55,6 +57,7 @@ export async function status(p: Parsed): Promise<number> {
       lines.push(`  ${cyan(GLYPHS.running)} ${name} ${dim(`${formatDuration(now - w.startedAt)} · ${detail}`)}`);
     }
   }
+  if (unread) lines.push('', cyan(`${unread} unread message${unread === 1 ? '' : 's'} from your orchestrators: salu notif`));
   const blocked = counts.blocked;
   if (blocked) lines.push('', yellow(`${blocked} ticket${blocked === 1 ? '' : 's'} blocked on a question: salu list --status blocked`));
   if (counts.failed) lines.push(red(`${counts.failed} failed: salu log "name" shows why; salu change "name" --status todo retries`));

@@ -60,6 +60,8 @@ export interface ListViewProps {
   command?: React.ReactNode;
   /** the command line has the focus: both panes look inactive */
   commandFocus?: boolean;
+  /** unread orchestrator messages, shown in the header with the key that opens them */
+  unread?: number;
 }
 
 export const LIST_HINTS: Array<[string, string]> = [
@@ -70,6 +72,7 @@ export const LIST_HINTS: Array<[string, string]> = [
   ['d', 'delete'],
   ['u', 'queue'],
   ['r', 'run now'],
+  ['n', 'notifs'],
   ['p', 'pause'],
   ['/', 'filter'],
   [':', 'command'],
@@ -98,13 +101,15 @@ export function ListView(p: ListViewProps) {
   const counts = p.filter.trim() ? `${p.tickets.length} of ${p.total} match` : countsText(p.counts);
   const badgeW = displayWidth(statusText(p.status, p.now));
   const dogW = p.working ? DOG_WIDTH + 2 : 0;
-  const headRoom = cols - 1 - titleWidth(crumbs) - badgeW - 9 - dogW;
+  const unreadCell = p.unread ? `${p.unread} unread (n)` : '';
+  const unreadW = unreadCell ? displayWidth(unreadCell) + 5 : 0;
+  const headRoom = cols - 1 - titleWidth(crumbs) - badgeW - 9 - dogW - unreadW;
   // The usage meter yields to the counts on narrow terminals: counts keep at least 14 cells first.
   const usage = p.usage === undefined ? '' : usageText(p.usage, Math.max(0, headRoom - 14 - 5), st, p.now);
   const usageW = usage ? displayWidth(usage) + 5 : 0;
   const countsShown = truncate(counts, Math.max(0, headRoom - usageW));
   const dog = p.working && cols - 1 - titleWidth(crumbs) - badgeW - 9 >= dogW ? dogFrame(p.spinner ?? 0, { level: st.level }) + '  ' : '';
-  const headerRight = dog + (countsShown ? st.dim(countsShown + '  ·  ') : '') + (usage ? usage + st.dim('  ·  ') : '') + statusBadge(p.status, p.now, !p.working || blinkOn(p.spinner ?? 0));
+  const headerRight = dog + (unreadCell ? st.yellow(unreadCell) + st.dim('  ·  ') : '') + (countsShown ? st.dim(countsShown + '  ·  ') : '') + (usage ? usage + st.dim('  ·  ') : '') + statusBadge(p.status, p.now, !p.working || blinkOn(p.spinner ?? 0));
 
   // Footer: filter prompt, delete confirm, message or hints; position on the right.
   const position = p.tickets.length ? `${p.cursor + 1}/${p.tickets.length}` : '';

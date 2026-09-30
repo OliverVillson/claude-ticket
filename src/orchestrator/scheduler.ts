@@ -10,6 +10,7 @@ import type { Database } from 'bun:sqlite';
 import { statSync, watch, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
 import { recordRemoteEvent } from '../sync/events.ts';
+import { notifyEvent, notifyProblem } from '../notif/index.ts';
 import { claimNextTicket, createRun, finishRun, getProjectById, getState, inheritedProject, getTicketById, listProjects, listTickets, setState, updateTicket, type TicketPatch } from '../db/queries.ts';
 import { STATE, type Run, type TicketStatus, type TicketView } from '../db/types.ts';
 import { CliError } from '../core/errors.ts';
@@ -386,6 +387,7 @@ export class Orchestrator {
     }
 
     if (this.envProblem && !this.stopping) {
+      notifyProblem(db, t.project_id, 'The orchestrator stopped: fix this, then run salu run again', this.envProblem);
       this.log('error', `${this.envProblem} The ticket went back to todo; run \`salu run\` again once this is fixed.`);
       this.stop('environment problem');
     }
@@ -535,6 +537,7 @@ export class Orchestrator {
 
   private emit(e: OrchestratorEvent): void {
     recordRemoteEvent(this.db, e); // messages for `salu notif` when this machine is a project's box
+    notifyEvent(this.db, e); // and on this machine when it is not
     for (const l of this.listeners) {
       try {
         l(e);

@@ -19,6 +19,7 @@ import { green, dim } from '../core/ansi.ts';
 import { defaultActions, type TuiActions } from './actions.ts';
 import { App, mount, type FormResult } from './app.tsx';
 import { RunView } from './components/RunView.tsx';
+import { NotifStandalone } from './components/NotifView.tsx';
 import { loadSnapshot } from './store.ts';
 import type { UsageSource } from './usage.ts';
 import { peekUsageSnapshot, watchUsage } from '../usage/snapshot.ts';
@@ -111,4 +112,23 @@ export async function openRunView(o: OpenRunViewOptions): Promise<void> {
     <RunView db={db} projectIds={o.projectIds} concurrency={o.concurrency} stop={o.stop} subscribe={o.subscribe} actions={{ ...defaultActions(db), ...o.actions }} pollMs={o.pollMs} />,
     { stdout: o.stdout, stdin: o.stdin, exitOnCtrlC: false },
   );
+}
+
+export interface OpenNotifsOptions extends CommonOptions {
+  /** only this project's messages */
+  projectId?: number;
+  /** keep read messages in the list */
+  showRead?: boolean;
+  /** dwell time before hover marks a message read */
+  hoverMs?: number;
+  fullscreen?: boolean;
+}
+
+/**
+ * `salu notif`: the notification window on its own. Fullscreen by default, because the mouse
+ * position is only meaningful when the window starts at the top of the terminal.
+ */
+export async function openNotifs(o: OpenNotifsOptions = {}): Promise<void> {
+  const db = o.db ?? openDb();
+  await mount(<NotifStandalone db={db} projectId={o.projectId} showRead={o.showRead} hoverMs={o.hoverMs} pollMs={o.pollMs} />, { stdout: o.stdout, stdin: o.stdin, fullscreen: o.fullscreen ?? true });
 }
