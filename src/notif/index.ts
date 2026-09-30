@@ -29,13 +29,41 @@ export interface ListOptions {
   limit?: number;
 }
 
+// Message text comes from elsewhere (a box, or an agent's own output) and goes to a terminal, where
+// an escape sequence can do more than draw: OSC 52 rewrites the clipboard, others retitle the window
+// or move the cursor. Everything shown is cleaned here, at the one place messages are read, so the
+// CLI (plain and JSON) and the window cannot forget.
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
+
+/** Remove control characters (ESC, CR, C1, bidi overrides). Newlines and tabs stay when `multiline`, else they become spaces. */
+export function cleanText(s: string, multiline = false): string {
+  const t = multiline ? s.replace(/\r\n?/g, '\n') : s.replace(/[\r\n\t]+/g, ' ');
+  return t.replace(CONTROL, '');
+}
+
+function clean(n: Notif): Notif {
+  return {
+    ...n,
+    id: cleanText(n.id),
+    project: cleanText(n.project),
+    from: cleanText(n.from),
+    title: cleanText(n.title),
+    body: n.body === undefined ? undefined : cleanText(n.body, true),
+    question: n.question === undefined ? undefined : cleanText(n.question, true),
+    branch: n.branch === undefined ? undefined : cleanText(n.branch),
+    ticket: n.ticket ? { ...n.ticket, name: cleanText(n.ticket.name) } : n.ticket,
+  };
+}
+
 /** Newest first. */
 export function listNotifs(db: Database, o: ListOptions = {}): Notif[] {
-  return listNotifications(db, { all: !o.unread, projectId: o.projectId, limit: o.limit }).reverse();
+  return listNotifications(db, { all: !o.unread, projectId: o.projectId, limit: o.limit }).reverse().map(clean);
 }
 
 export function getNotif(db: Database, id: string): Notif | null {
-  return listNotifications(db, { all: true, limit: 100000 }).find((n) => n.id === id) ?? null;
+  const n = listNotifications(db, { all: true, limit: 100000 }).find((m) => m.id === id);
+  return n ? clean(n) : null;
 }
 
 /** Mark these read; returns how many were unread before. */

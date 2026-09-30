@@ -12,6 +12,7 @@ import { getRemote, setRemote, storeIncomingMessage, unreadCount } from '../src/
 import { syncProject } from '../src/sync/sync.ts';
 import { git } from '../src/sync/git.ts';
 import {
+  cleanText,
   countUnread,
   getNotif,
   listNotifs,
@@ -104,6 +105,27 @@ describe('reading', () => {
     expect(storeIncomingMessage(db, web.id, m)).toBe(true);
     expect(storeIncomingMessage(db, web.id, m)).toBe(false);
     expect(unreadCount(db)).toBe(1);
+  });
+});
+
+describe('terminal escapes', () => {
+  const OSC52 = '\u001b]52;c;ZXZpbA==\u0007';
+  test('cleanText drops escapes and control characters, keeps newlines and tabs only for bodies', () => {
+    expect(cleanText(`a${OSC52}b\u009bc\r\u202ed`)).toBe('a]52;c;ZXZpbA==bc d');
+    expect(cleanText('x\ny\tz')).toBe('x y z');
+    expect(cleanText('x\ny\tz', true)).toBe('x\ny\tz');
+    expect(cleanText('x\r\ny', true)).toBe('x\ny');
+  });
+
+  test('a stored message with escapes is clean everywhere it is read', async () => {
+    postLocal(db, web.id, { type: 'note', level: 'error', title: `t${OSC52}itle`, body: `line1\nli${OSC52}ne2`, branch: `salu/a\u001b[2Jb`, ticket: { name: `n\u001b[31mame`, id: 1 } });
+    const n = listNotifs(db)[0]!;
+    for (const v of [n.title, n.body, n.branch, n.ticket?.name, JSON.stringify(notifText(n))]) expect(v).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/);
+    expect(n.body).toContain('\n');
+    process.env.NO_COLOR = '1';
+    const esc = /\u001b/;
+    expect(esc.test((await cli('notif', '--plain', '--no-fetch')).out)).toBe(false);
+    expect(esc.test((await cli('notif', '--json', '--no-fetch')).out)).toBe(false);
   });
 });
 
