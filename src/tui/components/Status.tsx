@@ -2,10 +2,11 @@ import type { OrchestratorStatus, PauseInfo } from '../../orchestrator/status.ts
 import { fmtDuration } from '../format.ts';
 import { style as st } from '../style.ts';
 import { paint } from '../theme.ts';
+import { GLYPHS } from '../../ui/glyphs.ts';
 
 /** "‖ paused · session limit · resumes in 42m". */
 export function pauseText(p: PauseInfo, now: number): string {
-  const bits: string[] = ['‖ paused'];
+  const bits: string[] = [`${GLYPHS.paused} paused`];
   if (p.manual) bits.push('manual');
   else if (p.kind) bits.push(`${p.kind} limit${p.models.length ? ` (${p.models.join(',')})` : ''}`);
   if (p.until != null) {
@@ -19,8 +20,8 @@ export function pauseText(p: PauseInfo, now: number): string {
 /** "● orchestrator on · 2 workers" / "‖ paused · …" / "○ orchestrator off" (plain text). */
 export function statusText(s: OrchestratorStatus, now: number): string {
   if (s.paused) return pauseText(s.paused, now);
-  if (s.alive) return `● orchestrator on${s.workers.length ? ` · ${s.workers.length} worker${s.workers.length === 1 ? '' : 's'}` : ''}`;
-  return '○ orchestrator off';
+  if (s.alive) return `${GLYPHS.on} orchestrator on${s.workers.length ? ` · ${s.workers.length} worker${s.workers.length === 1 ? '' : 's'}` : ''}`;
+  return `${GLYPHS.off} orchestrator off`;
 }
 
 /** The same text, coloured: magenta when paused, accent when on, dim when off. */

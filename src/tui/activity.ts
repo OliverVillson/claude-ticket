@@ -3,6 +3,8 @@ import { wrapText, displayWidth } from './format.ts';
 import type { LogLine } from './log-tail.ts';
 import type { Style } from './style.ts';
 import { renderDog } from './dog/render.ts';
+import { sleepFrame } from './dog/line.ts';
+import { GLYPHS } from '../ui/glyphs.ts';
 
 /**
  * The live-activity area between the panes and the command line: what the worker of one
@@ -42,15 +44,15 @@ export function activityLines(log: LogLine[], width: number, st: Style): string[
 function glyph(kind: LogLine['kind'], st: Style): string {
   switch (kind) {
     case 'tool':
-      return st.dim('⏺ ');
+      return st.dim(GLYPHS.say + ' ');
     case 'text':
-      return st.accent('⏺ ');
+      return st.accent(GLYPHS.say + ' ');
     case 'result':
-      return st.green('✓ ');
+      return st.green(GLYPHS.done + ' ');
     case 'error':
-      return st.red('✗ ');
+      return st.red(GLYPHS.failed + ' ');
     default:
-      return st.dim('· ');
+      return st.dim(GLYPHS.dot + ' ');
   }
 }
 
@@ -85,7 +87,7 @@ export function idleLines(width: number, height: number, st: Style, tick: number
   const pad = (s: string) => ' '.repeat(Math.max(0, Math.floor((width - displayWidth(s)) / 2))) + s;
   // Too short for the whole dog: one line with a tiny sleeper instead of a cropped sprite.
   const fits = height >= dog.length + 2 && width >= displayWidth(dog[0] ?? '') + 2;
-  const shown = fits ? [...dog, '', text] : height >= 1 ? [st.accent('=-.-=') + st.dim(' z Z  no tickets running')] : [];
+  const shown = fits ? [...dog, '', text] : height >= 1 ? [sleepFrame({ level: st.level }) + ' ' + text] : [];
   const top = Math.max(0, Math.floor((height - shown.length) / 2));
   return [...Array(top).fill(''), ...shown.map(pad)];
 }

@@ -5,6 +5,7 @@ import { pidAlive, readStatus } from '../../orchestrator/status.ts';
 import { clearPause, enterManualPause } from '../../usage/index.ts';
 import { dim, green, magenta } from '../../core/ansi.ts';
 import { helpIf } from './_shared.ts';
+import { GLYPHS } from '../../ui/glyphs.ts';
 
 export async function pause(p: Parsed): Promise<number> {
   if (helpIf(p, 'salu pause\n\nStops dispatching new workers after the current ones finish. `salu resume` continues.')) return 0;
@@ -22,7 +23,7 @@ export async function resume(p: Parsed): Promise<number> {
   clearPause(db);
   wakeOrchestrator();
   const st = readStatus(db);
-  console.log(`${green('▶')} resumed ${dim(st.alive ? '' : '(orchestrator not running: salu run)')}`);
+  console.log(`${green(GLYPHS.start)} resumed ${dim(st.alive ? '' : '(orchestrator not running: salu run)')}`);
   return 0;
 }
 

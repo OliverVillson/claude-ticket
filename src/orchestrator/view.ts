@@ -13,6 +13,7 @@ import { labelForKind } from '../usage/index.ts';
 import type { LimitKind } from '../usage/types.ts';
 import type { Orchestrator } from './scheduler.ts';
 import type { OrchestratorEvent } from './types.ts';
+import { GLYPHS } from '../ui/glyphs.ts';
 
 function stamp(): string {
   return dim(new Date().toLocaleTimeString(undefined, { hour12: false }));
@@ -41,38 +42,38 @@ export function describePause(p: PauseLike, now = Date.now()): string {
 export function formatEvent(e: OrchestratorEvent): string | null {
   switch (e.type) {
     case 'start':
-      return `${green('●')} orchestrator started ${dim(`pid ${e.pid}, up to ${e.concurrency} at a time`)}`;
+      return `${green(GLYPHS.on)} orchestrator started ${dim(`pid ${e.pid}, up to ${e.concurrency} at a time`)}`;
     case 'dispatch':
-      return `${cyan('▶')} ${bold(e.ticket.name)} ${dim(`${e.resumed ? 'resuming session' : 'started'} · ${e.ticket.project} · run ${e.runId}`)}`;
+      return `${cyan(GLYPHS.start)} ${bold(e.ticket.name)} ${dim(`${e.resumed ? 'resuming session' : 'started'} · ${e.ticket.project} · run ${e.runId}`)}`;
     case 'finish': {
       const meta = dim(`${formatDuration(e.durationMs ?? 0)} · ${e.turns} turn${e.turns === 1 ? '' : 's'} · ${formatCost(e.costUsd)}`);
       const n = bold(e.ticket.name);
       switch (e.outcome) {
         case 'done':
-          return `${green('✓')} ${n} done ${meta}`;
+          return `${green(GLYPHS.done)} ${n} done ${meta}`;
         case 'blocked':
           return `${yellow('?')} ${n} blocked ${meta}\n    ${yellow(truncate(e.error ?? '', 200))}`;
         case 'failed':
-          return `${red('✗')} ${n} ${e.status === 'failed' ? 'failed' : 'failed, will retry'} ${meta}${e.error ? `\n    ${red(truncate(e.error, 200))}` : ''}`;
+          return `${red(GLYPHS.failed)} ${n} ${e.status === 'failed' ? 'failed' : 'failed, will retry'} ${meta}${e.error ? `\n    ${red(truncate(e.error, 200))}` : ''}`;
         case 'rate_limited':
-          return `${magenta('‖')} ${n} hit a usage limit, parked with its session ${meta}`;
+          return `${magenta(GLYPHS.paused)} ${n} hit a usage limit, parked with its session ${meta}`;
         case 'killed':
-          return `${gray('■')} ${n} interrupted ${dim('(back in the queue, session kept)')} ${meta}`;
+          return `${gray(GLYPHS.interrupted)} ${n} interrupted ${dim('(back in the queue, session kept)')} ${meta}`;
       }
       return null;
     }
     case 'pause':
-      return `${magenta('‖')} ${describePause(e)}`;
+      return `${magenta(GLYPHS.paused)} ${describePause(e)}`;
     case 'resume':
-      return `${green('▶')} resumed dispatch`;
+      return `${green(GLYPHS.start)} resumed dispatch`;
     case 'probe':
-      return `${e.ok ? green('✓') : magenta('…')} window check: ${e.ok ? 'open' : 'still closed'}${e.detail ? dim(` — ${truncate(e.detail, 120)}`) : ''}`;
+      return `${e.ok ? green(GLYPHS.done) : magenta(GLYPHS.ellipsis)} window check: ${e.ok ? 'open' : 'still closed'}${e.detail ? dim(` — ${truncate(e.detail, 120)}`) : ''}`;
     case 'idle':
-      return dim('○ queue empty, waiting for tickets (salu add …)');
+      return dim(`${GLYPHS.off} queue empty, waiting for tickets (salu add …)`);
     case 'log':
       return e.level === 'error' ? `${red('!')} ${e.message}` : e.level === 'warn' ? `${yellow('!')} ${e.message}` : dim(e.message);
     case 'stop':
-      return `${gray('○')} orchestrator stopped`;
+      return `${gray(GLYPHS.off)} orchestrator stopped`;
     default:
       return null;
   }
@@ -104,7 +105,7 @@ export function attachLiveView(orch: Orchestrator, db: Database, out: NodeJS.Wri
     const counts = countTickets(db);
     const workers = orch.workers;
     const lines: string[] = [];
-    const state = stopped ? gray('○ stopped') : lastPause ? magenta('‖ paused') : green('● running');
+    const state = stopped ? gray(`${GLYPHS.off} stopped`) : lastPause ? magenta(`${GLYPHS.paused} paused`) : green(`${GLYPHS.on} running`);
     lines.push(
       `${state} ${dim('·')} ${bold(`${workers.length}/${orch.concurrency}`)} workers ${dim('·')} ${counts.todo + counts.paused} queued ${dim('·')} ${green(String(counts.done))} done` +
         (counts.blocked ? ` ${dim('·')} ${yellow(`${counts.blocked} blocked`)}` : '') +
@@ -113,7 +114,7 @@ export function attachLiveView(orch: Orchestrator, db: Database, out: NodeJS.Wri
     if (lastPause) lines.push(`  ${magenta(describePause(lastPause, now))}`);
     for (const w of workers) {
       const detail = [w.live.model ?? '', formatDuration(now - w.startedAt).padStart(7), `${w.live.turns} turn${w.live.turns === 1 ? '' : 's'}`.padStart(9), w.live.lastTool ?? w.live.lastText ?? ''].filter(Boolean).join('  ');
-      lines.push(truncate(`  ${cyan('●')} ${bold(w.ticket.name.padEnd(24))} ${dim(detail)}`, width()));
+      lines.push(truncate(`  ${cyan(GLYPHS.running)} ${bold(w.ticket.name.padEnd(24))} ${dim(detail)}`, width()));
     }
     if (workers.length === 0 && !stopped) lines.push(dim(counts.todo + counts.paused ? '  starting workers…' : '  no tickets waiting — salu add "name" "query" "tags"'));
     if (recent.length) {

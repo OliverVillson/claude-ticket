@@ -1,5 +1,6 @@
 import { bold, cyan, dim, gray, green, magenta, red, stripAnsi, yellow } from './ansi.ts';
 import type { TicketStatus } from '../db/types.ts';
+import { GLYPHS } from '../ui/glyphs.ts';
 
 export function statusColor(s: TicketStatus | string): (x: string) => string {
   switch (s) {
@@ -21,17 +22,13 @@ export function statusColor(s: TicketStatus | string): (x: string) => string {
 export function statusIcon(s: TicketStatus | string): string {
   switch (s) {
     case 'running':
-      return '●';
     case 'done':
-      return '✓';
     case 'failed':
-      return '✗';
     case 'blocked':
-      return '?';
     case 'paused':
-      return '‖';
+      return GLYPHS[s];
     default:
-      return '○';
+      return GLYPHS.todo;
   }
 }
 

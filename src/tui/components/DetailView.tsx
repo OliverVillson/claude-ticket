@@ -8,6 +8,7 @@ import { messageText, type Message } from '../messages.ts';
 import { style as st } from '../style.ts';
 import { SPINNER_FRAMES, STATUS_STYLE, paint, paintPriority, paintStatus } from '../theme.ts';
 import { Frame, confirmText, hintsText, titleText } from './Frame.tsx';
+import { GLYPHS } from '../../ui/glyphs.ts';
 
 export interface DetailViewProps {
   columns: number;
@@ -30,19 +31,19 @@ export const DETAIL_HINTS: Array<[string, string]> = [
   ['q', 'quit'],
 ];
 
-/** A log line in the claude transcript style: `⏺ Read(src/a.ts)`, `✓ done · 14 turns`. */
+/** A log line in the claude transcript style: `● Read(src/a.ts)`, `✓ done · 14 turns`. */
 export function logLineText(l: LogLine): string {
   switch (l.kind) {
     case 'tool':
-      return st.accent('⏺ ') + l.text;
+      return st.accent(GLYPHS.say + ' ') + l.text;
     case 'text':
-      return st.dim('⏺ ') + l.text;
+      return st.dim(GLYPHS.say + ' ') + l.text;
     case 'result':
-      return paint(st, 'green', '✓ ' + l.text);
+      return paint(st, 'green', GLYPHS.done + ' ' + l.text);
     case 'error':
-      return paint(st, 'red', '✗ ' + l.text);
+      return paint(st, 'red', GLYPHS.failed + ' ' + l.text);
     case 'system':
-      return st.dim('⚙ ' + l.text);
+      return st.dim(GLYPHS.dot + ' ' + l.text);
     default:
       return st.dim(l.text);
   }

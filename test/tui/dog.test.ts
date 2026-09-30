@@ -1,85 +1,119 @@
 import { describe, expect, test } from 'bun:test';
-import { dogWidth, frameCount, renderDog, renderSprite, renderTrack, visibleWidth } from '../../src/tui/dog/render.ts';
-import { ASCII_MINI_RUN, ASCII_RUN, ASCII_SLEEP, MINI_RUN, MINI_SLEEP, RUN, SLEEP } from '../../src/tui/dog/sprites.ts';
+import { dogWidth, frameCount, renderBraille, renderDog, renderSprite, renderTrack, visibleWidth } from '../../src/tui/dog/render.ts';
+import {
+  ASCII_LINE_RUN, ASCII_LINE_SLEEP, ASCII_LINE_WIDTH, ASCII_RUN, ASCII_SLEEP, ASCII_WIDTH, RUN, SLEEP, SLEEP_WIDTH, TINY_RUN, TINY_SLEEP, WIDTH,
+} from '../../src/tui/dog/sprites.ts';
 import { Ticker } from '../../src/tui/dog/ticker.ts';
 import { PALETTE } from '../../src/ui/theme.ts';
 
 const GREENS = new Set(['accent', 'text', 'ok', 'chrome'].flatMap((r) => [PALETTE[r as 'accent'].rgb.join(';')]));
+const strip = (s: string) => s.replace(/\u001b\[[0-9;]*m/g, '');
 
 describe('dog sprites', () => {
   test('every frame in a set has the same size and only palette letters', () => {
-    for (const set of [RUN, SLEEP, MINI_RUN, MINI_SLEEP]) {
+    for (const [set, re] of [[RUN, /^[ATMD.]+$/], [SLEEP, /^[ATMDzZ.]+$/], [TINY_RUN, /^[X.]+$/], [TINY_SLEEP, /^[XzZ.]+$/]] as const) {
       const w = set[0]![0]!.length;
       const h = set[0]!.length;
+      expect(h % 2).toBe(0); // two pixel rows per terminal row
       for (const f of set) {
         expect(f.length).toBe(h);
-        for (const row of f) { expect(row.length).toBe(w); expect(row).toMatch(/^[ATMD.]+$/); }
+        for (const row of f) { expect(row.length).toBe(w); expect(row).toMatch(re); }
       }
     }
   });
+  test('a z takes a whole cell: the other pixel of its half-block cell is empty', () => {
+    for (const set of [SLEEP, TINY_SLEEP])
+      for (const f of set)
+        f.forEach((row, y) => [...row].forEach((c, x) => { if (c === 'z' || c === 'Z') expect(f[y ^ 1]![x]).toBe('.'); }));
+  });
   test('ascii frames are one width', () => {
-    for (const set of [ASCII_RUN, ASCII_SLEEP]) for (const f of set) for (const r of f) expect(r.length).toBe(14);
-    for (const s of ASCII_MINI_RUN) expect(s.length).toBe(5);
-  });
-});
-
-describe('sleeping dog', () => {
-  const has = (f: string[], re: RegExp) => f.some((r) => re.test(r));
-  test('is 8 rows, four frames, and each frame differs', () => {
-    expect(SLEEP.length).toBe(4);
-    expect(SLEEP[0]!.length).toBe(16);
-    expect(renderDog(0, { mode: 'sleep', level: 3 }).length).toBe(8);
-    expect(new Set(SLEEP.map((f) => f.join('\n'))).size).toBe(4);
-  });
-  test('reads as a dog: ear, snout, closed eye, paws and tail are drawn', () => {
-    const f = SLEEP[0]!;
-    const px = (x: number, y: number) => f[y]![x];
-    // pointed ear above the head, higher than the back
-    const top = f.findIndex((r) => /[AM]/.test(r.slice(18, 26)));
-    const backTop = f.findIndex((r) => /A/.test(r.slice(8, 16)));
-    expect(top).toBeLessThan(backTop);
-    // closed eye: two dark pixels inside the head
-    expect(px(26, 11)).toBe('D');
-    expect(px(27, 11)).toBe('D');
-    // muzzle sticks out to the right of the head, with a dark nose at its tip
-    const nose = f[11]!.lastIndexOf('D');
-    expect(nose).toBeGreaterThan(30);
-    // front paws run along the ground, tail (light tip) at the far left
-    expect(f[14]!.slice(24, 36)).toMatch(/M{6}/);
-    expect(f[9]!.slice(0, 5)).toContain('T');
-  });
-  test('a small z, then higher, then a big Z float up beside the head', () => {
-    const zs = SLEEP.map((f) => f.map((r, y) => [...r].map((c, x) => (c === 'T' && x > 24 ? `${x},${y}` : null)).filter(Boolean)).flat());
-    expect(zs.every((z) => z.length > 0)).toBe(true);
-    const minY = zs.map((z) => Math.min(...z.map((p) => +p!.split(',')[1]!)));
-    expect(minY[1]!).toBeLessThan(minY[0]!);
-    expect(minY[2]!).toBeLessThan(minY[1]!);
-  });
-  test('sleeping frames advance slowly, ascii sleep is 4 frames of 14', () => {
-    expect(renderDog(3, { mode: 'sleep', level: 3 })).toEqual(renderDog(0, { mode: 'sleep', level: 3 }));
-    expect(renderDog(4, { mode: 'sleep', level: 3 })).not.toEqual(renderDog(0, { mode: 'sleep', level: 3 }));
-    expect(ASCII_SLEEP.length).toBe(4);
-    expect(has(ASCII_SLEEP[2]!, /Z/)).toBe(true);
+    for (const set of [ASCII_RUN, ASCII_SLEEP]) for (const f of set) for (const r of f) expect(r.length).toBe(ASCII_WIDTH);
+    for (const s of [...ASCII_LINE_RUN, ...ASCII_LINE_SLEEP]) expect(s.length).toBe(ASCII_LINE_WIDTH);
   });
 });
 
 describe('running dog', () => {
-  test('is 20 pixel rows by 36, four distinct frames, nose and ear present', () => {
+  test('24 x 12 pixels (6 rows), four distinct frames', () => {
     expect(RUN.length).toBe(4);
-    for (const f of RUN) {
-      expect(f.length).toBe(20);
-      expect(f[0]!.length).toBe(36);
-      expect(f[5]!.slice(30)).toMatch(/A/); // muzzle
-      expect(f.slice(0, 3).join('')).toMatch(/M/); // ear
-    }
+    for (const f of RUN) { expect(f.length).toBe(12); expect(f[0]!.length).toBe(WIDTH); }
     expect(new Set(RUN.map((f) => f.join('\n'))).size).toBe(4);
+    expect(renderDog(0, { level: 3 }).length).toBe(6);
+  });
+  test('reads as a dog in every frame: ear above the head, an open eye, a nose, a raised tail', () => {
+    for (const f of RUN) {
+      const eyeY = f.findIndex((r) => /A\.A/.test(r.slice(15)));
+      expect(eyeY).toBeGreaterThan(0);
+      const eyeX = f[eyeY]!.indexOf('.', 16);
+      expect(f[eyeY - 1]![eyeX]).toBe('A'); // eye is a hole inside the head
+      expect(f[eyeY + 1]![eyeX]).toBe('A');
+      expect(f.slice(0, eyeY).join('')).toMatch(/[AD]/); // ear above the eye
+      expect(f.some((r) => r.trimEnd().endsWith('D') && r.length - r.lastIndexOf('D') <= 2)).toBe(true); // nose at the snout tip
+      expect(f.slice(0, 4).some((r) => /^\.?T/.test(r))).toBe(true); // tail tip, top left
+    }
+  });
+  test('legs: near legs mid green, far legs dim, and they move between frames', () => {
+    const legs = RUN.map((f) => f.slice(9).join('\n'));
+    expect(new Set(legs).size).toBe(4);
+    for (const l of legs) { expect(l).toContain('M'); expect(l).toContain('D'); }
+  });
+});
+
+describe('sleeping dog', () => {
+  test('26 x 12 pixels (6 rows): the same head with the eye shut, paws out, z and Z above', () => {
+    expect(SLEEP.length).toBe(2);
+    for (const f of SLEEP) {
+      expect(f.length).toBe(12);
+      expect(f[0]!.length).toBe(SLEEP_WIDTH);
+      expect(f.join('')).toMatch(/ADDA/); // closed eye inside the head
+      expect(f[f.length - 1]).toMatch(/T{6}/); // front paws on the ground
+      expect(f.join('')).toContain('z');
+      expect(f.join('')).toContain('Z');
+    }
+    expect(renderDog(0, { mode: 'sleep', level: 3 }).length).toBe(6);
+  });
+  test('frame 0 (the still picture) has the small z below and left of the big Z', () => {
+    const at = (c: string) => { const y = SLEEP[0]!.findIndex((r) => r.includes(c)); return [SLEEP[0]![y]!.indexOf(c), y] as const; };
+    const [zx, zy] = at('z');
+    const [Zx, Zy] = at('Z');
+    expect(zy).toBeGreaterThan(Zy);
+    expect(zx).toBeLessThan(Zx);
+  });
+  test('the snores are letters, not pixels: z dim, Z pale', () => {
+    const lines = renderDog(0, { mode: 'sleep', level: 3 });
+    const top = lines.slice(0, 2).join('');
+    expect(strip(top)).toMatch(/z/);
+    expect(strip(top)).toMatch(/Z/);
+    expect(top).toContain(`38;2;${PALETTE.text.rgb.join(';')}mZ`);
+    expect(top).toContain(`38;2;${PALETTE.chrome.rgb.join(';')}mz`);
+  });
+  test('sleeping frames advance slowly', () => {
+    expect(renderDog(7, { mode: 'sleep', level: 3 })).toEqual(renderDog(0, { mode: 'sleep', level: 3 }));
+    expect(renderDog(8, { mode: 'sleep', level: 3 })).not.toEqual(renderDog(0, { mode: 'sleep', level: 3 }));
+  });
+});
+
+describe('small dog', () => {
+  test('is 4 pixels tall: one braille line of 6 cells, or two half-block rows for mini', () => {
+    for (const f of TINY_RUN) {
+      const line = renderBraille(f, 3);
+      expect(visibleWidth(line)).toBe(6);
+      expect(strip(line)).toMatch(/^[\u2800-\u28ff ]+$/);
+    }
+    expect(renderDog(0, { size: 'mini', level: 3 }).length).toBe(2);
+    expect(new Set(TINY_RUN.map((f) => renderBraille(f, 3))).size).toBe(4);
+  });
+  test('braille dots map to the right bits, and a snore cell is a letter', () => {
+    expect(strip(renderBraille(['X.', '..', '..', '..'], 3))).toBe('\u2801');
+    expect(strip(renderBraille(['..', '..', '..', '.X'], 3))).toBe('\u2880');
+    expect(strip(renderBraille(['XX', 'XX', 'XX', 'XX'], 3))).toBe('\u28ff');
+    expect(strip(renderBraille(['..z.', '....', '....', '....'], 3))).toBe(' z');
   });
 });
 
 describe('renderDog', () => {
-  test('full dog is 10 rows of at most 36 cells at truecolor', () => {
+  test('full dog is 6 rows no wider than dogWidth at truecolor', () => {
     const lines = renderDog(0, { level: 3 });
-    expect(lines.length).toBe(10);
+    expect(lines.length).toBe(6);
     for (const l of lines) expect(visibleWidth(l)).toBeLessThanOrEqual(dogWidth('full', 3));
     expect(lines.some((l) => l.includes('▀') || l.includes('▄') || l.includes('█'))).toBe(true);
   });
@@ -153,7 +187,7 @@ describe('Ticker', () => {
   });
 });
 
-import { DOG_WIDTH, dogFrame, dogLines } from '../../src/tui/dog/line.ts';
+import { DOG_WIDTH, dogFrame, dogLines, sleepFrame } from '../../src/tui/dog/line.ts';
 describe('single-line api', () => {
   test('dogFrame is one line no wider than DOG_WIDTH and animates', () => {
     for (const level of [3, 2, 1] as const) {
@@ -163,8 +197,13 @@ describe('single-line api', () => {
       expect(dogFrame(4, { level })).toBe(fs[0]!);
     }
   });
-  test('level 0 is ascii and dogLines is 10 rows', () => {
+  test('level 0 is ascii and dogLines is 6 rows', () => {
     expect(dogFrame(1, { level: 0 })).not.toContain('\u001b');
-    expect(dogLines(0, { level: 3 }).length).toBe(10);
+    expect(dogFrame(1, { level: 0 })).toMatch(/^[\x20-\x7e]+$/);
+    expect(dogLines(0, { level: 3 }).length).toBe(6);
+  });
+  test('sleepFrame is one line with a z', () => {
+    expect(strip(sleepFrame({ level: 3 }))).toMatch(/^[\u2800-\u28ff ]+z ?$/);
+    expect(sleepFrame({ level: 0 })).toMatch(/^[\x20-\x7e]+$/);
   });
 });

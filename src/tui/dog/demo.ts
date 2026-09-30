@@ -21,7 +21,7 @@ const stop = ticker.subscribe((t) => {
   const lines =
     p < lap
       ? renderTrack(t, width, p / lap, { size, level })
-      : renderDog(t, { mode: 'sleep', size, level }).map((l) => ' '.repeat(Math.max(0, (width - dogWidth(size, level)) / 2 | 0)) + l);
+      : renderDog(t, { mode: 'sleep', size, level }).map((l) => ' '.repeat(Math.max(0, (width - dogWidth(size, level, 'sleep')) / 2 | 0)) + l);
   if (!first) process.stdout.write(`\u001b[${rows}A`);
   first = false;
   for (let i = 0; i < rows; i++) process.stdout.write(`\u001b[2K${lines[i] ?? ''}\n`);
