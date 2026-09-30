@@ -22,7 +22,10 @@ export function TagEditor(p: TagEditorProps) {
     setGroupState(g);
     p.onGroup?.(g);
   };
+  // `custom` with empty lists writes no tag, so remember the pick while the editor is open
+  const [custom, setCustom] = useState(false);
   const parts = splitTags(p.tags);
+  if (custom && parts.toolset === '') parts.toolset = 'custom';
   if (!group) {
     return (
       <EditList
@@ -45,6 +48,7 @@ export function TagEditor(p: TagEditorProps) {
       columns={p.columns}
       rows={groupRows(group, parts)}
       onSet={(key, raw) => {
+        if (key === 'toolset') setCustom(raw === 'custom');
         const r = applyTagKey(parts, key, raw);
         if (r.error) return r.error;
         return p.onChange(joinTags(r.parts));

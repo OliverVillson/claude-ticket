@@ -1,5 +1,5 @@
 import type { EditRow } from './components/EditList.tsx';
-import { EFFORT_CHOICES, MODEL_CHOICES, PERMISSION_CHOICES, TOOLSET_CHOICES, groupSummary, labelOf, type Choice, type TagParts } from './tagGroups.ts';
+import { toolsError, EFFORT_CHOICES, MODEL_CHOICES, PERMISSION_CHOICES, TOOLSET_CHOICES, groupSummary, labelOf, type Choice, type TagParts } from './tagGroups.ts';
 
 export type TagGroup = 'me' | 'tools' | 'other';
 
@@ -18,8 +18,10 @@ export function groupRows(g: TagGroup, p: TagParts): EditRow[] {
   if (g === 'me') return [pick('model', 'model', MODEL_CHOICES, p.model), pick('effort', 'effort', EFFORT_CHOICES, p.effort)];
   if (g === 'tools') {
     const rows = [pick('toolset', 'toolset', TOOLSET_CHOICES, p.toolset)];
-    if (p.toolset === 'custom') rows.push(text('tools', 'allow', p.tools, 'Read+Grep+Edit'));
-    rows.push(text('deny', 'deny', p.deny, 'tools to block, e.g. Bash+WebFetch'));
+    if (p.toolset === 'custom') {
+      rows.push(text('allow', 'allow', p.allow, 'Read,Grep,Bash(git *)  (only these)'));
+      rows.push(text('deny', 'deny', p.deny, 'Bash(rm *)  (never these)'));
+    }
     return rows;
   }
   return [
@@ -42,10 +44,12 @@ export function groupMenuRows(p: TagParts): EditRow[] {
 export function applyTagKey(p: TagParts, key: string, raw: string): { parts: TagParts; error?: string } {
   const v = raw.trim();
   if (key === 'maxTurns' && v && !/^[1-9]\d*$/.test(v)) return { parts: p, error: 'max-turns must be a whole number' };
-  if (key === 'tools' || key === 'deny') {
-    if (/[=]/.test(v)) return { parts: p, error: 'list tool names separated by + or commas' };
-  }
   const next = { ...p, [key]: key === 'other' ? raw : v } as TagParts;
-  if (key === 'toolset' && v !== 'custom') next.tools = '';
+  if (key === 'toolset' && v !== 'custom') {
+    next.allow = '';
+    next.deny = '';
+  }
+  const bad = key === 'allow' || key === 'deny' ? toolsError(next) : null;
+  if (bad) return { parts: p, error: bad };
   return { parts: next };
 }
