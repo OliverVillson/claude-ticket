@@ -31,7 +31,7 @@ export function computeLayout(innerWidth: number, opts: { showProject?: boolean;
   let model = 14;
   let priority = 3;
   let project = showProject ? 12 : 0;
-  const status = 7;
+  const status = 8;
 
   const fixed = () => ROW_PREFIX + [project, priority, model, status, age, cost].filter(Boolean).reduce((a, b) => a + b + GAP, 0);
   const minName = 12;
