@@ -1,9 +1,9 @@
 import type { Database } from 'bun:sqlite';
 import type { OrchestratorEvent } from '../orchestrator/types.ts';
-import { getProjectById, listTurns } from '../db/queries.ts';
+import { getProjectById, getTicketById, listTurns } from '../db/queries.ts';
 import { boxName } from './sync.ts';
 import { REPLY_MAX } from './format.ts';
-import { enqueueMessage, getRemote, remoteTicketForLocal } from './store.ts';
+import { enqueueMessage, type NewMessage, getRemote, remoteTicketForLocal } from './store.ts';
 
 const clip = (s: string | null | undefined, n: number) => (s && s.length > n ? s.slice(0, n - 1) + '…' : (s ?? ''));
 
@@ -57,4 +57,20 @@ export function recordRemoteEvent(db: Database, e: OrchestratorEvent): void {
   } catch {
     /* messages are best effort: never stop the loop */
   }
+}
+
+/**
+ * For anything on the box that knows something about one ticket (the worker's status checklist, a decision it
+ * wants answered, outputs it made, a state change): queue a message for the clients of that ticket's project.
+ * `ticket` and the sender are filled in. A no-op unless the ticket's project is a box.
+ */
+export function postThreadMessage(db: Database, ticketId: number, m: Omit<NewMessage, 'ticket'>): boolean {
+  const t = getTicketById(db, ticketId);
+  if (!t) return false;
+  const remote = getRemote(db, t.project_id);
+  const project = getProjectById(db, t.project_id);
+  if (!remote || remote.role !== 'box' || !project) return false;
+  const ref = remoteTicketForLocal(db, t.id, 'in')?.uuid;
+  enqueueMessage(db, project.id, project.name, boxName(), { ...m, ticket: { ...(ref ? { ref } : {}), name: t.name, id: t.id } });
+  return true;
 }

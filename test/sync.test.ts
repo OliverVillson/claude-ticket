@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os';
 import { openDb } from '../src/db/db.ts';
 import { addTurn, listTurns, replyToTicket, claimNextTicket, createProject, createTicket, getTicketById, listTickets, updateTicket } from '../src/db/queries.ts';
 import { addRemoteTicket, enqueueMessage, listNotifications, markRead, setRemote, unreadCount } from '../src/sync/store.ts';
-import { rotateKey, publishReply, publishTicket, syncProject } from '../src/sync/sync.ts';
-import { recordRemoteEvent } from '../src/sync/events.ts';
-import { keyFilePath, remoteKey, saveKey, unsignedWarning, signFile, stripControl, parseReplyFile, parseMessageFile, parseTicketFile, newId } from '../src/sync/format.ts';
+import { threadOps, publishAction, rotateKey, publishReply, publishTicket, syncProject } from '../src/sync/sync.ts';
+import { postThreadMessage, recordRemoteEvent } from '../src/sync/events.ts';
+import { parseActionFile, keyFilePath, remoteKey, saveKey, unsignedWarning, signFile, stripControl, parseReplyFile, parseMessageFile, parseTicketFile, newId } from '../src/sync/format.ts';
 import { git } from '../src/sync/git.ts';
 
 let root: string;
@@ -261,6 +261,107 @@ describe('required signing key', () => {
     expect(c.exitCode).toBe(0);
     expect(run('client', 'remote', 'key').stdout.toString().trim()).toBe(key!);
     expect(run('client', 'remote', 'key', '--set', 'short').exitCode).not.toBe(0);
+  });
+});
+
+describe('threads: resolve, reopen, richer messages', () => {
+  test('a resolve from the client reaches the box; a box without the core operation says so', () => {
+    const { t } = sendTicket('thread');
+    sync(client);
+    sync(box);
+    sync(client);
+    const local = getTicketById(client.db, t.id)!;
+    expect(publishAction(client.db, client.project, local, 'resolve')).toBe(true);
+    expect(sync(client).actionsSent).toBe(1);
+    expect(sync(box).actionsReceived).toBe(1);
+    sync(client);
+    const note = listNotifications(client.db).at(-1)!;
+    expect(note.type).toBe('note');
+    expect(note.level).toBe('warn');
+    expect(note.title).toContain('cannot resolve');
+    // Applied once only.
+    expect(sync(box).actionsReceived).toBe(0);
+  });
+
+  test('with the core operation, resolve and reopen apply on the box and the new state comes back', () => {
+    const { t } = sendTicket('thread2');
+    sync(client);
+    sync(box);
+    const onBox = listTickets(box.db)[0]!;
+    const calls: string[] = [];
+    threadOps.resolve = (db, id) => (calls.push(`resolve ${id}`), updateTicket(db, id, { status: 'done' }));
+    threadOps.reopen = (db, id) => (calls.push(`reopen ${id}`), updateTicket(db, id, { status: 'todo' }));
+    try {
+      const local = getTicketById(client.db, t.id)!;
+      publishAction(client.db, client.project, local, 'resolve');
+      publishAction(client.db, client.project, local, 'reopen');
+      sync(client);
+      sync(box);
+      expect(calls).toEqual([`resolve ${onBox.id}`, `reopen ${onBox.id}`]);
+      sync(client);
+      const states = listNotifications(client.db).filter((n) => n.type === 'ticket.state');
+      expect(states.map((n) => n.title)).toEqual(['Resolved "thread2"', 'Reopened "thread2"']);
+      expect(states[1]!.state).toBe('todo');
+      expect(states[0]!.ticket!.ref).toBeTruthy();
+    } finally {
+      delete threadOps.resolve;
+      delete threadOps.reopen;
+    }
+  });
+
+  test('status, decision and output messages from a box ticket reach the client intact', () => {
+    sendTicket('rich');
+    sync(client);
+    sync(box);
+    const onBox = listTickets(box.db)[0]!;
+    expect(postThreadMessage(box.db, onBox.id, { type: 'ticket.status', level: 'info', title: 'Working', checklist: [{ text: 'reproduce', state: 'done' }, { text: 'fix', state: 'doing' }, { text: 'test', state: 'todo' }] })).toBe(true);
+    postThreadMessage(box.db, onBox.id, { type: 'ticket.decision', level: 'warn', title: 'Pick one', decision: { id: 'd1', question: 'Keep the old API?', options: [{ label: 'Keep', consequence: 'no break' }, { label: 'Drop' }], recommended: 0 } });
+    postThreadMessage(box.db, onBox.id, { type: 'ticket.output', level: 'success', title: 'Made', outputs: [{ kind: 'branch', ref: 'salu/rich' }, { kind: 'pr', ref: 'https://github.com/o/r/pull/7', title: 'PR 7' }] });
+    postThreadMessage(box.db, onBox.id, { type: 'ticket.state', level: 'info', title: 'Waiting', state: 'waiting' });
+    sync(box);
+    sync(client);
+    const n = listNotifications(client.db);
+    const by = (type: string) => n.find((x) => x.type === type)!;
+    expect(by('ticket.status').checklist).toEqual([{ text: 'reproduce', state: 'done' }, { text: 'fix', state: 'doing' }, { text: 'test', state: 'todo' }]);
+    expect(by('ticket.decision').decision).toEqual({ id: 'd1', question: 'Keep the old API?', options: [{ label: 'Keep', consequence: 'no break' }, { label: 'Drop' }], recommended: 0 });
+    expect(by('ticket.output').outputs).toEqual([{ kind: 'branch', ref: 'salu/rich' }, { kind: 'pr', ref: 'https://github.com/o/r/pull/7', title: 'PR 7' }]);
+    expect(by('ticket.state').state).toBe('waiting');
+    // Not a box: nothing is queued.
+    expect(postThreadMessage(client.db, 1, { type: 'ticket.state', level: 'info', title: 'x' })).toBe(false);
+  });
+
+  test('a reply can carry the decision it answers', () => {
+    const r = parseReplyFile(JSON.stringify({ v: 1, id: newId(), ticket: { name: 'x' }, body: 'Keep', decision: { id: 'd1', option: 0 } }))!;
+    expect(r.decision).toEqual({ id: 'd1', option: 0 });
+    expect(parseReplyFile(JSON.stringify({ v: 1, id: newId(), ticket: { name: 'x' }, body: 'Keep', decision: { id: 'd1', option: -3 } }))!.decision).toEqual({ id: 'd1' });
+  });
+
+  test('action files are validated, and malformed rich fields are dropped, not trusted', () => {
+    expect(parseActionFile(JSON.stringify({ v: 1, id: newId(), ticket: { name: 'x' }, action: 'resolve' }))?.action).toBe('resolve');
+    expect(parseActionFile(JSON.stringify({ v: 1, id: newId(), ticket: { name: 'x' }, action: 'delete' }))).toBeNull();
+    expect(parseActionFile(JSON.stringify({ v: 1, id: newId(), action: 'resolve' }))).toBeNull();
+    const m = parseMessageFile(JSON.stringify({ v: 1, id: newId(), type: 'ticket.status', title: 't', state: 'Bad State', checklist: [{ text: 'a\x1b]52;c;x\x07', state: 'done' }, { text: 'b', state: 'nope' }], decision: { id: 'd', question: 'q', options: [{ label: 'only one' }] }, outputs: [{ kind: 'exe', ref: 'x' }] }))!;
+    expect(m.state).toBeUndefined();
+    expect(m.checklist).toEqual([{ text: 'a', state: 'done' }]);
+    expect(m.decision).toBeUndefined();
+    expect(m.outputs).toBeUndefined();
+  });
+
+  test('rotating the key re-signs action files too', () => {
+    delete process.env.SALU_REMOTE_ALLOW_UNSIGNED;
+    process.env.SALU_REMOTE_KEY = 'old-key-0123456789ab';
+    try {
+      const { t } = sendTicket('rot');
+      sync(client);
+      sync(box);
+      publishAction(client.db, client.project, getTicketById(client.db, t.id)!, 'resolve');
+      sync(client);
+      process.env.SALU_SYNC_DIR = box.sync;
+      const r = rotateKey(box.db, 'old-key-0123456789ab', 'new-key-0123456789ab');
+      expect(r[0]!.resigned).toBe(3); // ticket, accepted message, action
+    } finally {
+      delete process.env.SALU_REMOTE_KEY;
+    }
   });
 });
 

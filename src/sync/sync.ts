@@ -8,9 +8,15 @@ import { CliError } from '../core/errors.ts';
 import { kernelPath, isGitRepo } from '../core/kernel.ts';
 import { existsSync } from 'node:fs';
 import { git, gitProblem, inboxDir, exchange, readDir, rewriteInbox } from './git.ts';
-import { MESSAGES_DIR, remoteForbiddenTags, requireKey, signFile, signatureOk, REPLIES_DIR, TICKETS_DIR, newId, parseMessageFile, parseReplyFile, parseTicketFile, type MessageFile, type ReplyFile, type TicketFile } from './format.ts';
+import * as core from '../db/queries.ts';
+import { ACTIONS_DIR, parseActionFile, type ActionFile, MESSAGES_DIR, remoteForbiddenTags, requireKey, signFile, signatureOk, REPLIES_DIR, TICKETS_DIR, newId, parseMessageFile, parseReplyFile, parseTicketFile, type MessageFile, type ReplyFile, type TicketFile } from './format.ts';
 import {
+  addOutAction,
   addOutReply,
+  knownAction,
+  markActionsSent,
+  pendingOutActions,
+  recordInAction,
   addRemoteTicket,
   knownReply,
   markRepliesSent,
@@ -52,16 +58,57 @@ export function publishReply(db: Database, project: Project, t: TicketView, body
   return true;
 }
 
-/** Box: apply a follow-up from the client. Returns a message for the client when it cannot be applied. */
-function applyReply(db: Database, project: Project, r: ReplyFile): void {
-  const say = (title: string, level: 'info' | 'warn', ticket?: { ref?: string; name: string; id: number }) => enqueueMessage(db, project.id, project.name, boxName(), { type: ticket && level === 'info' ? 'ticket.accepted' : 'note', level, title, ...(ticket ? { ticket } : {}) });
+/** Client: send a resolve or reopen for a ticket that runs on the box. Returns false when the ticket did not go through this project's remote. */
+export function publishAction(db: Database, project: Project, t: TicketView, action: 'resolve' | 'reopen'): boolean {
+  const rt = remoteTicketForLocal(db, t.id, 'out');
+  if (!rt || getRemote(db, project.id)?.role !== 'client') return false;
+  addOutAction(db, project.id, { ref: rt.uuid, name: t.name, action });
+  return true;
+}
+
+/** Box: the ticket a client file is about (by ref, else box number, else name), or null. */
+function findTicket(db: Database, project: Project, r: { ref?: string; ticketId?: number; name?: string }): TicketView | null {
   let id: number | null = r.ref ? (remoteTicketByUuid(db, r.ref)?.ticket_id ?? null) : null;
   if (id === null && r.ticketId) {
     const t = getTicketById(db, r.ticketId);
     if (t && t.project_id === project.id) id = t.id;
   }
   if (id === null && r.name) id = listTickets(db, { projectId: project.id, recursive: false }).find((x) => x.name === r.name)?.id ?? null;
-  const t = id === null ? null : getTicketById(db, id);
+  return id === null ? null : getTicketById(db, id);
+}
+
+/** Overrides for the core's resolve/reopen (tests, or a core that names them differently). */
+export const threadOps: { resolve?: (db: Database, id: number) => TicketView | void; reopen?: (db: Database, id: number) => TicketView | void } = {};
+
+/**
+ * Box: resolve or reopen a ticket for the client. The operations come from the core (resolveTicket /
+ * reopenTicket in src/db/queries.ts, the "threads" model); a box running a salu without them says so
+ * instead of guessing, and the client's inbox keeps working.
+ */
+function applyAction(db: Database, project: Project, a: ActionFile): void {
+  const say = (title: string, level: 'info' | 'warn', t?: TicketView) =>
+    enqueueMessage(db, project.id, project.name, boxName(), {
+      type: t && level === 'info' ? 'ticket.state' : 'note',
+      level,
+      title,
+      ...(t ? { ticket: { ...(a.ref ? { ref: a.ref } : {}), name: t.name, id: t.id }, state: t.status } : {}),
+    });
+  const t = findTicket(db, project, a);
+  if (!t) return void say(`Could not find the ticket to ${a.action}${a.name ? ` ("${a.name}")` : ''}`, 'warn');
+  const op = threadOps[a.action] ?? (core as Record<string, unknown>)[a.action === 'resolve' ? 'resolveTicket' : 'reopenTicket'];
+  if (typeof op !== 'function') return void say(`This box's salu cannot ${a.action} tickets yet; update salu on the box`, 'warn', t);
+  try {
+    const after = (op as (db: Database, id: number) => TicketView | void)(db, t.id) ?? getTicketById(db, t.id) ?? t;
+    say(`${a.action === 'resolve' ? 'Resolved' : 'Reopened'} "${after.name}"`, 'info', after);
+  } catch (e: any) {
+    say(`Could not ${a.action} "${t.name}": ${String(e?.message ?? e)}`, 'warn', t);
+  }
+}
+
+/** Box: apply a follow-up from the client. Returns a message for the client when it cannot be applied. */
+function applyReply(db: Database, project: Project, r: ReplyFile): void {
+  const say = (title: string, level: 'info' | 'warn', ticket?: { ref?: string; name: string; id: number }) => enqueueMessage(db, project.id, project.name, boxName(), { type: ticket && level === 'info' ? 'ticket.accepted' : 'note', level, title, ...(ticket ? { ticket } : {}) });
+  const t = findTicket(db, project, r);
   if (!t) return void say(`Could not find the ticket for your reply${r.name ? ` ("${r.name}")` : ''}`, 'warn');
   const ticket = { ...(r.ref ? { ref: r.ref } : {}), name: t.name, id: t.id };
   try {
@@ -126,6 +173,8 @@ export interface SyncSummary {
   ticketsReceived: number;
   repliesSent: number;
   repliesReceived: number;
+  actionsSent: number;
+  actionsReceived: number;
   messagesSent: number;
   messagesReceived: number;
   branchesPushed: string[];
@@ -148,7 +197,7 @@ function notifyPhone(sent: { body: string }[]): void {
 export function syncProject(db: Database, project: Project, remote: Remote = getRemote(db, project.id)!): SyncSummary {
   if (!remote) throw new CliError(`project "${project.name}" has no remote (salu remote add "${project.name}" <git-url>)`);
   requireKey();
-  const s: SyncSummary = { project: project.name, role: remote.role, ticketsSent: 0, ticketsReceived: 0, repliesSent: 0, repliesReceived: 0, messagesSent: 0, messagesReceived: 0, branchesPushed: [] };
+  const s: SyncSummary = { project: project.name, role: remote.role, ticketsSent: 0, ticketsReceived: 0, repliesSent: 0, repliesReceived: 0, actionsSent: 0, actionsReceived: 0, messagesSent: 0, messagesReceived: 0, branchesPushed: [] };
   const dir = inboxDir(project.name);
   try {
     // Round 1: push anything waiting, then read the branch.
@@ -160,6 +209,8 @@ export function syncProject(db: Database, project: Project, remote: Remote = get
     }
     const outReplies = remote.role === 'client' ? pendingOutReplies(db, project.id) : [];
     for (const r of outReplies) files[`${REPLIES_DIR}/${r.id}.json`] = JSON.stringify(signFile({ ...r, project: project.name }), null, 2) + '\n';
+    const outActions = remote.role === 'client' ? pendingOutActions(db, project.id) : [];
+    for (const a of outActions) files[`${ACTIONS_DIR}/${a.id}.json`] = JSON.stringify(signFile({ ...a, project: project.name }), null, 2) + '\n';
     const outMessages = remote.role === 'box' ? pendingMessages(db, project.id) : [];
     for (const m of outMessages) files[`${MESSAGES_DIR}/${m.id}.json`] = JSON.stringify(signFile(JSON.parse(m.body)), null, 2) + '\n';
     exchange(dir, remote.url, files);
@@ -167,6 +218,8 @@ export function syncProject(db: Database, project: Project, remote: Remote = get
     markMessagesPosted(db, outMessages.map((m) => m.id));
     notifyPhone(outMessages);
     markRepliesSent(db, outReplies.map((r) => r.id));
+    markActionsSent(db, outActions.map((a) => a.id));
+    s.actionsSent = outActions.length;
     s.repliesSent = outReplies.length;
     s.ticketsSent = outTickets.length;
     s.messagesSent = outMessages.length;
@@ -191,6 +244,14 @@ export function syncProject(db: Database, project: Project, remote: Remote = get
         recordInReply(db, project.id, r);
         applyReply(db, project, r);
         s.repliesReceived++;
+      }
+      // Resolve / reopen come after replies, so they apply in the order they were made.
+      for (const { text } of readDir(dir, ACTIONS_DIR, () => true)) {
+        const a = parseActionFile(text);
+        if (!a || knownAction(db, a.id)) continue;
+        recordInAction(db, project.id, a);
+        applyAction(db, project, a);
+        s.actionsReceived++;
       }
       // Round 2: the acknowledgements (and anything the orchestrator queued meanwhile).
       const more = pendingMessages(db, project.id);

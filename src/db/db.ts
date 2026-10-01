@@ -103,6 +103,16 @@ function ensureSyncTables(db: Database) {
         at INTEGER NOT NULL,
         sent INTEGER NOT NULL DEFAULT 0
       );
+      CREATE TABLE IF NOT EXISTS remote_actions (
+        id TEXT PRIMARY KEY,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        direction TEXT NOT NULL,
+        ref TEXT,
+        name TEXT,
+        action TEXT NOT NULL,
+        at INTEGER NOT NULL,
+        sent INTEGER NOT NULL DEFAULT 0
+      );
       CREATE TABLE IF NOT EXISTS remote_messages (
         id TEXT NOT NULL,
         project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -114,6 +124,8 @@ function ensureSyncTables(db: Database) {
         PRIMARY KEY (project_id, id)
       );
     `);
+  // A reply can answer one of the worker's decisions (JSON {id, option?}); added after the table first shipped.
+  if (!db.query<{ name: string }, []>('PRAGMA table_info(remote_replies)').all().some((c) => c.name === 'decision')) db.exec('ALTER TABLE remote_replies ADD COLUMN decision TEXT;');
 }
 
 function migrate(db: Database) {
