@@ -21,10 +21,14 @@ import { ticketDenials } from '../core/allow.ts';
 import { PropsView } from './components/PropsView.tsx';
 import { DetailView } from './components/DetailView.tsx';
 import { FormView, type FormValues } from './components/FormView.tsx';
+import { ReplyView } from './components/ReplyView.tsx';
 import { HelpView } from './components/HelpView.tsx';
 import { style as st } from './style.ts';
 import { CommandLine } from './components/CommandLine.tsx';
 import { ResultView } from './components/ResultView.tsx';
+import { NotifScreen } from './components/NotifView.tsx';
+import { isMouseInput } from './mouse.ts';
+import { fetchInBackground } from '../notif/index.ts';
 import { LIST_HINTS, ListView, listInnerWidth } from './components/ListView.tsx';
 import type { Message } from './messages.ts';
 import { runCommand } from './command.ts';
@@ -55,7 +59,7 @@ export interface AppProps {
 
 export type FormResult = { action: 'added' | 'saved'; ticket: TicketView } | { action: 'cancelled' } | null;
 
-type Mode = 'list' | 'detail' | 'props' | 'form' | 'help' | 'result';
+type Mode = 'list' | 'detail' | 'props' | 'form' | 'help' | 'result' | 'reply' | 'notif';
 
 /** Lines around the panes: header, two border lines, the boxed command line (3), the hint bar, plus one spare. */
 const CHROME_LINES = 8;
@@ -89,7 +93,7 @@ export const TREE_HINTS: Array<[string, string]> = [
 ];
 
 function formValuesFor(t: TicketView | null | undefined): FormValues {
-  if (!t) return { name: '', query: '', tags: '', priority: '3' };
+  if (!t) return { name: '', query: '', tags: '', priority: '3', queue: true };
   return { name: t.name, query: t.query, tags: formatTags(ticketTags(t), ticketLabels(t)), priority: priorityText(t.priority).replace(/^p/, '') };
 }
 
@@ -130,6 +134,7 @@ export function App(p: AppProps) {
     const t = p.form.ticketId != null ? getTicketById(db, p.form.ticketId) : null;
     return { mode: t ? 'edit' : 'add', ticket: t ?? undefined, projectId: t?.project_id ?? p.form.projectId, initial: formValuesFor(t) };
   });
+  const [replyError, setReplyError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [message, setMessage] = useState<Message | null>(null);
   const [detail, setDetail] = useState<TicketDetail | null>(null);
@@ -250,6 +255,14 @@ export function App(p: AppProps) {
     return () => clearInterval(i);
   }, [refresh, p.pollMs, standaloneForm]);
 
+  // The badge in the header counts messages already fetched; ask the git transport for new ones now and then.
+  useEffect(() => {
+    if (standaloneForm) return;
+    void fetchInBackground(db);
+    const i = setInterval(() => void fetchInBackground(db), 60_000);
+    return () => clearInterval(i);
+  }, [db, standaloneForm]);
+
   useEffect(() => {
     const i = setInterval(() => setTick((t) => t + 1), 30_000);
     return () => clearInterval(i);
@@ -264,7 +277,7 @@ export function App(p: AppProps) {
   // Detail: reload the ticket, its latest run and the log tail every second while open.
   const selectedId = selected?.id ?? null;
   useEffect(() => {
-    if ((mode !== 'detail' && mode !== 'props') || selectedId == null) return;
+    if ((mode !== 'detail' && mode !== 'props' && mode !== 'reply') || selectedId == null) return;
     const load = () => {
       const t = getTicketById(db, selectedId);
       if (!t) {
@@ -483,6 +496,10 @@ export function App(p: AppProps) {
         setCmdEditing(false);
         return openForm('add');
       }
+      if (r.openNotif) {
+        setCmdEditing(false);
+        return setMode('notif');
+      }
       refresh(true);
       if (r.lines.length > 1) {
         setResult({ command: text, lines: r.lines, ok: r.ok, offset: 0 });
@@ -498,6 +515,7 @@ export function App(p: AppProps) {
   // ----- keys ----------------------------------------------------------------------------
   useInput(
     (input, key) => {
+      if (isMouseInput(input)) return; // a stray mouse report (the notification window turns the mouse on)
       if (egg?.kind === 'rain') return setEgg(null); // any key ends the rain
       if (mode === 'help') {
         setMode('list');
@@ -602,7 +620,10 @@ export function App(p: AppProps) {
         return;
       }
       if (input === 'r') {
-        if (selected) doRunNow(selected);
+        if (mode === 'detail' && selected && (selected.status === 'done' || selected.status === 'blocked' || selected.status === 'failed')) {
+          setReplyError(null);
+          setMode('reply');
+        } else if (selected) doRunNow(selected);
         return;
       }
       if (input === 'a' && mode === 'list' && selected && ticketDenials(selected).length) {
@@ -614,6 +635,7 @@ export function App(p: AppProps) {
         return;
       }
       if (input === 'p') return doTogglePause();
+      if (input === 'n' && mode === 'list') return setMode('notif');
       if (input === 'q' || (key.ctrl && input === 'c')) return exit();
 
       if (mode === 'detail') {
@@ -635,7 +657,7 @@ export function App(p: AppProps) {
         else exit();
       }
     },
-    { isActive: mode !== 'form' && mode !== 'props' },
+    { isActive: mode !== 'form' && mode !== 'props' && mode !== 'reply' && mode !== 'notif' },
   );
 
   // ----- render --------------------------------------------------------------------------
@@ -682,6 +704,40 @@ export function App(p: AppProps) {
         }}
         onClose={() => setMode('list')}
       />;
+  }
+  if (mode === 'notif')
+    return (
+      <NotifScreen
+        db={db}
+        scopeName={scopeName}
+        onClose={() => {
+          setMode('list');
+          refresh(true);
+        }}
+      />
+    );
+  if (mode === 'reply' && detail && selected && detail.ticket.id === selected.id) {
+    return (
+      <ReplyView
+        columns={columns}
+        rows={viewportRows(termRows, 4)}
+        ticket={selected}
+        turns={detail.turns}
+        error={replyError}
+        onChange={() => replyError && setReplyError(null)}
+        onCancel={() => setMode('detail')}
+        onSubmit={(msg) => {
+          try {
+            const t = actions.reply(selected, msg);
+            say(t.status === 'running' ? `sent to "${t.name}": the next turn` : `sent to "${t.name}" and queued it`);
+            setMode('detail');
+            refresh(true);
+          } catch (e: any) {
+            setReplyError(String(e?.message ?? e));
+          }
+        }}
+      />
+    );
   }
   if (mode === 'help') return <HelpView columns={columns} scopeName={scopeName} />;
   if (mode === 'detail' && detail) {
@@ -734,6 +790,7 @@ export function App(p: AppProps) {
       sidebar={sidebar}
       activity={activity}
       commandFocus={cmdEditing}
+      unread={snapshot.unread}
       command={<CommandLine columns={columns} focused={cmdEditing} value={cmdValue} onChange={setCmdValue} busy={cmdBusy} nonce={cmdNonce} />}
       working={working}
       usage={usageSnap}

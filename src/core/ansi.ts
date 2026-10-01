@@ -27,3 +27,27 @@ export function stripAnsi(s: string): string {
   // eslint-disable-next-line no-control-regex
   return s.replace(/\u001b\[[0-9;]*m/g, '');
 }
+
+/**
+ * Text from a worker or a remote message made safe to print: whole escape sequences (OSC such as
+ * clipboard writes, CSI, other ESC pairs) are removed first, then any control character is dropped.
+ * Tabs and newlines stay.
+ */
+export function stripControl(s: string): string {
+  return s
+    // eslint-disable-next-line no-control-regex
+    .replace(/(?:\u001b\]|\u009d)[^\u0007\u001b\u009c]*(?:\u0007|\u001b\\|\u009c)?/g, '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]?/g, '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/\u001b[PX^_][^\u001b]*(?:\u001b\\)?/g, '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/\u001b[ -~]?/g, '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, '');
+}
+
+/** Null-safe stripControl for fields that may be missing (errors, summaries, branches). */
+export function safeText(s: string | null | undefined): string {
+  return stripControl(s ?? '');
+}

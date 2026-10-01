@@ -1,5 +1,6 @@
 import type { TicketView } from '../db/types.ts';
 import { ticketLabels, ticketTags } from '../db/types.ts';
+import { safeText } from '../core/ansi.ts';
 
 // ---------------------------------------------------------------------------
 // Width-aware string helpers (no dependency; good enough for names, tags and prompts)
@@ -99,7 +100,7 @@ export function fit(s: string, width: number, align: 'left' | 'right' = 'left'):
 
 /** Collapse newlines and runs of whitespace so a query fits on one row. */
 export function oneLine(s: string): string {
-  return s.replace(/\s+/g, ' ').trim();
+  return safeText(s).replace(/\s+/g, ' ').trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -221,9 +222,10 @@ export function wrapText(text: string, width: number): string[] {
 /** Name plus dim labels fitted to a column: the name is kept whole when the labels can shrink. */
 export function nameCell(t: Pick<TicketView, 'name' | 'labels'>, width: number): { name: string; labels: string } {
   const labels = labelText(t);
-  if (!labels) return { name: fit(t.name, width), labels: '' };
-  const nameW = displayWidth(t.name);
+  const name = safeText(t.name);
+  if (!labels) return { name: fit(name, width), labels: '' };
+  const nameW = displayWidth(name);
   const room = width - nameW - 2;
-  if (room >= 4) return { name: t.name + '  ', labels: fit(labels, room) };
-  return { name: fit(t.name, width), labels: '' };
+  if (room >= 4) return { name: name + '  ', labels: fit(labels, room) };
+  return { name: fit(name, width), labels: '' };
 }
