@@ -131,7 +131,13 @@ fi
 
 say "== check"
 FAILED=0
-sudo -u "$USER_NAME" -H sh -c 'cd ~ && podman info --format "rootless={{.Host.Security.Rootless}} runtime={{.Host.OCIRuntime.Name}}"' || { say "FAILED: podman did not start for $USER_NAME (see the message above)"; FAILED=1; }
+# The very first rootless Podman call on a fresh user can fail to mount its overlay storage (seen on a real box);
+# `podman system migrate` initialises it, so run that once and try again before calling it a failure.
+podman_info() { sudo -u "$USER_NAME" -H sh -c 'cd ~ && podman info --format "rootless={{.Host.Security.Rootless}} runtime={{.Host.OCIRuntime.Name}}"'; }
+if ! podman_info >/dev/null 2>&1; then
+  sudo -u "$USER_NAME" -H sh -c 'cd ~ && podman system migrate' >/dev/null 2>&1 || true
+fi
+podman_info || { say "FAILED: podman did not start for $USER_NAME (see the message above)"; FAILED=1; }
 if [ "$GVISOR" -eq 1 ]; then
   sudo -u "$USER_NAME" -H sh -c 'cd ~ && podman run --rm --runtime runsc --network none docker.io/library/alpine:3 echo "gVisor container works"' || { say "FAILED: a gVisor test container did not run (see the message above)"; FAILED=1; }
 fi
