@@ -103,3 +103,57 @@ CLI: `salu add project "sub" --in parent` or `salu add project "parent/sub"`; `s
 Scheduler: on dispatch, pending follow-ups go to the worker as `WorkerInput.followUp` (marked delivered). With a saved `session_id` the session is resumed with `buildFollowUpPrompt`; without one (a failed run started clean) `WorkerInput.history` is replayed in `buildFollowUpFreshPrompt`. `WorkerResult.text` carries the final message.
 
 CLI `salu reply "name" ["message"] [--now]`; TUI `r` in the detail view of a done, blocked or failed ticket (`TuiActions.reply`).
+
+## Git sync transport (`src/sync/`)
+
+Runs a project on another computer (an always-on Linux box) with git as the only link: no server, no open port. Owner: the git sync thread. `salu notif` reads the messages described here; the remote runner hosts `salu remote sync --watch`; other box code posts through `enqueueMessage`.
+
+**Roles.** `salu remote add <project> [git-url] [--box]` stores a row in `remotes`. `client` (default, your computer or phone): tickets you add to that project are sent to the box and never run locally. `box`: this machine accepts the tickets and runs them. `git-url` defaults to the project's `origin`.
+
+**Branch `salu/inbox`** on that remote is an orphan branch. Files are written once, never edited or deleted, each with a unique name, so two machines pushing at once never conflict (a rejected push is fetched and retried). Each side keeps a working copy in `~/.salu/sync/<project>` (`SALU_SYNC_DIR` overrides).
+
+```
+salu-inbox/tickets/<id>.json    client -> box   a new ticket
+salu-inbox/replies/<id>.json    client -> box   a follow-up on a ticket (salu reply)
+salu-inbox/messages/<id>.json   box -> client   what the orchestrator tells you
+```
+
+`<id>` is `<13-digit epoch ms>-<8 hex>` (`newId()`, strictly increasing in a process, so file names sort by time). All JSON has `"v": 1`; files over 64 KB and unknown versions or types are ignored.
+
+Ticket file: `{ v, id, project, name, query, tags{}, labels[], priority 1..5, queue (bool), at }`. On the box the tags `permission`, `tools`, `project`, `max-turns`, `model` and `effort` are dropped: a ticket from the remote may not widen what the worker may do or burn quota. The box's owner can allow some with `SALU_REMOTE_ALLOW_TAGS=model,effort,max-turns` (never permission, tools or project). A name that already exists gets ` (2)`.
+
+Reply file (`ReplyFile`; a follow-up prompt on a ticket that already has an answer; the phone can write these too):
+```
+{ v:1, id, project, ticket: { ref?, id?, name? }, body, now?, at }
+```
+The ticket is named like `ticket` in messages: `ref` (the `id` of the ticket file it was sent with, preferred), else `id` (its number on the box), else `name`. At least one is required. The flat form `{ ref?, name?, ... }` is accepted too. The box applies a reply once (by its `id`) with `replyToTicket(db, ticketId, body, { now })` from `src/db/queries.ts`: a done, blocked or failed ticket is queued again and resumes its Claude session; a running ticket takes it as the next turn; a backlog ticket is refused. The box always answers with a message: `ticket.accepted` ("Got your reply on ...") or a `note` with level `warn` when the ticket is not found or the reply was refused. Client helper: `publishReply(db, project, ticket, body, { now })` (used by `salu reply`), or just write the file.
+
+Message file (`MessageFile` in `src/sync/format.ts`):
+```
+{ v:1, id, project, from /* box name, SALU_BOX_NAME or hostname */, at /* epoch ms */,
+  type: 'ticket.accepted' | 'ticket.started' | 'ticket.done' | 'ticket.blocked' | 'ticket.failed'
+      | 'orchestrator.paused' | 'orchestrator.resumed' | 'note',
+  level: 'info' | 'success' | 'warn' | 'error',
+  title,                       // one line, what `salu notif` shows
+  body?,                       // detail: the error
+  ticket?: { ref?, name, id }, // ref = id of the ticket file that started it; id = ticket number on the box
+  branch?,                     // salu/<ticket>, when there is a result branch
+  question?,                   // ticket.blocked: what the ticket needs
+  reply?,                      // done/blocked/failed: the worker's whole final reply (up to 16000 chars): what a follow-up answers
+  until? }                     // orchestrator.paused: epoch ms it resumes
+```
+
+**Results.** On the box each sync also pushes every `salu/*` branch (except `salu/inbox`) of the project's repo (its kernel when the project is sandboxed) to the remote. On the client each sync fetches them into the project's repo as `salu-box/*` remote-tracking branches. On the client the `reply` of each done/blocked/failed message is stored as the ticket's latest `assistant` turn (see "Follow-ups").
+
+**Untrusted input.** Anyone who can push to the remote can write files on `salu/inbox`, so: control characters (ESC, BEL, C1, bidi overrides; newline and tab stay) are stripped from every string at parse time, so a message cannot carry terminal escapes such as OSC 52; files over 64 KB, non-regular files and symlinks are skipped, and git runs with `core.symlinks=false` and every write is checked to stay inside the sync folder (a symlinked inbox folder makes sync stop with an error instead of writing through it). **Signing (optional):** set the same `SALU_REMOTE_KEY` on your computer and the box (share it out of band, never through git). Every file then carries `sig` (HMAC-SHA256 of its canonical JSON without `sig`: keys sorted, compact), and files without a valid one are ignored, so a pusher cannot forge tickets, replies or messages. Without a key the inbox is unauthenticated; use a private repository. Anything writing these files (the phone app) must sign the same way when the key is set. Write-once is a convention, not a guarantee: a force-push can rewrite the branch.
+
+**Local tables** (schema version 7; version 6 is the `turns` table of the follow-ups work): `remotes`, `remote_tickets`, `remote_replies`, `remote_messages` (id, body JSON, direction in|out, `posted` for out, `read_at` for in), all in `src/sync/store.ts`.
+
+For `salu notif` (client side):
+- `listNotifications(db, { all?, projectId?, limit? }): Notification[]` (oldest first; unread only unless `all`; `Notification = MessageFile & { projectId, read_at }`)
+- `unreadCount(db)`, `markRead(db, ids[] | 'all'): number`
+- `syncAll(db, projectIds?)` fetches new messages first (`salu notif` should call it; errors are returned per project, not thrown).
+
+For anything on the box that wants to tell the user something: `enqueueMessage(db, projectId, projectName, boxName(), { type, level, title, body?, ticket?, branch?, question?, reply?, until? })` writes to the local outbox; the sync loop sends it. The orchestrator's `environment` event (it stopped because the login is dead or a tool is missing) becomes a `note` with level `error`, title "The box stopped: <reason>" and a body with the reason and the hint `salu runner restart <project>`. Its `dispatch`/`finish`/`pause`/`resume` events already become messages through `recordRemoteEvent` (`src/sync/events.ts`, called from `Orchestrator.emit`).
+
+CLI: `salu remote add|list|remove|sync [--watch] [--interval s]`; `salu add ... [--backlog]` in a client project (sent, queued on the box unless `--backlog`); `salu reply "name" "text"` on a sent ticket goes to the box. Known limit: `salu queue`/`salu change` on the client copy of a sent ticket do not reach the box.

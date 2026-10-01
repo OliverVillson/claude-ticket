@@ -3,7 +3,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import type { Parsed } from '../args.ts';
 import { flagBool, flagNum, flagStr } from '../args.ts';
 import { openDb } from '../../db/db.ts';
-import { createProject, createTicket, getProjectByName, wakeOrchestrator } from '../../db/queries.ts';
+import { createProject, createTicket, getProjectByName, updateTicket, wakeOrchestrator } from '../../db/queries.ts';
 import { validateTools } from '../../core/tools.ts';
 import { DEFAULT_EFFORT, DEFAULT_MODEL, parseTags, validateEffort, validateModel, validatePriority } from '../../core/tags.ts';
 import { ensureProjectChain, folderSlug, projectForNewTicket, resolveProjectRef } from '../../core/resolve.ts';
@@ -11,6 +11,8 @@ import { CliError } from '../../core/errors.ts';
 import { dim, green } from '../../core/ansi.ts';
 import { readStatus } from '../../orchestrator/status.ts';
 import { cloneRepo, repoNameFromUrl } from '../../core/clone.ts';
+import { getRemote } from '../../sync/store.ts';
+import { publishTicket, syncProject } from '../../sync/sync.ts';
 import { helpIf } from './_shared.ts';
 
 const HELP = `salu add "name" ["query"] ["tags"] [--save]
@@ -20,6 +22,7 @@ salu add "name" "query" ["tags"] [--project P] [--priority N] [--tags T]
 A new ticket is queued at once: a running orchestrator (salu run --detach, or the one on your server)
 picks it up, so you can write an idea and walk away. --save (alias --backlog) only saves it (status backlog); it then
 waits until you start it with salu queue "name", salu run, or u / r in the TUI.
+In a project with a box remote (salu remote add), the ticket is sent to the box, which runs it (--save: keep it in the box's backlog without running).
 
 Adds a ticket. "query" is optional: when left out, the name is the instruction.
 The project is taken from the project=<name> tag or --project (created if it does not exist),
@@ -91,6 +94,7 @@ export async function add(p: Parsed): Promise<number> {
   const saveOnly = flagBool(p, 'save') || flagBool(p, 'backlog') || p.flags.queue === false;
   const { project, created } = projectForNewTicket(db, name, flagStr(p, 'project') ?? parsed.project);
   if (created) console.log(`${green('✓')} project ${project.name} ${dim(`→ ${project.path}`)}`);
+  const boxClient = getRemote(db, project.id)?.role === 'client';
   const t = createTicket(db, {
     project_id: project.id,
     name,
@@ -98,8 +102,24 @@ export async function add(p: Parsed): Promise<number> {
     tags: parsed.tags,
     labels: parsed.labels,
     priority,
-    status: saveOnly ? 'backlog' : 'todo',
+    // A ticket for a box is created unclaimable (backlog) and only shown as queued once it is published.
+    status: saveOnly || boxClient ? 'backlog' : 'todo',
   });
+  const remote = getRemote(db, project.id);
+  if (remote?.role === 'client') {
+    // This project runs on a box: the ticket is sent there (queued unless --save) and never runs here.
+    const queue = !saveOnly;
+    publishTicket(db, project, t, { queue });
+    if (queue) updateTicket(db, t.id, { status: 'todo' });
+    try {
+      syncProject(db, project, remote);
+      console.log(`${green('✓')} #${t.id} ${t.name} ${dim(`sent to ${remote.url}, ${queue ? 'it runs on the box' : 'saved in its backlog'}`)}`);
+    } catch (e: any) {
+      console.log(`${green('✓')} #${t.id} ${t.name} ${dim('saved; it will be sent on the next `salu remote sync`')}`);
+      console.error(`${dim('could not reach the remote now: ' + String(e?.message ?? e))}`);
+    }
+    return 0;
+  }
   if (!saveOnly) wakeOrchestrator();
   console.log(`${green('✓')} #${t.id} ${t.name} ${dim(`in ${project.name}, priority ${t.priority}, ${t.status === 'todo' ? 'queued' : 'saved: `salu queue` or `salu run` starts it'}`)}`);
   if (!saveOnly) console.log(dim(readStatus(db).alive ? 'orchestrator running: it starts when a worker is free' : 'no orchestrator running: start it with `salu run --detach`'));

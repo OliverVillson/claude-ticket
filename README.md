@@ -115,6 +115,14 @@ without asking (it can follow a preset: `edit;also:...`).
 
 Any other token (`bug`, `docs`, `team=core`) is stored as a label or custom tag for filtering.
 
+## Running on a box (git sync)
+
+`salu remote add web` (on your computer) and `salu remote add web <url> --box` plus `salu remote sync --watch`
+(on an always-on Linux box) run a project on the box with git as the only link: tickets you add go to the box,
+`salu reply "name" "text"` keeps the conversation going, and results (`salu/<ticket>` branches) and messages come
+back through the project's own git remote, on the branch `salu/inbox`. No server, no open port. Use a private
+repository: anyone who can push to it can send the box tickets. Format and details: INTERFACES.md ("Git sync transport").
+
 ## The kernel (sandbox, opt-in per project)
 
 `salu add project web --sandbox` (or `salu change project web --sandbox` / `--no-sandbox`) runs that
