@@ -3,7 +3,7 @@ import { dirname, join, sep } from 'node:path';
 import { CliError } from '../core/errors.ts';
 import { folderSlug } from '../core/resolve.ts';
 import { ticketHome } from '../core/paths.ts';
-import { INBOX_BRANCH, MAX_FILE_BYTES, MESSAGES_DIR, REPLIES_DIR, TICKETS_DIR } from './format.ts';
+import { ACTIONS_DIR, INBOX_BRANCH, MAX_FILE_BYTES, MESSAGES_DIR, REPLIES_DIR, TICKETS_DIR } from './format.ts';
 
 /** Working copy of the inbox branch for one project: ~/.salu/sync/<project>. */
 export function inboxDir(projectName: string): string {
@@ -162,7 +162,7 @@ export function rewriteInbox(dir: string, url: string, fn: (text: string) => str
     const c = git(dir, ['checkout', '-q', '-f', '-B', INBOX_BRANCH, `origin/${INBOX_BRANCH}`]);
     if (!c.ok) throw new CliError(`git checkout failed: ${c.err.trim()}`);
     let changed = 0;
-    for (const sub of [TICKETS_DIR, REPLIES_DIR, MESSAGES_DIR]) {
+    for (const sub of [TICKETS_DIR, REPLIES_DIR, ACTIONS_DIR, MESSAGES_DIR]) {
       for (const { name, text } of readDir(dir, sub, () => true)) {
         const next = fn(text);
         if (next === null || next === text) continue;

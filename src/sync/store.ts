@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import type { MessageFile, ReplyFile } from './format.ts';
+import type { ActionFile, MessageFile, ReplyFile } from './format.ts';
 import { newId } from './format.ts';
 
 export type RemoteRole = 'client' | 'box';
@@ -90,12 +90,13 @@ interface ReplyRow {
   now: number;
   at: number;
   sent: number;
+  decision: string | null;
 }
 
 /** Client: queue a follow-up for the box (sent by the next sync). Returns the reply's id. */
-export function addOutReply(db: Database, projectId: number, r: { ref?: string; name?: string; body: string; now?: boolean }): string {
+export function addOutReply(db: Database, projectId: number, r: { ref?: string; name?: string; body: string; now?: boolean; decision?: ReplyFile['decision'] }): string {
   const id = newId();
-  db.run("INSERT INTO remote_replies (id, project_id, direction, ref, name, body, now, at, sent) VALUES (?, ?, 'out', ?, ?, ?, ?, ?, 0)", [id, projectId, r.ref ?? null, r.name ?? null, r.body, r.now ? 1 : 0, Number(id.slice(0, 13))]);
+  db.run("INSERT INTO remote_replies (id, project_id, direction, ref, name, body, now, at, sent, decision) VALUES (?, ?, 'out', ?, ?, ?, ?, ?, 0, ?)", [id, projectId, r.ref ?? null, r.name ?? null, r.body, r.now ? 1 : 0, Number(id.slice(0, 13)), r.decision ? JSON.stringify(r.decision) : null]);
   return id;
 }
 
@@ -103,7 +104,7 @@ export function pendingOutReplies(db: Database, projectId: number): ReplyFile[] 
   return db
     .query<ReplyRow, [number]>("SELECT * FROM remote_replies WHERE project_id = ? AND direction = 'out' AND sent = 0 ORDER BY id")
     .all(projectId)
-    .map((r) => ({ v: 1, id: r.id, project: '', ...(r.ref ? { ref: r.ref } : {}), ...(r.name ? { name: r.name } : {}), body: r.body, now: !!r.now, at: r.at }));
+    .map((r) => ({ v: 1, id: r.id, project: '', ...(r.ref ? { ref: r.ref } : {}), ...(r.name ? { name: r.name } : {}), body: r.body, now: !!r.now, ...(r.decision ? { decision: JSON.parse(r.decision) } : {}), at: r.at }));
 }
 
 export function markRepliesSent(db: Database, ids: string[]): void {
@@ -116,7 +117,50 @@ export function knownReply(db: Database, id: string): boolean {
 
 /** Box: remember a reply file has been handled, so it is applied once. */
 export function recordInReply(db: Database, projectId: number, r: ReplyFile): void {
-  db.run("INSERT OR IGNORE INTO remote_replies (id, project_id, direction, ref, name, body, now, at, sent) VALUES (?, ?, 'in', ?, ?, ?, ?, ?, 1)", [r.id, projectId, r.ref ?? null, r.name ?? null, r.body, r.now ? 1 : 0, r.at]);
+  db.run("INSERT OR IGNORE INTO remote_replies (id, project_id, direction, ref, name, body, now, at, sent, decision) VALUES (?, ?, 'in', ?, ?, ?, ?, ?, 1, ?)", [r.id, projectId, r.ref ?? null, r.name ?? null, r.body, r.now ? 1 : 0, r.at, r.decision ? JSON.stringify(r.decision) : null]);
+}
+
+// --- decisions (client side: the box's id <-> the local copy) ---------------------------------
+
+export function mapDecision(db: Database, projectId: number, remoteId: string, localId: number): void {
+  db.run('INSERT OR REPLACE INTO remote_decisions (project_id, remote_id, local_id) VALUES (?, ?, ?)', [projectId, remoteId, localId]);
+}
+
+export function localDecisionFor(db: Database, projectId: number, remoteId: string): number | null {
+  return db.query<{ local_id: number }, [number, string]>('SELECT local_id FROM remote_decisions WHERE project_id = ? AND remote_id = ?').get(projectId, remoteId)?.local_id ?? null;
+}
+
+export function remoteDecisionFor(db: Database, localId: number): string | null {
+  return db.query<{ remote_id: string }, [number]>('SELECT remote_id FROM remote_decisions WHERE local_id = ?').get(localId)?.remote_id ?? null;
+}
+
+// --- actions (resolve / reopen) ----------------------------------------------------------
+
+/** Client: queue a resolve or reopen for the box. Returns the action's id. */
+export function addOutAction(db: Database, projectId: number, a: { ref?: string; name?: string; action: 'resolve' | 'reopen' }): string {
+  const id = newId();
+  db.run("INSERT INTO remote_actions (id, project_id, direction, ref, name, action, at, sent) VALUES (?, ?, 'out', ?, ?, ?, ?, 0)", [id, projectId, a.ref ?? null, a.name ?? null, a.action, Number(id.slice(0, 13))]);
+  return id;
+}
+
+export function pendingOutActions(db: Database, projectId: number): ActionFile[] {
+  return db
+    .query<{ id: string; ref: string | null; name: string | null; action: 'resolve' | 'reopen'; at: number }, [number]>("SELECT id, ref, name, action, at FROM remote_actions WHERE project_id = ? AND direction = 'out' AND sent = 0 ORDER BY id")
+    .all(projectId)
+    .map((r) => ({ v: 1, id: r.id, project: '', ...(r.ref ? { ref: r.ref } : {}), ...(r.name ? { name: r.name } : {}), action: r.action, at: r.at }));
+}
+
+export function markActionsSent(db: Database, ids: string[]): void {
+  for (const id of ids) db.run('UPDATE remote_actions SET sent = 1 WHERE id = ?', [id]);
+}
+
+export function knownAction(db: Database, id: string): boolean {
+  return !!db.query('SELECT 1 FROM remote_actions WHERE id = ?').get(id);
+}
+
+/** Box: remember an action file has been handled, so it is applied once. */
+export function recordInAction(db: Database, projectId: number, a: ActionFile): void {
+  db.run("INSERT OR IGNORE INTO remote_actions (id, project_id, direction, ref, name, action, at, sent) VALUES (?, ?, 'in', ?, ?, ?, ?, 1)", [a.id, projectId, a.ref ?? null, a.name ?? null, a.action, a.at]);
 }
 
 // --- messages ----------------------------------------------------------------------------
