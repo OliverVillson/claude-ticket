@@ -4,7 +4,7 @@ import { openDb } from '../../db/db.ts';
 import { countTickets, getTicketById, listProjects } from '../../db/queries.ts';
 import { readStatus } from '../../orchestrator/status.ts';
 import { safeText, bold, cyan, dim, green, magenta, red, yellow } from '../../core/ansi.ts';
-import { formatClock, formatDuration, statusColor } from '../../core/format.ts';
+import { formatClock, formatDuration, statusColor, statusLabel } from '../../core/format.ts';
 import { helpIf, isEmbedded } from './_shared.ts';
 import { formatUsageHeader, getPause, formatPause, peekUsageSnapshot, getUsageSnapshot, sdkFetcher } from '../../usage/index.ts';
 import { countUnread } from '../../notif/index.ts';
@@ -45,7 +45,7 @@ export async function status(p: Parsed): Promise<number> {
   const order = ['running', 'paused', 'todo', 'backlog', 'blocked', 'failed', 'done'] as const;
   lines.push(
     order
-      .map((s) => `${statusColor(s)(`${counts[s]} ${s}`)}`)
+      .map((s) => `${statusColor(s)(`${counts[s]} ${statusLabel(s)}`)}`)
       .join(dim('  ·  ')),
   );
   if (st.workers.length) {

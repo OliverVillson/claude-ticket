@@ -75,7 +75,7 @@ export function parseFilter(query: string): FilterTerm[] {
 }
 
 function statusMatches(status: TicketStatus, value: string): boolean {
-  return status.startsWith(value);
+  return status.startsWith(value) || (status === 'done' && 'resolved'.startsWith(value));
 }
 
 export function matchesFilter(t: TicketView, terms: FilterTerm[]): boolean {
@@ -113,13 +113,14 @@ export function matchesFilter(t: TicketView, terms: FilterTerm[]): boolean {
         if (haystack === null) {
           labels ??= ticketLabels(t).map((l) => l.toLowerCase());
           tags ??= ticketTags(t);
-          haystack = [t.name, t.query, t.project, t.status, ...labels, ...Object.values(tags).map(String)]
+          haystack = [t.name, t.query, t.project, t.status, t.status === 'done' ? 'resolved' : '', ...labels, ...Object.values(tags).map(String)]
             .join('\n')
             .toLowerCase();
         }
         hit =
           haystack.includes(term.value) ||
-          (TICKET_STATUSES as string[]).some((s) => s === term.value && t.status === s);
+          (TICKET_STATUSES as string[]).some((s) => s === term.value && t.status === s) ||
+          (term.value === 'resolved' && t.status === 'done');
       }
     }
     if (term.negate ? hit : !hit) return false;
