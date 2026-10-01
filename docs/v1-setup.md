@@ -145,7 +145,7 @@ sudo -u salu env SALU_HOME=/var/lib/salu/web salu remote list    # role box, "sy
 
 If the login is dead when a service starts, the orchestrator exits (code 78) and stays failed: `salu runner list`
 shows it, and you also get an error notif on the Mac ("The box stopped: ..."). Repair the login (make a new
-the token (`claude setup-token`) or the API key, then `sudo salu runner restart web`.
+token (`claude setup-token`) or fix the API key), then `sudo salu runner restart web`.
 
 If `remote list` shows an error, it is almost always git access: the deploy key from step 5 is missing or lacks
 write access. `sudo salu runner start|stop|restart|logs <project>` cover both services.
