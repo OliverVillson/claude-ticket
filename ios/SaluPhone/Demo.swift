@@ -38,9 +38,12 @@ enum Demo {
         var asked = message(3, "ticket.decision", "info", "fix login redirect asks: Keep the old /auth/return route working?", ticket: login)
         asked.decision = Lenient(SaluDecision(
             id: "1", question: "Keep the old /auth/return route working?",
+            context: "Two bookmarks in the docs still point at it.",
             options: [.init(label: "Redirect it", consequence: "Old links keep working; one extra route to maintain."),
                       .init(label: "Remove it", consequence: "Less code; old links land on a 404.")],
             recommended: 0))
+        var spawned = message(7, "ticket.spawned", "info", "fix login redirect started a sub-thread: update auth docs", ticket: t(16, "update auth docs"))
+        spawned.parent = login
         let gridDone = message(62, "ticket.done", "success", "fix css grid is done: 3 files changed, tests pass", ticket: t(11, "fix css grid"),
                                body: "3 files changed, tests pass.", branch: "salu/fix-css-grid",
                                reply: "Done on salu/fix-css-grid. The pricing grid now uses minmax(200px, 1fr) with three columns down to 700px, then two. I added a Playwright test at 768px and 700px. 3 files changed, tests pass.")
@@ -70,6 +73,7 @@ enum Demo {
             message(14, "ticket.accepted", "info", "Accepted as #14", ticket: login),
             message(9, "ticket.started", "info", "Started fix login redirect", ticket: login),
             asked,
+            spawned,
             working,
             message(6, "ticket.accepted", "info", "Accepted as #12", ticket: clone),
             message(5, "ticket.started", "info", "Started clone api repo", ticket: clone),

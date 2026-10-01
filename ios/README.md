@@ -31,6 +31,7 @@ every state and a pretend box that answers what you send. Nothing goes to GitHub
   result branch, with the command to check it out), the conversation (what you asked, the worker's replies, your
   follow-ups) and, folded away, every step the box reported. **Resolve** (top right) writes an action file to
   `salu-inbox/actions/<id>.json`; the box answers with `ticket.state`. Replying to a resolved ticket reopens it.
+  Sub-threads a worker started (`ticket.spawned`) are listed on their parent's thread and link back to it.
   Checklist updates show on the thread only, not in the Inbox.
 - **Keep chatting** (bottom of a ticket, or of its done / blocked / failed message): one field, sent as a `ticket-reply`
   to `salu-inbox/replies/<id>.json`, the phone's `salu reply`. The worker resumes the same session on the same branch.

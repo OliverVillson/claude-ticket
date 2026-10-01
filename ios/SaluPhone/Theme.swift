@@ -91,6 +91,7 @@ extension SaluMessage {
         case "ticket.status": return Look(glyph: "◐", color: Salu.accent, label: "checklist")
         case "ticket.decision": return Look(glyph: "?", color: Salu.warn, label: "decision")
         case "ticket.output": return Look(glyph: "↗", color: Salu.accent, label: "output")
+        case "ticket.spawned": return Look(glyph: "↳", color: Salu.dim, label: "sub-thread")
         case "ticket.blocked": return Look(glyph: "?", color: Salu.warn, label: "needs you")
         case "ticket.failed": return Look(glyph: "✗", color: Salu.error, label: "failed")
         case "orchestrator.paused": return Look(glyph: "‖", color: Salu.paused, label: "paused")

@@ -99,6 +99,8 @@ struct TicketSummary: Identifiable, Hashable {
     var replies: [SentReply] = []     // oldest first
     var lastSent: Date?        // the phone's latest write for it (the ticket or a reply) still waiting on the box
     var resolvePending = false // resolved from this phone, the box hasn't confirmed yet
+    var parent: String?        // TicketSummary.id of the thread whose worker started this one
+    var parentName: String?
 
     /// The box queues a follow-up on any ticket it knows, except one in the backlog (`salu reply` refuses those).
     /// On a resolved ticket the reply revives it.
@@ -217,10 +219,18 @@ enum Tickets {
                 if next == .queued && s.state == .running { next = .running }  // a reply during a run: it stays running, the reply is its next turn
                 s.state = next
             }
+            if m.type == "ticket.spawned", let p = m.parent {
+                s.parent = p.ref ?? "box:\(m.project)#\(p.id)"  // made canonical below, once every alias is known
+                s.parentName = p.name
+            }
             s.updated = max(s.updated, m.date)
             s.lastSent = nil  // the box answered
             s.messages.insert(m, at: 0)
             byKey[key] = s
+        }
+
+        for (key, s) in byKey {
+            if let p = s.parent, let canonical = alias[p] { byKey[key]?.parent = canonical }
         }
 
         // What this phone did to tickets the box knows, oldest first: replies and resolves.

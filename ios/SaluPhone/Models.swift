@@ -22,6 +22,7 @@ struct SaluMessage: Codable, Identifiable, Hashable {
     var checklist: Lenient<[ChecklistItem]>?  // ticket.status: the worker's whole checklist, replacing the last one
     var decision: Lenient<SaluDecision>?      // ticket.decision: a question with options
     var outputs: Lenient<[SaluOutput]>?       // ticket.output: branches, PRs, files, links it made
+    var parent: TicketRef?                    // ticket.spawned: `ticket` is a sub-thread this ticket's worker started
 
     /// What the worker said, as fully as the box sent it.
     var workerText: String? {
@@ -51,19 +52,21 @@ struct SaluDecision: Codable, Hashable, Identifiable {
         var label: String
         var consequence: String?
     }
-    var id: String
+    var id: String  // the box's decision id
     var question: String
+    var context: String?
     var options: [Option]
     var recommended: Int?  // index into options; nil when the worker didn't pick one
 
-    init(id: String, question: String, options: [Option], recommended: Int?) {
+    init(id: String, question: String, context: String? = nil, options: [Option], recommended: Int?) {
         self.id = id
         self.question = question
+        self.context = context
         self.options = options
         self.recommended = recommended
     }
 
-    private enum CodingKeys: String, CodingKey { case id, question, options, recommended }
+    private enum CodingKeys: String, CodingKey { case id, question, context, options, recommended }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -73,6 +76,7 @@ struct SaluDecision: Codable, Hashable, Identifiable {
             id = String(try c.decode(Int.self, forKey: .id))  // the database's number, if a box sends it bare
         }
         question = try c.decode(String.self, forKey: .question)
+        context = try? c.decodeIfPresent(String.self, forKey: .context)
         options = try c.decode([Option].self, forKey: .options)
         let r = try? c.decodeIfPresent(Int.self, forKey: .recommended)
         recommended = r.flatMap { options.indices.contains($0) ? $0 : nil }

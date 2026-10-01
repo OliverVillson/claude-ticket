@@ -117,6 +117,31 @@ struct TicketRow: View {
     }
 }
 
+/// Threads this ticket's worker started, each a link to its own thread.
+struct SubThreads: View {
+    let items: [TicketSummary]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("sub-threads").font(Salu.mono(.caption, weight: .semibold)).foregroundStyle(Salu.chrome)
+            ForEach(items) { c in
+                NavigationLink(value: TicketRoute(id: c.id)) {
+                    HStack(spacing: 10) {
+                        Text(c.state.look.glyph).foregroundStyle(c.state.look.color)
+                        Text(c.name).foregroundStyle(Salu.text).lineLimit(1)
+                        Spacer(minLength: 6)
+                        Text(c.state.look.label).foregroundStyle(Salu.chrome)
+                        Image(systemName: "chevron.right").font(.caption2).foregroundStyle(Salu.chrome)
+                    }
+                    .font(Salu.mono(.footnote))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(c.name), \(c.state.look.label)")
+            }
+        }
+    }
+}
+
 /// A resolved ticket: one dim line, like a collapsed thread.
 struct ResolvedRow: View {
     let t: TicketSummary
@@ -144,10 +169,11 @@ struct TicketDetail: View {
     @AppStorage("thread.showActivity") private var showActivity = false
 
     var body: some View {
-        let t = store.ticket(id)
+        let all = store.tickets
+        let t = all.first { $0.id == id }
         ScrollView {
             if let t {
-                content(t)
+                content(t, children: all.filter { $0.parent == id })
             } else {
                 EmptyDog(title: "ticket gone", message: "The box no longer lists it.")
             }
@@ -186,7 +212,7 @@ struct TicketDetail: View {
         }
     }
 
-    private func content(_ t: TicketSummary) -> some View {
+    private func content(_ t: TicketSummary, children: [TicketSummary]) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 8) {
                 Chip(text: "\(t.state.look.glyph) \(t.state.look.label)", color: t.state.look.color)
@@ -202,6 +228,14 @@ struct TicketDetail: View {
             Text(t.project.isEmpty ? "project not set" : "in \(t.project)")
                 .font(Salu.mono(.footnote))
                 .foregroundStyle(Salu.chrome)
+            if let p = t.parent {
+                NavigationLink(value: TicketRoute(id: p)) {
+                    Text("↳ part of \(t.parentName ?? "another thread")")
+                        .font(Salu.mono(.footnote))
+                        .foregroundStyle(Salu.accent)
+                }
+                .buttonStyle(.plain)
+            }
 
             if t.state == .sent, let at = t.lastSent, Date().timeIntervalSince(at) > 10 * 60 {
                 Banner(glyph: "?", text: "The box hasn't picked this up yet. Is `salu remote sync --watch` running on it?", color: Salu.warn)
@@ -215,17 +249,22 @@ struct TicketDetail: View {
                 Banner(glyph: "✗", text: failure, color: Salu.error)
             }
 
-            let checklist = t.checklist
-            if !checklist.isEmpty {
-                Checklist(items: checklist)
-            }
-            ForEach(t.openDecisions) { d in
-                DecisionCard(ticket: t, decision: d)
-            }
-
-            let outputs = t.outputs
-            if !outputs.isEmpty {
-                Outputs(items: outputs)
+            // what the worker is doing, asks and made
+            Group {
+                let checklist = t.checklist
+                if !checklist.isEmpty {
+                    Checklist(items: checklist)
+                }
+                ForEach(t.openDecisions) { d in
+                    DecisionCard(ticket: t, decision: d)
+                }
+                let outputs = t.outputs
+                if !outputs.isEmpty {
+                    Outputs(items: outputs)
+                }
+                if !children.isEmpty {
+                    SubThreads(items: children)
+                }
             }
 
             let turns = t.conversation
@@ -402,6 +441,9 @@ struct DecisionCard: View {
         Card(title: "decision", tint: Salu.warn) {
             VStack(alignment: .leading, spacing: 10) {
                 Text(decision.question).font(Salu.mono(.callout, weight: .semibold))
+                if let c = decision.context, !c.isEmpty {
+                    Text(c).font(Salu.mono(.footnote)).foregroundStyle(Salu.dim)
+                }
                 ForEach(Array(decision.options.enumerated()), id: \.offset) { item in
                     option(item.offset, item.element, picked: picked)
                 }
