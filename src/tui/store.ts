@@ -1,6 +1,6 @@
 import type { Database } from 'bun:sqlite';
-import type { Project, Run, TicketStatus, TicketView } from '../db/types.ts';
-import { countTickets, latestRun, listProjects, listTickets } from '../db/queries.ts';
+import type { Project, Run, TicketStatus, TicketView, Turn } from '../db/types.ts';
+import { countTickets, latestRun, listProjects, listTickets, listTurns } from '../db/queries.ts';
 import { readStatus, type OrchestratorStatus } from '../orchestrator/status.ts';
 
 export interface Scope {
@@ -50,8 +50,10 @@ export function snapshotKey(s: Snapshot): string {
 export interface TicketDetail {
   ticket: TicketView;
   run: Run | null;
+  /** follow-ups and replies after the first prompt */
+  turns: Turn[];
 }
 
 export function loadDetail(db: Database, ticket: TicketView): TicketDetail {
-  return { ticket, run: latestRun(db, ticket.id) };
+  return { ticket, run: latestRun(db, ticket.id), turns: listTurns(db, ticket.id) };
 }

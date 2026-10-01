@@ -76,6 +76,7 @@ salu log "fix login" --follow                  # worker transcript
 | `salu add "name" "query" ["tags"] [--save]` | Adds a ticket and queues it: a running orchestrator picks it up, so you can write an idea and walk away. `query` is the prompt the worker gets. Tags are `key=value` pairs and bare labels. `--save` only saves it (status `backlog`) until you queue it. |
 | `salu show "name" [--json]` | What a ticket ended with: status, the `salu/<ticket>` branch the work was committed on, and the worker's short summary (or the question it is blocked on). |
 | `salu queue "name"... \| --all [project]` | Queues saved tickets (status `todo`, shown as queued): a running orchestrator starts them at once. Also re-queues a done, failed or blocked ticket. `--now` goes to the front. |
+| `salu reply "name" ["message"] [--now]` | Keep chatting on a ticket after its reply: resumes the same worker session (same `salu/` branch) with your message, and answers a blocked ticket's question too. No message prints the conversation. In the TUI: open the ticket, press `r`. |
 | `salu allow "name" [--tool RULE]` | Unblocks a ticket that was refused a permission: adds the denied rule (or `--tool`) to its `tools` and queues it again. |
 | `salu unqueue "name"` | Takes a queued ticket that has not started back to the backlog. |
 | `salu remove "name" [--yes]` | Deletes a ticket; a running one is stopped first. `salu remove project "name"` deletes a project and its tickets. |
