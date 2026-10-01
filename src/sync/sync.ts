@@ -7,7 +7,7 @@ import { CliError } from '../core/errors.ts';
 import { kernelPath, isGitRepo } from '../core/kernel.ts';
 import { existsSync } from 'node:fs';
 import { git, gitProblem, inboxDir, exchange, readDir } from './git.ts';
-import { MESSAGES_DIR, remoteForbiddenTags, signFile, REPLIES_DIR, TICKETS_DIR, newId, parseMessageFile, parseReplyFile, parseTicketFile, type MessageFile, type ReplyFile, type TicketFile } from './format.ts';
+import { MESSAGES_DIR, remoteForbiddenTags, requireKey, signFile, REPLIES_DIR, TICKETS_DIR, newId, parseMessageFile, parseReplyFile, parseTicketFile, type MessageFile, type ReplyFile, type TicketFile } from './format.ts';
 import {
   addOutReply,
   addRemoteTicket,
@@ -133,6 +133,7 @@ export interface SyncSummary {
 /** One round trip with the project's remote: send what is waiting, read what arrived, act on it. */
 export function syncProject(db: Database, project: Project, remote: Remote = getRemote(db, project.id)!): SyncSummary {
   if (!remote) throw new CliError(`project "${project.name}" has no remote (salu remote add "${project.name}" <git-url>)`);
+  requireKey();
   const s: SyncSummary = { project: project.name, role: remote.role, ticketsSent: 0, ticketsReceived: 0, repliesSent: 0, repliesReceived: 0, messagesSent: 0, messagesReceived: 0, branchesPushed: [] };
   const dir = inboxDir(project.name);
   try {

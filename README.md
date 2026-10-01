@@ -120,7 +120,7 @@ Any other token (`bug`, `docs`, `team=core`) is stored as a label or custom tag 
 (on an always-on Linux box) run a project on the box with git as the only link: tickets you add go to the box,
 `salu reply "name" "text"` keeps the conversation going, and results (`salu/<ticket>` branches) and messages come
 back through the project's own git remote, on the branch `salu/inbox`. No server, no open port. Use a private
-repository: anyone who can push to it can send the box tickets. Format and details: INTERFACES.md ("Git sync transport").
+repository: anyone who can push to it can send the box tickets unless the inbox is signed (it is: `salu remote add web --box` makes the signing key and shows it; give it to your computer with `--key` and to the phone). Format and details: INTERFACES.md ("Git sync transport").
 
 ## The kernel (sandbox, opt-in per project)
 
