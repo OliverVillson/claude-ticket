@@ -65,20 +65,39 @@ salu runner doctor               # every line should be a green ✓
 If it says the sandbox cannot run, your VPS kernel may block user namespaces (some container-style VPSes do).
 Pick a full VM plan, or add `--no-sandbox` in step 6 (runner projects are sandboxed by default; see "Safety").
 
-## 4. On the server: log Claude in **[untested]**
+## 4. On the server: log Claude in **[untested; flags may still change]**
 
-The box needs one Claude login, shared by every project on it. Two options; **which one to use is still being
-checked** (whether Anthropic's terms allow a subscription login for unattended use on a server). Until that is
-settled, the API key is the safe choice.
+The box needs one Claude login, shared by every project on it. Decision: **subscription is the default**, set up
+with a one-year token made for scripts (`claude setup-token`, documented at
+code.claude.com/docs/en/authentication), not a copied login. An API key is the alternative.
 
-- **API key** (pay per use): create a key in the Anthropic console, then on the server put it in a file only you
-  can read and pass it in step 6:
+- **Subscription token** (uses your plan's usage window): on the server, `sudo -iu salu`, run
+  `claude setup-token`, open the link in a browser on your Mac and approve; it prints a token. The box passes it
+  to Claude as `CLAUDE_CODE_OAUTH_TOKEN`. Keep it like a password. **If `ANTHROPIC_API_KEY` is set anywhere on the
+  box it wins over the token**, so do not set both. The token lasts a year; when it expires, make a new one and
+  restart (`sudo salu runner restart web`).
+- **API key** (pay per use): create a key in the Anthropic Console, put it in a file only you can read, and pass it
+  in step 6:
   ```sh
   install -m 600 /dev/null ~/anthropic.key && nano ~/anthropic.key     # paste the key, save
   ```
   salu stores it only in `/etc/salu/<project>.env` (root-readable), never on a command line.
-- **Subscription** (uses your plan's usage window; `salu runner add` prints a terms warning and suggests an API key): `sudo -iu salu`, run `claude`, type `/login`, follow the link
-  in a browser on your Mac. Then `exit`. If it later says the login expired, repeat.
+
+How the token reaches salu (a prompt, a flag or the env file) is being built in the runner follow-up PR: use
+`salu runner add --help` on your build for the exact flag, and treat this step as likely to change.
+
+### What this means for safety (read once)
+
+Agents on the box can still reach **any website**, and whatever login sits on the box can be read by an agent
+that gets tricked (for example by a malicious web page or a file in the repo telling it to send secrets out).
+The sandbox and locked-down services make that hard, not impossible. So treat the box's login as something you
+may have to revoke:
+
+- **Subscription token:** revoke it in your Claude account settings (authorised apps / sessions), then make a new one.
+- **API key:** delete it in the Anthropic Console. Put a **spend limit** on that key's workspace first, so a leak
+  can only cost so much.
+- You can narrow where agents may connect by setting `SALU_SANDBOX_DOMAINS=github.com,*.npmjs.org` in
+  `/etc/salu/web.env` (then restart).
 
 ## 5. On the server: let the `salu` user use git on the private repo **[untested]**
 
@@ -125,26 +144,26 @@ sudo -u salu env SALU_HOME=/var/lib/salu/web salu remote list    # role box, "sy
 ```
 
 If the login is dead when a service starts, the orchestrator exits (code 78) and stays failed: `salu runner list`
-shows it, and you also get an error notif on the Mac ("The box stopped: ..."). Repair the login (`sudo -iu salu`,
-`claude`, `/login`, or fix the API key), then `sudo salu runner restart web`.
+shows it, and you also get an error notif on the Mac ("The box stopped: ..."). Repair the login (make a new
+the token (`claude setup-token`) or the API key, then `sudo salu runner restart web`.
 
 If `remote list` shows an error, it is almost always git access: the deploy key from step 5 is missing or lacks
 write access. `sudo salu runner start|stop|restart|logs <project>` cover both services.
 
-### Optional: sign the inbox (recommended)
+### The signing key (required on the box) **[untested; flags may still change]**
 
 Anyone who can push to the repo can write tickets onto `salu/inbox`. A private repo is the first lock; a shared
-secret is the second: with `SALU_REMOTE_KEY` set to the same value on the Mac and the box, unsigned or forged
-files are ignored. Without a key the inbox is unauthenticated, so the private repo stays essential either way.
+secret is the second: files without a valid signature are ignored on both sides (`SALU_REMOTE_KEY` is the
+setting). Decision: the box requires it, and **`salu remote add --box` generates the key for you** and prints it
+once. Copy it out of band (password manager), never through git, then:
 
 ```sh
-openssl rand -hex 32                                   # make one secret; share it out of band, never through git
-echo 'SALU_REMOTE_KEY=<the secret>' | sudo tee -a /etc/salu/web.env >/dev/null   # box
-sudo salu runner restart web                           # both services pick it up
-echo 'export SALU_REMOTE_KEY=<the secret>' >> ~/.zshrc  # Mac; open a new terminal
+echo 'export SALU_REMOTE_KEY=<the key>' >> ~/.zshrc      # Mac; open a new terminal
 ```
 
-The phone app has a matching optional signing key in its Settings (kept in the Keychain on that phone only): paste the same secret there. With a key set on the box, unsigned messages are ignored.
+On the iPhone, the app asks for the same key at setup (Settings, kept in the Keychain on that phone only). Until
+a build with the generated key is released, you can make one yourself: `openssl rand -hex 32`, add
+`SALU_REMOTE_KEY=<it>` to `/etc/salu/web.env`, `sudo salu runner restart web`, and export it on the Mac.
 
 ### What tickets from the Mac may set
 
@@ -248,5 +267,5 @@ on its own.
 - Tickets sent but never start: `journalctl -u salu-sync@web` (is sync running? can `salu` push to the repo?).
 - `permission denied (publickey)` in the sync log: the deploy key is missing or lacks write access (step 5).
 - Ticket `blocked: needs permission`: `salu allow "name"` on the box.
-- `login expired` or "The box stopped": on the box, `sudo -iu salu`, run `claude`, `/login`, then `sudo salu runner restart web`.
+- `login expired` or "The box stopped": make a new token on the box (`sudo -iu salu`, `claude setup-token`) or fix the API key, then `sudo salu runner restart web`.
 - Nothing on the Mac after a sync: `salu remote list` shows the last sync time and any error per project.
