@@ -3,7 +3,7 @@ import { linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { confinementFor, credentialPaths, fileToolGuard, fileToolHook, kernelOptions } from '../src/core/kernel.ts';
-import { CONFINED_ALLOWED_TOOLS, DEFAULT_ALLOWED_TOOLS, parseTools, toolsToSdk } from '../src/core/tools.ts';
+import { CONFINED_ALLOWED_TOOLS, DEFAULT_ALLOWED_TOOLS, SALU_TOOLS, parseTools, toolsToSdk } from '../src/core/tools.ts';
 import { workerSdkOptions } from '../src/orchestrator/worker.ts';
 
 let root: string;
@@ -137,7 +137,10 @@ describe('tools in confined mode', () => {
   test('MCP tool rules are accepted, hyphens and all, and stay a per-tool decision', () => {
     expect(parseTools('also:mcp__claude-code-remote__list_repos,mcp__github').also).toEqual(['mcp__claude-code-remote__list_repos', 'mcp__github']);
     const o = toolsToSdk('standard', 'acceptEdits', { confined: true });
-    expect(o.allowedTools?.some((r) => r.startsWith('mcp__'))).toBe(false);
+    // salu's own in-process tool is allowed by name, in every mode; servers from .mcp.json are not
+    expect(o.allowedTools?.filter((r) => r.startsWith('mcp__'))).toEqual(SALU_TOOLS);
+    expect(toolsToSdk('standard', 'acceptEdits').allowedTools).toEqual(expect.arrayContaining(SALU_TOOLS));
+    expect(o.allowedTools).not.toContain('mcp__github');
     expect(toolsToSdk('also:mcp__github', 'acceptEdits', { confined: true }).allowedTools).toContain('mcp__github');
   });
 });

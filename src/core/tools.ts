@@ -16,12 +16,16 @@ import { CliError } from './errors.ts';
 
 export const DEFAULT_TOOLS = 'standard';
 
+export const SALU_TOOLS = ['mcp__salu__status', 'mcp__salu__ask_decision', 'mcp__salu__attach', 'mcp__salu__start_thread'];
+
 /**
  * Unattended workers cannot answer permission prompts, and acceptEdits denies git. The rules ask
  * for a commit on a `salu/<name>` branch, so local git is allowed; pushing and remote or config
  * changes never are.
  */
 export const DEFAULT_ALLOWED_TOOLS = [
+  // salu's own in-process worker tool (status, decisions, outputs, sub-threads): it runs inside salu and only writes salu's database.
+  ...SALU_TOOLS,
   'Bash(git status:*)', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)', 'Bash(git branch:*)',
   'Bash(git checkout:*)', 'Bash(git switch:*)', 'Bash(git add:*)', 'Bash(git commit:*)', 'Bash(git stash:*)',
   // Read-only network git: fetching code into the project is safe (it runs nothing and sends nothing).
