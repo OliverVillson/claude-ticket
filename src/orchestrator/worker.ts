@@ -19,6 +19,8 @@ import { CLAUDE_MISSING, EnvironmentError, claudeExecutableOption, environmentPr
 import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../core/tags.ts';
 import { auditKernel, kernelOptions, prepareKernel, sandboxOn, scrubSecrets } from '../core/kernel.ts';
 import { DEFAULT_TOOLS, denialsFrom, toolsToSdk } from '../core/tools.ts';
+import { memoryPrompt } from '../memory/prompt.ts';
+import { refreshKernel } from '../memory/sync.ts';
 import { openDb } from '../db/db.ts';
 import { TOOL_NAMES, TOOL_PROMPT, saluMcpServer } from '../threads/tool.ts';
 import { TRAILER_RE, buildFollowUpFreshPrompt, buildFollowUpPrompt, buildPrompt, buildResumePrompt, parseTrailer, systemAppend } from './prompt.ts';
@@ -84,7 +86,7 @@ export function workerSdkOptions(t: TicketView, project: Project | null, extra: 
   const opts: Options = {
     cwd: extra.kernel ?? t.project_path,
     maxTurns: s.maxTurns,
-    systemPrompt: { type: 'preset', preset: 'claude_code', append: saluToolOn(t, project) ? `${systemAppend(t)}\n\n${TOOL_PROMPT}` : systemAppend(t) },
+    systemPrompt: { type: 'preset', preset: 'claude_code', append: `${systemAppend(t)}\n\n${memoryPrompt(t.project_path)}${saluToolOn(t, project) ? `\n\n${TOOL_PROMPT}` : ''}` },
     // Unattended: anything that would prompt is denied at once with a message telling the worker
     // so; it then works around it or ends with `TICKET: blocked`.
     permissionPrompts: 'none',
@@ -225,6 +227,7 @@ export const sdkRunner: WorkerRunner = {
     if (runningCompiled() && !claudeExecutableOption()) throw new EnvironmentError(process.env.SALU_CLAUDE_PATH ? `SALU_CLAUDE_PATH points to ${process.env.SALU_CLAUDE_PATH}, which is not an executable file` : CLAUDE_MISSING);
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     const kernel = input.project?.sandbox && sandboxOn() ? prepareKernel(input.ticket.project, input.ticket.project_path) : undefined;
+    if (kernel) refreshKernel(input.ticket.project, input.ticket.project_path, kernel); // your memory edits reach the sandbox copy
     const ticket = kernel ? { ...input.ticket, project_path: kernel } : input.ticket;
     const options = workerSdkOptions(ticket, input.project, { resume: input.resume, abort: input.abort, kernel });
     input = { ...input, ticket };
