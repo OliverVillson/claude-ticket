@@ -31,11 +31,13 @@ let web: ReturnType<typeof createProject>;
 const saved: Record<string, string | undefined> = {};
 
 beforeEach(() => {
-  for (const k of ['SALU_HOME', 'SALU_WORKER', 'NO_COLOR', 'SALU_SYNC_DIR', 'SALU_NO_FETCH', 'SALU_BOX_NAME']) saved[k] = process.env[k];
+  for (const k of ['SALU_HOME', 'SALU_WORKER', 'NO_COLOR', 'SALU_SYNC_DIR', 'SALU_NO_FETCH', 'SALU_BOX_NAME', 'SALU_REMOTE_ALLOW_UNSIGNED', 'SALU_REMOTE_KEY']) saved[k] = process.env[k];
   home = mkdtempSync(join(tmpdir(), 'salu-notif-'));
   process.env.SALU_HOME = home;
   process.env.SALU_WORKER = 'fake';
   process.env.SALU_NO_FETCH = '1';
+  process.env.SALU_REMOTE_ALLOW_UNSIGNED = '1'; // these tests are about notifications, not signing
+  delete process.env.SALU_REMOTE_KEY;
   closeDb();
   db = openDb();
   web = createProject(db, { name: 'web', path: home });

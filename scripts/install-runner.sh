@@ -7,8 +7,8 @@
 # Environment:
 #   SALU_RUNNER_USER   Linux user that runs the orchestrators and holds the Claude login (default: salu, created if missing)
 #   SALU_VERSION       release to install (default: latest), e.g. v0.3.0
-# Afterwards: log in once (sudo -iu salu, run `claude`, /login), then
-#   sudo salu runner add <project> --clone <git-url>
+# Afterwards: run `claude setup-token` somewhere with a browser, then
+#   sudo salu runner add <project> --clone <git-url> --token-file <file>
 set -euo pipefail
 
 [ "$(id -u)" = 0 ] || { echo "run as root: curl -fsSL <url> | sudo bash" >&2; exit 1; }
@@ -49,6 +49,6 @@ ok "Claude Code for $RUNNER_USER"
 /usr/local/bin/salu runner setup --user "$RUNNER_USER"
 
 echo
-echo "Next, once:  sudo -iu $RUNNER_USER   then run  claude  and  /login   (or use an API key: --auth api-key)"
-echo "Then:        sudo salu runner add <project> --clone <git-url>"
+echo "Next, once:  run  claude setup-token  on any machine with a browser and save the token to a file (or use an API key: --auth api-key)"
+echo "Then:        sudo salu runner add <project> --clone <git-url> --token-file <file>"
 echo "Check:       salu runner doctor"

@@ -159,6 +159,8 @@ export function preflightClaude(o: FindOptions & { compiled?: boolean } = {}): s
  * clearly says logged out; an unclear answer is not a problem (the first ticket will tell).
  */
 export async function loginProblem(claudePath: string, run?: (cmd: string[]) => Promise<{ ok: boolean; out: string }>): Promise<string | null> {
+  // Credentials handed over in the environment (`claude setup-token`) are not what `auth status` reports on: not a login problem.
+  if (!run && process.env.CLAUDE_CODE_OAUTH_TOKEN) return null;
   const exec = run ?? (async (cmd: string[]) => {
     try {
       const p = Bun.spawn(cmd, { stdout: 'pipe', stderr: 'pipe', env: process.env });
