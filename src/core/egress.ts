@@ -95,7 +95,10 @@ export function domainAllowed(host: string, list: string[]): boolean {
   });
 }
 
-const BLOCKED_PORTS = new Set([25, 465, 587]); // outgoing mail
+const BLOCKED_PORTS = new Set([25, 465, 587]); // outgoing mail, closed even when every port is open
+
+/** Ports agents may reach: web only. This is the rule, not a default; there is no setting to widen it. */
+export const WEB_PORTS = [80, 443];
 
 export interface EgressOptions {
   lookup?: (host: string) => Promise<string[]>;
@@ -103,6 +106,8 @@ export interface EgressOptions {
   log?: (line: string) => void;
   /** names agents may reach (SALU_SANDBOX_DOMAINS); `['*']` or nothing means any public site */
   allowedDomains?: string[];
+  /** tests only: ports to allow instead of the web ports */
+  ports?: number[] | 'any';
 }
 
 const defaultLookup = async (host: string) => (isIP(host) ? [host] : (await dnsLookup(host, { all: true })).map((a) => a.address));
@@ -113,11 +118,13 @@ export function createEgressServer(o: EgressOptions = {}): Server {
   const blocked = o.isBlocked ?? isBlockedAddress;
   const log = o.log ?? (() => {});
   const allow = o.allowedDomains ?? ['*'];
+  const ports = o.ports ?? WEB_PORTS;
 
   /** The address to connect to, or a reason it is refused. */
   async function target(host: string, port: number): Promise<{ ip: string } | { refuse: string }> {
     if (!host || !Number.isInteger(port) || port < 1 || port > 65535) return { refuse: 'bad target' };
     if (BLOCKED_PORTS.has(port)) return { refuse: `port ${port} is closed` };
+    if (ports !== 'any' && !ports.includes(port)) return { refuse: `only web ports (${WEB_PORTS.join(', ')}) are open` };
     // a project's allow-list is checked on the name asked for, before anything is resolved; a bare address is not a name
     if (!allow.includes('*') && (isIP(host.replace(/^\[|\]$/g, '')) || !domainAllowed(host, allow))) return { refuse: 'not on this project\'s allowed sites' };
     let ips: string[];

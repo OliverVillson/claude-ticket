@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DOCKERFILE, checkDisk, claudeAuthEnv, requireKernelAuth, containerName, containerReady, containerSpawner, createArgs, engine, execArgs, runtime, saveToken } from '../src/core/container.ts';
 import { judgeContainer } from '../src/core/container-check.ts';
-import { createEgressServer, domainAllowed, isBlockedAddress } from '../src/core/egress.ts';
+import { createEgressServer, domainAllowed, isBlockedAddress, WEB_PORTS } from '../src/core/egress.ts';
 import { workerSdkOptions } from '../src/orchestrator/worker.ts';
 
 let root: string;
@@ -194,7 +194,7 @@ describe('egress filter', () => {
     await new Promise<void>((r) => echo.listen(0, '127.0.0.1', r));
     const eport = (echo.address() as any).port;
     try {
-      await withProxy({ lookup: async () => ['127.0.0.1'], isBlocked: () => false }, async (port) => {
+      await withProxy({ lookup: async () => ['127.0.0.1'], isBlocked: () => false, ports: 'any' }, async (port) => {
         const tunnel = await new Promise<string>((resolve) => {
           const s = connect({ port, host: '127.0.0.1' }, () => s.write(`CONNECT test.example:${eport} HTTP/1.1\r\n\r\n`));
           let buf = '';
@@ -220,6 +220,26 @@ describe('egress filter', () => {
       echo.close();
     }
   });
+  test('only web ports are open, with no setting to widen it; mail stays closed even when a test opens every port', async () => {
+    expect(WEB_PORTS).toEqual([80, 443]);
+    await withProxy({ lookup: async () => ['93.184.216.34'] }, async (port) => {
+      expect(await ask(port, 'CONNECT ok.example:22 HTTP/1.1\r\n\r\n')).toContain('only web ports');
+      expect(await ask(port, 'CONNECT ok.example:8080 HTTP/1.1\r\n\r\n')).toContain('only web ports');
+      expect(await ask(port, 'CONNECT 93.184.216.34:3306 HTTP/1.1\r\n\r\n')).toContain('403');
+      expect(await ask(port, 'GET http://ok.example:3000/ HTTP/1.1\r\nHost: ok.example\r\n\r\n')).toContain('403');
+    });
+    process.env.SALU_EGRESS_PORTS = 'any'; // the old setting is gone: it changes nothing
+    try {
+      await withProxy({ lookup: async () => ['93.184.216.34'] }, async (port) => {
+        expect(await ask(port, 'CONNECT ok.example:22 HTTP/1.1\r\n\r\n')).toContain('only web ports');
+      });
+    } finally {
+      delete process.env.SALU_EGRESS_PORTS;
+    }
+    await withProxy({ lookup: async () => ['93.184.216.34'], ports: 'any' }, async (port) => {
+      expect(await ask(port, 'CONNECT ok.example:25 HTTP/1.1\r\n\r\n')).toContain('is closed');
+    });
+  });
 });
 
 describe('disk, limits and the container proof', () => {
@@ -238,11 +258,14 @@ describe('disk, limits and the container proof', () => {
   });
 
   test('the container proof fails on a leaked address, a network, a host login or an extra mount', () => {
-    const good = { egress: { '169.254.169.254': 403, '[::1]': 403 }, directExit: 7, envText: 'PATH=/usr/bin\nHTTP_PROXY=x', hostSecrets: ['main-login-token'], mountPoints: ['/', '/proc', '/work', '/run/salu/egress.sock', '/dev/pts'] };
+    const good = { egress: { '169.254.169.254': 403, '[::1]': 403 }, ports: { '1.1.1.1:22': 403, '1.1.1.1:25': 403 }, directExit: 7, envText: 'PATH=/usr/bin\nHTTP_PROXY=x', hostSecrets: ['main-login-token'], mountPoints: ['/', '/proc', '/work', '/run/salu/egress.sock', '/dev/pts'] };
     expect(judgeContainer(good).every((p) => p.ok)).toBe(true);
     expect(judgeContainer({ ...good, egress: { ...good.egress, '[2002:a9fe:a9fe::1]': 200 } }).filter((p) => !p.ok).map((p) => p.name)).toEqual(['container: the egress filter refuses private, loopback and cloud-metadata addresses']);
+    expect(judgeContainer({ ...good, ports: { ...good.ports, '1.1.1.1:3306': 502 } }).filter((p) => !p.ok).map((p) => p.name)).toEqual(['container: only web ports (80, 443) are open']);
+    expect(judgeContainer({ ...good, ports: {} }).filter((p) => !p.ok).length).toBe(1); // no port probe at all is a failure
     expect(judgeContainer({ ...good, directExit: 0 }).filter((p) => !p.ok).length).toBe(1);
     expect(judgeContainer({ ...good, envText: 'CLAUDE_CODE_OAUTH_TOKEN=main-login-token' }).filter((p) => !p.ok).length).toBe(1);
     expect(judgeContainer({ ...good, mountPoints: [...good.mountPoints, '/host/home'] }).filter((p) => !p.ok).length).toBe(1);
   });
+
 });

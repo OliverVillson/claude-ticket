@@ -152,7 +152,7 @@ is a boundary rather than a list of blocked things:
   `/work`). No home folder, no git login, no Docker socket, no environment variables except Claude's own.
 - No network of its own. Web traffic goes through an egress filter on this machine that allows the internet but
   refuses private, loopback, link-local, carrier-grade-NAT and cloud-metadata addresses (your home network, this machine,
-  `169.254.169.254`) and outgoing mail ports, and connects to the address it checked (so DNS tricks do not help).
+  `169.254.169.254`), allows only web ports, 80 and 443 (no ssh, mail, databases or alternate ports; git over https works, git over ssh does not), and connects to the address it checked (so DNS tricks do not help).
 - Memory, CPU and process limits per container (`SALU_KERNEL_MEMORY`, `SALU_KERNEL_CPUS`).
 - The orchestrator, database, sync and phone app stay on the host. The `salu` thread tools work as before.
 - Results leave only through `salu export <folder>` and `salu push`, run by you.
