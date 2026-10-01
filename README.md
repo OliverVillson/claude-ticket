@@ -140,7 +140,35 @@ not auto-allowed (a ticket that needs one blocks, and `salu allow` grants it); a
 shell stays limited to local git (`salu doctor` says so) while the file-tool fence still applies. `SALU_SANDBOX=off` drops all of
 this and `salu doctor` flags it.
 
-## The kernel (own copy, opt-in per project)
+## The container kernel (Linux box or VPS, the default when set up)
+
+On a Linux machine with Podman, every ticket runs inside a container instead of on your machine, so the safety
+is a boundary rather than a list of blocked things:
+
+- One rootless Podman container per project, run with gVisor (`runsc`) when installed (it works without KVM, so a
+  VPS is fine). The agent is root inside it: apt, npm -g and pip all work, and what it installs stays in that
+  project's container.
+- The only thing from your machine inside is the project's kernel folder (`~/.salu/kernel/<project>`, mounted at
+  `/work`). No home folder, no git login, no Docker socket, no environment variables except Claude's own.
+- No network of its own. Web traffic goes through an egress filter on this machine that allows the internet but
+  refuses private, loopback, link-local, carrier-grade-NAT and cloud-metadata addresses (your home network, this machine,
+  `169.254.169.254`) and outgoing mail ports, and connects to the address it checked (so DNS tricks do not help).
+- Memory, CPU and process limits per container (`SALU_KERNEL_MEMORY`, `SALU_KERNEL_CPUS`).
+- The orchestrator, database, sync and phone app stay on the host. The `salu` thread tools work as before.
+- Results leave only through `salu export <folder>` and `salu push`, run by you.
+
+Set it up once: `sudo scripts/install-kernel-runtime.sh` (Ubuntu or Debian: Podman, gVisor and the AppArmor allowance
+they need), then as the salu user `salu kernel setup` (builds the image, a few GB) and `salu kernel login` (a Claude
+token for agents: run `claude setup-token`; use one you can revoke, because agents inside can read it).
+`salu kernel` shows what is missing and `salu doctor` includes it. When the container kernel is not ready, workers
+fall back to the fenced mode below, unless `SALU_KERNEL_REQUIRE=1` (then the ticket fails instead). `SALU_CONTAINER=off`
+turns it off. `salu kernel reset [project]` deletes a project's container (installed packages go, the folder stays);
+`salu kernel shell [project]` opens a shell in it for you.
+
+Not covered yet: Macs (the egress filter needs a different transport there, so Macs use the fenced mode), per-container
+disk quotas (put `~/.salu` on its own filesystem or quota), and keeping the Claude token off the agent's side entirely.
+
+## The kernel without containers (own copy, opt-in per project)
 
 `salu add project web --sandbox` (or `salu change project web --sandbox` / `--no-sandbox`) runs that
 project's workers in a kernel:

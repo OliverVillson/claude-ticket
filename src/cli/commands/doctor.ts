@@ -1,5 +1,6 @@
 import type { Parsed } from '../args.ts';
 import { checkClaude, environmentProblem, loginProblem, runningCompiled } from '../../core/claude-bin.ts';
+import { kernelStatus } from '../../core/container.ts';
 import { applyAuthPolicy } from '../../core/env.ts';
 import { probeWindow } from '../../usage/index.ts';
 import { ensureHome } from '../../core/paths.ts';
@@ -111,6 +112,10 @@ export async function doctor(p: Parsed): Promise<number> {
   if (!sandboxOn()) no('SALU_SANDBOX=off: workers can change any file you can', 'Unset SALU_SANDBOX to confine workers to their project folder again.');
   else if (sb.ok) ok('workers can only change files in their project folder (the sandbox can run here; salu add project --sandbox gives them their own copy)');
   else no(`the sandbox cannot run here, so workers get file-tool confinement only and no free shell: ${sb.problem}`, 'Install it, then tickets get the full Claude Code toolset inside the fence.');
+
+  const ks = kernelStatus();
+  if (ks.engine && ks.image && ks.token) ok(`container kernel ready (${ks.gvisor ? 'gVisor' : 'default runtime'})`);
+  else console.log(`${dim('·')} container kernel not ready, workers use the fenced mode: ${ks.problems[0] ?? ''}`);
 
   const c = checkClaude();
   if (!c.ok) {

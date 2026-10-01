@@ -17,6 +17,8 @@ import { detectLimit, parseLimitText, probeWindow } from '../usage/index.ts';
 import type { LimitHit } from '../usage/types.ts';
 import { CLAUDE_MISSING, EnvironmentError, claudeExecutableOption, environmentProblem, runningCompiled } from '../core/claude-bin.ts';
 import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../core/tags.ts';
+import { containerReady, containerRequired, containerSpawner, WORKDIR } from '../core/container.ts';
+import { startEgress } from '../core/egress.ts';
 import { auditKernel, confinementFor, kernelOptions, prepareKernel, sandboxSupport, scrubSecrets } from '../core/kernel.ts';
 import { DEFAULT_TOOLS, denialsFrom, toolsToSdk } from '../core/tools.ts';
 import { memoryPrompt } from '../memory/prompt.ts';
@@ -81,7 +83,7 @@ export function saluToolOn(t: TicketView, project: Project | null): boolean {
   return !(o.tools && o.tools.length === 0);
 }
 
-export function workerSdkOptions(t: TicketView, project: Project | null, extra: { resume?: string | null; abort?: AbortController; kernel?: string; fence?: { osSandbox: boolean } } = {}): Options {
+export function workerSdkOptions(t: TicketView, project: Project | null, extra: { resume?: string | null; abort?: AbortController; kernel?: string; fence?: { osSandbox: boolean }; container?: { project: string; dir: string; onStderr?: (s: string) => void } } = {}): Options {
   const s = effectiveSettings(t, project);
   const opts: Options = {
     cwd: extra.kernel ?? t.project_path,
@@ -119,9 +121,17 @@ export function workerSdkOptions(t: TicketView, project: Project | null, extra: 
   }
   // Project settings (CLAUDE.md, skills, hooks, .mcp.json) always load: a worker is a full Claude Code session.
   opts.settingSources = ['user', 'project', 'local'];
-  const confined = !!extra.kernel || (!!extra.fence && extra.fence.osSandbox);
+  const confined = !!extra.kernel || !!extra.container || (!!extra.fence && extra.fence.osSandbox);
   Object.assign(opts, toolsToSdk(s.tools, s.permission, { confined }));
-  if (extra.kernel || extra.fence) {
+  if (extra.container) {
+    // The container is the boundary: Claude Code runs inside it with prompts off. Nothing here is a list of things
+    // to block; what the agent can reach is what the container was given (its kernel folder and the egress filter).
+    opts.cwd = extra.container.dir;
+    opts.permissionMode = 'bypassPermissions';
+    opts.allowDangerouslySkipPermissions = true;
+    opts.env = scrubSecrets(opts.env ?? {});
+    opts.spawnClaudeCodeProcess = containerSpawner(extra.container.project, extra.container.dir, { onStderr: extra.container.onStderr });
+  } else if (extra.kernel || extra.fence) {
     // The kernel (own copy) or the fence (real project): writes confined to the folder by the OS sandbox around shell
     // commands and by a hook on the file tools; credentials closed to the file tools; no logins in the environment.
     const k = kernelOptions(extra.kernel ?? t.project_path, { mode: extra.kernel ? 'kernel' : 'fence' });
@@ -224,27 +234,38 @@ export function promptFor(input: WorkerInput): string {
 // The real runner
 // -------------------------------------------------------------------------------------------------
 
+let egressStop: Promise<() => void> | null = null;
+/** The egress filter every container goes through; started once per process, the first time a container ticket runs. */
+function ensureEgressProxy(): Promise<() => void> {
+  egressStop ??= startEgress({ log: (l) => process.env.SALU_DEBUG && console.error(`salu egress: ${l}`) });
+  return egressStop;
+}
+
 export const sdkRunner: WorkerRunner = {
   name: 'sdk',
   async *run(input) {
     // The compiled binary has no claude of its own: fail with instructions, not the SDK's error.
     if (runningCompiled() && !claudeExecutableOption()) throw new EnvironmentError(process.env.SALU_CLAUDE_PATH ? `SALU_CLAUDE_PATH points to ${process.env.SALU_CLAUDE_PATH}, which is not an executable file` : CLAUDE_MISSING);
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
-    const mode = confinementFor(input.project);
+    let mode = confinementFor(input.project);
+    const inContainer = mode !== 'off' && containerReady();
+    if (mode !== 'off' && !inContainer && containerRequired()) throw new EnvironmentError('SALU_KERNEL_REQUIRE=1 but the container kernel is not ready here. Run `salu doctor`, then `salu kernel setup`.');
+    if (inContainer) mode = 'kernel';
     const kernel = mode === 'kernel' ? prepareKernel(input.ticket.project, input.ticket.project_path) : undefined;
     if (kernel) refreshKernel(input.ticket.project, input.ticket.project_path, kernel); // your memory edits reach the sandbox copy
-    const ticket = kernel ? { ...input.ticket, project_path: kernel } : input.ticket;
+    const ticket = kernel ? { ...input.ticket, project_path: inContainer ? WORKDIR : kernel } : input.ticket;
+    if (inContainer) await ensureEgressProxy();
     // Without the OS sandbox (a Linux machine lacking bubblewrap) a fenced worker keeps the file-tool fence and the
     // old narrow shell rules, so it never gets more than it can be held to.
     const fence = mode === 'fence' ? { osSandbox: sandboxSupport().ok } : undefined;
-    const options = workerSdkOptions(ticket, input.project, { resume: input.resume, abort: input.abort, kernel, fence });
+    const stderr: string[] = [];
+    const options = workerSdkOptions(ticket, input.project, { resume: input.resume, abort: input.abort, kernel: inContainer ? undefined : kernel, fence, container: inContainer ? { project: input.ticket.project, dir: kernel!, onStderr: (s) => stderr.push(s.trim()) } : undefined });
     input = { ...input, ticket };
     if (saluToolOn(ticket, input.project)) {
       // The thread tools: in-process, so they write to the same database the orchestrator uses.
       options.mcpServers = { ...options.mcpServers, salu: await saluMcpServer(openDb(), input.ticket) };
       options.allowedTools = [...(options.allowedTools ?? []), ...TOOL_NAMES];
     }
-    const stderr: string[] = [];
     options.stderr = (data: string) => {
       const text = data.trim();
       if (text) stderr.push(text);
