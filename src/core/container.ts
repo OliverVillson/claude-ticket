@@ -138,7 +138,9 @@ export function checkDisk(dir: string, o: { limitGb?: number; minFreeGb?: number
 
 // ---- Running things -------------------------------------------------------------------------------------
 
-const podman = (bin: string, args: string[], input?: string) => spawnSync(bin, args, { encoding: 'utf8', input, timeout: 120000 });
+/** Podman is started from the user's home, never the caller's cwd, which may be a folder this user cannot enter (sudo -u salu from /home/oliver). */
+export const podmanCwd = () => process.env.HOME || homedir();
+const podman = (bin: string, args: string[], input?: string) => spawnSync(bin, args, { encoding: 'utf8', input, timeout: 120000, cwd: podmanCwd() });
 
 export function imageExists(bin: string, image = KERNEL_IMAGE): boolean {
   return podman(bin, ['image', 'exists', image]).status === 0;
@@ -274,7 +276,7 @@ export function containerSpawner(project: string, dir: string, o: { bin?: string
     const tmp = mkdtempSync(join(tmpdir(), 'salu-env-'));
     const file = join(tmp, 'env');
     writeFileSync(file, Object.entries(env).map(([k, v]) => `${k}=${v.replace(/\n/g, ' ')}`).join('\n') + '\n', { mode: 0o600 });
-    const child = spawn(bin!, execArgs(name, file, ['claude', ...opts.args.filter((a, i) => !(i === 0 && /^\/.*\.[cm]?js$/.test(a)))]), { stdio: ['pipe', 'pipe', 'pipe'], signal: opts.signal, env: { PATH: process.env.PATH, HOME: process.env.HOME, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR } });
+    const child = spawn(bin!, execArgs(name, file, ['claude', ...opts.args.filter((a, i) => !(i === 0 && /^\/.*\.[cm]?js$/.test(a)))]), { stdio: ['pipe', 'pipe', 'pipe'], cwd: podmanCwd(), signal: opts.signal, env: { PATH: process.env.PATH, HOME: process.env.HOME, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR } });
     child.stderr!.on('data', (d: Buffer) => o.onStderr?.(d.toString()));
     const clean = () => rmSync(tmp, { recursive: true, force: true });
     child.once('spawn', () => setTimeout(clean, 2000)); // the exec client has read the file by then
@@ -305,7 +307,7 @@ export function buildImage(bin: string, log: (l: string) => void = () => {}): vo
   const dir = mkdtempSync(join(tmpdir(), 'salu-image-'));
   try {
     writeFileSync(join(dir, 'Containerfile'), DOCKERFILE);
-    const r = spawnSync(bin, ['build', '-t', KERNEL_IMAGE, '-f', join(dir, 'Containerfile'), dir], { stdio: ['ignore', 'inherit', 'inherit'] });
+    const r = spawnSync(bin, ['build', '-t', KERNEL_IMAGE, '-f', join(dir, 'Containerfile'), dir], { stdio: ['ignore', 'inherit', 'inherit'], cwd: podmanCwd() });
     if (r.status !== 0) throw new CliError('building the kernel image failed (see the output above)');
     log(`built ${KERNEL_IMAGE}`);
   } finally {

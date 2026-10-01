@@ -5,7 +5,7 @@ import { openDb } from '../../db/db.ts';
 import { resolveProject } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
 import { dim, green, red } from '../../core/ansi.ts';
-import { boxAdmit, idleMinutes, startStats, startsLog, buildImage, containerName, engine, ensureContainer, GVISOR_PLATFORMS, gvisorPlatform, imageExists, kernelStatus, KERNEL_IMAGE, kvmUsable, resetContainerReadyCache, runtime, saveToken, setGvisorPlatform, tokenFile, type GvisorPlatform } from '../../core/container.ts';
+import { podmanCwd, boxAdmit, idleMinutes, startStats, startsLog, buildImage, containerName, engine, ensureContainer, GVISOR_PLATFORMS, gvisorPlatform, imageExists, kernelStatus, KERNEL_IMAGE, kvmUsable, resetContainerReadyCache, runtime, saveToken, setGvisorPlatform, tokenFile, type GvisorPlatform } from '../../core/container.ts';
 import { kernelPath, prepareKernel, requireHuman } from '../../core/kernel.ts';
 import { helpIf } from './_shared.ts';
 
@@ -113,7 +113,7 @@ export async function kernel(p: Parsed): Promise<number> {
         setGvisorPlatform(want as GvisorPlatform);
       } else throw new CliError(`unknown platform "${want}": systrap, kvm, ptrace or default`);
       const bin = engine();
-      if (bin) spawnSync(bin, ['stop', '--filter', 'label=salu.kernel=1', '-t', '5'], { stdio: 'ignore' }); // restarted with the new platform on the next ticket
+      if (bin) spawnSync(bin, ['stop', '--filter', 'label=salu.kernel=1', '-t', '5'], { stdio: 'ignore', cwd: podmanCwd() }); // restarted with the new platform on the next ticket
       console.log(`${green('✓')} gVisor platform ${want}; running containers were stopped and start again with the next ticket`);
       return 0;
     }
@@ -131,7 +131,7 @@ export async function kernel(p: Parsed): Promise<number> {
         const times: number[] = [];
         for (let i = 0; i < 3; i++) {
           const t0 = performance.now();
-          const r = spawnSync(bin, ['run', '--rm', '--network', 'none', ...rt, '--entrypoint', 'sh', KERNEL_IMAGE, '-c', work], { stdio: 'ignore', env: { ...process.env, ...(plat ? { SALU_GVISOR_PLATFORM: plat } : {}) } });
+          const r = spawnSync(bin, ['run', '--rm', '--network', 'none', ...rt, '--entrypoint', 'sh', KERNEL_IMAGE, '-c', work], { stdio: 'ignore', cwd: podmanCwd(), env: { ...process.env, ...(plat ? { SALU_GVISOR_PLATFORM: plat } : {}) } });
           if (r.status !== 0) {
             times.length = 0;
             break;
@@ -151,12 +151,12 @@ export async function kernel(p: Parsed): Promise<number> {
       const project = resolveProject(openDb(), rest[0] ?? flagStr(p, 'project'));
       const name = containerName(project.name);
       if (sub === 'reset') {
-        spawnSync(bin, ['rm', '-f', name], { stdio: 'ignore' });
+        spawnSync(bin, ['rm', '-f', name], { stdio: 'ignore', cwd: podmanCwd() });
         console.log(`${green('✓')} removed the container of "${project.name}"; the next ticket starts a fresh one`);
         return 0;
       }
       ensureContainer(project.name, prepareKernel(project.name, project.path), bin);
-      return spawnSync(bin, ['exec', '-it', '--workdir', '/work', name, 'bash'], { stdio: 'inherit' }).status ?? 0;
+      return spawnSync(bin, ['exec', '-it', '--workdir', '/work', name, 'bash'], { stdio: 'inherit', cwd: podmanCwd() }).status ?? 0;
     }
     default:
       throw new CliError(`unknown kernel command "${sub}"\n\n${HELP}`);
