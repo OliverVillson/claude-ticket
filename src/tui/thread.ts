@@ -22,10 +22,11 @@ import { GLYPHS, supportsUnicode } from '../ui/glyphs.ts';
  * The first block is the conversation (scrolls), the rest is pinned to the bottom.
  */
 
-/** A thing the thread produced. `branch` comes from the ticket; the rest from the worker's outputs. */
+/** A thing the thread produced; the shape of the core's `ticketOutputs` entries (src/core/outputs.ts once it lands). */
 export interface ThreadOutput {
   kind: 'branch' | 'pr' | 'file' | 'link';
-  label: string;
+  ref: string;
+  title?: string;
 }
 
 export interface ChecklistItem {
@@ -56,9 +57,9 @@ export interface ThreadInput {
 
 const LABEL_W = 7;
 
-/** A state is "resolved" when the thread was marked done by hand. Kept as a string test so it works before the core adds it to the type. */
+/** A resolved thread is stored as `done` (core contract): finished and put away, a reply revives it. */
 export function isResolved(t: { status: string }): boolean {
-  return t.status === 'resolved';
+  return t.status === 'done';
 }
 
 /** Resolved threads go to the bottom of the list (stable otherwise). */
@@ -76,7 +77,11 @@ function block(label: string, tone: 'accent' | 'green' | 'dim' | 'red', body: st
   if (!wrapped.length) wrapped.push('');
   const lab = tone === 'dim' ? st.dim(label.padEnd(LABEL_W)) : paint(st, tone, label.padEnd(LABEL_W));
   const out = wrapped.map((l, i) => (i === 0 ? lab : ' '.repeat(LABEL_W)) + st.text(l));
-  if (note) out[out.length - 1] += st.dim(note);
+  if (note) {
+    const n = note.trim();
+    if (displayWidth(wrapped[wrapped.length - 1]!) + 2 + displayWidth(n) <= room) out[out.length - 1] += st.dim('  ' + n);
+    else out.push(' '.repeat(LABEL_W) + st.dim(n));
+  }
   return out;
 }
 
@@ -118,7 +123,7 @@ export function conversationLines(i: ThreadInput, width: number, st: Style): str
   out.push(...block('you', 'accent', safeText(t.query), width, st));
   // The first run's reply is stored as a turn; the summary only stands in when there is none.
   const hasReply = turns.some((x) => x.role === 'assistant');
-  if (!hasReply && t.summary && (t.status === 'done' || isResolved(t))) {
+  if (!hasReply && t.summary && isResolved(t)) {
     out.push(rule(width, st), ...block('salu', 'green', safeText(t.summary), width, st));
   }
   const did = didText(i.detail, i.now);
@@ -143,8 +148,8 @@ export function conversationLines(i: ThreadInput, width: number, st: Style): str
 export function threadOutputs(i: ThreadInput): ThreadOutput[] {
   const out: ThreadOutput[] = [];
   const t = i.detail.ticket;
-  if (t.branch) out.push({ kind: 'branch', label: safeText(t.branch) });
-  for (const o of i.extras?.outputs ?? []) out.push({ ...o, label: safeText(o.label) });
+  if (t.branch) out.push({ kind: 'branch', ref: t.branch });
+  for (const o of i.extras?.outputs ?? []) out.push(o);
   return out;
 }
 
@@ -154,10 +159,10 @@ function outputsLines(i: ThreadInput, width: number, st: Style): string[] {
   const outs = threadOutputs(i);
   const lab = st.dim('outputs'.padEnd(LABEL_W + 1));
   if (!outs.length) return [lab + st.dim('none yet')];
-  if (i.showOutputs) return outs.map((o, n) => (n === 0 ? lab : ' '.repeat(LABEL_W + 1)) + st.dim(KIND_WORD[o.kind].padEnd(7)) + st.text(truncate(o.label, Math.max(8, width - LABEL_W - 9))));
+  if (i.showOutputs) return outs.map((o, n) => (n === 0 ? lab : ' '.repeat(LABEL_W + 1)) + st.dim(KIND_WORD[o.kind].padEnd(7)) + st.text(truncate(safeText(o.title ?? o.ref), Math.max(8, width - LABEL_W - 9))));
   const room = Math.max(8, width - LABEL_W - 1);
   const parts = outs.map((o) => {
-    const label = truncate(`${KIND_WORD[o.kind]} ${o.label}`, room);
+    const label = truncate(`${KIND_WORD[o.kind]} ${safeText(o.title ?? o.ref)}`, room);
     const word = Math.min(KIND_WORD[o.kind].length + 1, label.length);
     return { text: st.dim(label.slice(0, word)) + st.text(label.slice(word)), w: displayWidth(label) };
   });
@@ -193,7 +198,7 @@ function slotLines(i: ThreadInput, width: number, st: Style, budget: number): st
     if (!live.length) out.push(st.dim('waiting for the worker…'));
   } else if (i.detail.run) {
     const r = i.detail.run;
-    out.push(st.dim(`last run · ${r.outcome ?? 'running'} · ended ${r.ended_at ? fmtDuration(Math.max(0, i.now - r.ended_at)) + ' ago' : 'not yet'}${r.log_path ? ` · ${r.log_path}` : ''}`));
+    out.push(st.dim(truncate(`last run · ${r.outcome ?? 'running'} · ended ${r.ended_at ? fmtDuration(Math.max(0, i.now - r.ended_at)) + ' ago' : 'not yet'}`, width)));
   }
   return out.slice(0, Math.max(1, budget));
 }

@@ -2,6 +2,16 @@ import { bold, cyan, dim, gray, green, magenta, red, stripAnsi, yellow } from '.
 import type { TicketStatus } from '../db/types.ts';
 import { GLYPHS } from '../ui/glyphs.ts';
 
+/** What a status is called to people. A finished ticket is "resolved" (stored as `done`); you can revive it with a reply. */
+export function statusLabel(s: TicketStatus | string): string {
+  return s === 'done' ? 'resolved' : s;
+}
+
+/** Parse a status typed by a person: accepts `resolved` for the stored `done`. */
+export function parseStatus(s: string): string {
+  return s.trim().toLowerCase() === 'resolved' ? 'done' : s.trim().toLowerCase();
+}
+
 export function statusColor(s: TicketStatus | string): (x: string) => string {
   switch (s) {
     case 'running':

@@ -76,6 +76,7 @@ export const LIST_HINTS: Array<[string, string]> = [
   ['e', 'edit'],
   ['d', 'delete'],
   ['u', 'queue'],
+  ['x', 'resolve'],
   ['r', 'run now'],
   ['n', 'notifs'],
   ['p', 'pause'],
@@ -89,7 +90,7 @@ export const LIST_HINTS: Array<[string, string]> = [
 
 export function countsText(counts: Record<TicketStatus, number>): string {
   const parts: string[] = [];
-  for (const s of STATUS_ORDER) if (counts[s]) parts.push(`${counts[s]} ${s}`);
+  for (const s of STATUS_ORDER) if (counts[s]) parts.push(`${counts[s]} ${s === 'done' ? 'resolved' : s}`);
   return parts.join(' · ');
 }
 

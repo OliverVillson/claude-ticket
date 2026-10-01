@@ -77,7 +77,7 @@ describe('thread view model', () => {
   test('a clean slot: no checklist yet means no crash, a checklist renders when given', () => {
     const { input } = seedThread();
     const i = input();
-    const withList = layoutThread({ ...i, extras: { checklist: [{ text: 'reproduced', state: 'done' }, { text: 'running tests', state: 'active' }, { text: 'docs', state: 'todo' }], outputs: [{ kind: 'pr', label: '#71' }] } }, 60, 12, 0, st);
+    const withList = layoutThread({ ...i, extras: { checklist: [{ text: 'reproduced', state: 'done' }, { text: 'running tests', state: 'active' }, { text: 'docs', state: 'todo' }], outputs: [{ kind: 'pr', ref: '#71' }] } }, 60, 12, 0, st);
     const plain = withList.lines.map(stripAnsi).join('\n');
     expect(plain).toContain('✓ reproduced');
     expect(plain).toContain('running tests');
@@ -85,10 +85,10 @@ describe('thread view model', () => {
   });
 
   test('resolved threads sort to the bottom and collapse to one line', () => {
-    const rows = [{ status: 'resolved', n: 'a' }, { status: 'done', n: 'b' }, { status: 'resolved', n: 'c' }, { status: 'todo', n: 'd' }];
+    const rows = [{ status: 'done', n: 'a' }, { status: 'failed', n: 'b' }, { status: 'done', n: 'c' }, { status: 'todo', n: 'd' }];
     expect(partitionResolved(rows).map((r) => r.n)).toEqual(['b', 'd', 'a', 'c']);
     const { ticket } = seedThread();
-    const row = renderRow({ ...ticket, status: 'resolved' as never, name: 'rename-config' }, { layout: computeLayout(60), now: Date.now(), style: st });
+    const row = renderRow({ ...ticket, status: 'done', name: 'rename-config' }, { layout: computeLayout(60), now: Date.now(), style: st });
     const plain = stripAnsi(row);
     expect(plain).toContain('✓ rename-config');
     expect(plain).not.toContain('p3');
@@ -97,7 +97,7 @@ describe('thread view model', () => {
 });
 
 describe('thread view in the app', () => {
-  test('a wide terminal shows the selected conversation beside the list; tab reaches it; x says what is missing', async () => {
+  test('a wide terminal shows the selected conversation beside the list; tab reaches it; x on a resolved one says so', async () => {
     const { db, ticket } = seedThread();
     const term = mountApp({ db }, [170, 34]);
     await term.waitFor((s) => s.includes('1/6'));
@@ -111,28 +111,26 @@ describe('thread view in the app', () => {
     await term.press(KEY.tab); // tickets -> thread
     expect(term.lastFrame()).toContain('r reply');
     await term.press('x');
-    expect(term.lastFrame()).toContain('thread-state core');
+    expect(term.lastFrame()).toContain('already resolved');
     await term.press('r');
     await term.waitFor((s) => s.includes('your message'), 'reply prompt');
     await term.press(KEY.esc);
-    await term.waitFor((s) => s.includes('1/6'), 'back to the lists');
+    await term.waitFor((s) => s.includes('1 of 6 match') && !s.includes('your message'), 'back to the lists');
   });
 
-  test('x resolves through the action when the core provides one', async () => {
-    const { db, ticket } = seedThread();
-    const calls: string[] = [];
-    const actions = { ...defaultActions(db), resolve: (t: { name: string }) => (calls.push(t.name), 'resolved' as const) };
-    const term = mountApp({ db, actions }, [100, 28]);
+  test('x resolves a failed thread from the thread screen and it collapses to the bottom', async () => {
+    const { db } = seedThread();
+    const failed = listTickets(db).find((t) => t.status === 'failed')!;
+    const term = mountApp({ db }, [100, 28]);
     await term.waitFor((s) => s.includes('1/6'));
     await term.press('/');
-    await term.press(ticket.name);
+    await term.press(failed.name);
     await term.press(KEY.enter);
     await term.press(KEY.enter); // open the thread
     await term.waitFor((s) => s.includes('x resolve'));
     await term.press('x');
-    await term.waitFor((s) => s.includes('resolved "'), 'resolve message');
-    expect(calls).toEqual([ticket.name]);
-    expect(listTickets(db).length).toBe(6);
+    await term.waitFor((s) => s.includes('resolved · r replies'), 'resolve message');
+    expect(getTicketById(db, failed.id)!.status).toBe('done');
   });
 
   test('o expands the outputs strip in the thread screen', async () => {

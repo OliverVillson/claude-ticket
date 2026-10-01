@@ -25,16 +25,14 @@ export interface StatusStyle {
   label: string;
 }
 
-/** `resolved` is the finished-and-put-away state of a thread: quiet green, collapsed to one line at the bottom of the list. */
-export const STATUS_STYLE: Record<TicketStatus | 'resolved', StatusStyle> = {
+export const STATUS_STYLE: Record<TicketStatus, StatusStyle> = {
   running: { glyph: GLYPHS.running, tone: 'accent', label: 'running' },
   paused: { glyph: GLYPHS.paused, tone: 'magenta', label: 'paused' },
   backlog: { glyph: GLYPHS.backlog, tone: 'plain', dim: true, label: 'backlog' },
   todo: { glyph: GLYPHS.todo, tone: 'plain', dim: true, label: 'queued' },
   blocked: { glyph: GLYPHS.blocked, tone: 'yellow', label: 'blocked' },
   failed: { glyph: GLYPHS.failed, tone: 'red', label: 'failed' },
-  done: { glyph: GLYPHS.done, tone: 'green', label: 'done' },
-  resolved: { glyph: GLYPHS.done, tone: 'green', dim: true, label: 'resolved' },
+  done: { glyph: GLYPHS.done, tone: 'green', label: 'resolved' },
 };
 
 /** Order statuses appear in summaries (mirrors the list sort order). */

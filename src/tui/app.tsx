@@ -426,17 +426,6 @@ export function App(p: AppProps) {
     refresh(true);
   };
 
-  const doResolve = (t: TicketView) => {
-    if (!actions.resolve) return say('resolving threads arrives with the thread-state core branch', 'info');
-    try {
-      const r = actions.resolve(t);
-      say(r === 'resolved' ? `resolved "${t.name}": reply to bring it back` : `"${t.name}" is back in play`, 'ok');
-    } catch (e: any) {
-      say(String(e?.message ?? e), 'err');
-    }
-    refresh(true);
-  };
-
   const doToggleQueue = (t: TicketView) => {
     if (t.status === 'running' || t.status === 'paused') {
       say(`"${t.name}" is ${t.status}; it can't be queued or unqueued`, 'info');
@@ -445,6 +434,18 @@ export function App(p: AppProps) {
     try {
       const r = actions.toggleQueue(t);
       say(r === 'queued' ? `"${t.name}" queued${snapshot.status.alive ? '' : ' · start the orchestrator with: salu run'}` : `"${t.name}" back in the backlog`, 'ok');
+    } catch (e: any) {
+      say(String(e?.message ?? e), 'err');
+    }
+    refresh(true);
+  };
+
+  const doResolve = (t: TicketView) => {
+    if (t.status === 'running') return say(`"${t.name}" is running; wait for it to finish`, 'info');
+    if (t.status === 'done') return say(`"${t.name}" is already resolved · r replies and brings it back`, 'info');
+    try {
+      actions.resolve(t);
+      say(`"${t.name}" resolved · r replies and brings it back`, 'ok');
     } catch (e: any) {
       say(String(e?.message ?? e), 'err');
     }
@@ -683,10 +684,13 @@ export function App(p: AppProps) {
         } else if (selected) doRunNow(selected);
         return;
       }
-      if (input === 'x' && selected && (mode === 'detail' || (mode === 'list' && pane !== 'tree'))) return doResolve(selected);
       if (input === 'o' && (mode === 'detail' || threePane)) return setShowOutputs((v) => !v);
       if (input === 'a' && mode === 'list' && selected && ticketDenials(selected).length) {
         setAllowAsk({ ticket: selected, rules: [...new Set(ticketDenials(selected).map((d) => d.rule))] });
+        return;
+      }
+      if (input === 'x') {
+        if (selected) doResolve(selected);
         return;
       }
       if (input === 'u') {
