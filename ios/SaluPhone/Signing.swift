@@ -1,28 +1,28 @@
 import CryptoKit
 import Foundation
 
-/// Optional inbox signing, the same as `signFile` / `signatureOk` in src/sync/format.ts. With a key
-/// (SALU_REMOTE_KEY on the computer and the box), every file carries `sig` = hex HMAC-SHA256 of its
-/// canonical JSON without `sig`: keys sorted, compact, strings and numbers as JSON.stringify writes them.
+/// Inbox signing, the same as `signFile` / `signatureOk` in src/sync/format.ts. Every file carries
+/// `sig` = hex HMAC-SHA256 of its canonical JSON without `sig` (keys sorted, compact, strings and
+/// numbers as JSON.stringify writes them), keyed with SALU_REMOTE_KEY. The box requires it.
 enum Signing {
-    /// The key as the CLI reads it (trimmed); nil when signing is off.
+    /// The key as the CLI reads it (trimmed); nil when none is set yet.
     static func key(_ raw: String) -> SymmetricKey? {
         let k = raw.trimmed
         return k.isEmpty ? nil : SymmetricKey(data: Data(k.utf8))
     }
 
-    /// JSON for a file to write: `value` encoded, plus `sig` when there is a key.
-    static func encode<T: Encodable>(_ value: T, key: SymmetricKey?) throws -> Data {
+    /// JSON for a file to write: `value` encoded, plus `sig`.
+    static func encode<T: Encodable>(_ value: T, key: SymmetricKey) throws -> Data {
         let plain = try JSONEncoder().encode(value)
-        guard let key else { return plain }
-        guard var object = try JSONSerialization.jsonObject(with: plain) as? [String: Any] else { return plain }
+        guard var object = try JSONSerialization.jsonObject(with: plain) as? [String: Any] else {
+            throw CocoaError(.coderInvalidValue)
+        }
         object["sig"] = hex(sign(canonical(object), key: key))
         return try JSONSerialization.data(withJSONObject: object)
     }
 
-    /// Whether a file read from the remote may be used: always without a key, else only with a valid `sig`.
-    static func verify(_ data: Data, key: SymmetricKey?) -> Bool {
-        guard let key else { return true }
+    /// Whether a file read from the remote may be used: only with a valid `sig`.
+    static func verify(_ data: Data, key: SymmetricKey) -> Bool {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let sig = object["sig"] as? String, let mac = unhex(sig), mac.count == 32 else { return false }
         return HMAC<SHA256>.isValidAuthenticationCode(mac, authenticating: Data(canonical(object).utf8), using: key)

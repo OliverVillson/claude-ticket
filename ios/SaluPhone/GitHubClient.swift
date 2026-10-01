@@ -13,7 +13,7 @@ enum SaluError: LocalizedError {
         case .http(409, _): return Self.noInbox
         case .http(422, let msg) where msg.localizedCaseInsensitiveContains("branch"): return Self.noInbox
         case .http(let code, let msg): return "GitHub said \(code): \(msg)"
-        case .notConfigured: return "Add your repository and token in Settings."
+        case .notConfigured: return "Add your repository, token and signing key in Settings."
         case .badRepo: return "Write the repo as owner/name."
         }
     }
@@ -25,7 +25,7 @@ struct GitHubClient {
     let owner: String
     let repo: String
     let token: String
-    var key: SymmetricKey? = nil  // inbox signing, when set
+    let key: SymmetricKey  // inbox signing: the box ignores unsigned files
     static let branch = "salu/inbox"
     static let maxFileBytes = 64 * 1024  // MAX_FILE_BYTES in format.ts
 

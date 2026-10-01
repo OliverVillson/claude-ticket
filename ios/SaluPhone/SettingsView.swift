@@ -57,7 +57,7 @@ struct SettingsView: View {
                 .listRowBackground(Salu.surface)
 
                 Section {
-                    SecureField("", text: $keyDraft, prompt: Text("off").foregroundStyle(Salu.chrome))
+                    SecureField("", text: $keyDraft, prompt: Text("from salu remote add --box").foregroundStyle(Salu.chrome))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .submitLabel(.done)
@@ -69,14 +69,15 @@ struct SettingsView: View {
                         }
                     }
                 } header: {
-                    label("signing key (optional)")
+                    label("signing key")
                 } footer: {
-                    note("The same secret as SALU_REMOTE_KEY on your computer and the box. With it, the phone signs what it sends and ignores messages without a valid signature. Leave it empty if the box doesn't use one. It stays in the iOS Keychain, on this phone only.")
+                    note("The key `salu remote add --box` showed on the box (SALU_REMOTE_KEY). The phone signs every ticket and reply with it and ignores messages that aren't signed with it; the box does the same. It stays in the iOS Keychain, on this phone only.")
                 }
                 .listRowBackground(Salu.surface)
 
                 Section {
                     Button {
+                        saveKey()  // a key typed without pressing return
                         Task {
                             checking = true
                             check = await store.checkConnection()

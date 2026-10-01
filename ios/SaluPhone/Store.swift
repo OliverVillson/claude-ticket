@@ -10,7 +10,7 @@ final class Store: ObservableObject {
     @Published var project: String { didSet { defaults.set(project, forKey: "project") } }
     /// fine-grained GitHub token, kept in the Keychain
     @Published var token: String { didSet { Keychain.set(token, for: "github-token") } }
-    /// SALU_REMOTE_KEY of the computer and the box, when the inbox is signed. Kept in the Keychain.
+    /// SALU_REMOTE_KEY of the computer and the box (`salu remote add --box` makes it). Required. Kept in the Keychain.
     @Published var signingKey: String {
         didSet {
             Keychain.set(signingKey.trimmed, for: "remote-key")
@@ -75,9 +75,10 @@ final class Store: ObservableObject {
 
     // MARK: derived
 
+    /// Needs all three: the box ignores unsigned tickets and replies, so nothing is sent without the key.
     private var client: GitHubClient? {
-        guard let r = GitHubClient.parseRepo(repo), !token.isEmpty else { return nil }
-        return GitHubClient(owner: r.owner, repo: r.repo, token: token, key: Signing.key(signingKey))
+        guard let r = GitHubClient.parseRepo(repo), !token.isEmpty, let key = Signing.key(signingKey) else { return nil }
+        return GitHubClient(owner: r.owner, repo: r.repo, token: token, key: key)
     }
     private var repoKey: String { GitHubClient.parseRepo(repo).map { "\($0.owner)/\($0.repo)".lowercased() } ?? "" }
 
@@ -167,7 +168,10 @@ final class Store: ObservableObject {
     /// Settings' "Test connection".
     func checkConnection() async -> Check {
         guard GitHubClient.parseRepo(repo) != nil else { return Check(ok: false, inbox: false, message: SaluError.badRepo.localizedDescription) }
-        guard let c = client else { return Check(ok: false, inbox: false, message: "Add a GitHub token.") }
+        guard !token.isEmpty else { return Check(ok: false, inbox: false, message: "Add a GitHub token.") }
+        guard let c = client else {
+            return Check(ok: false, inbox: false, message: "Add the signing key. `salu remote add --box` shows it on the box.")
+        }
         do {
             let inbox = try await c.check()
             return Check(ok: true, inbox: inbox, message: inbox
