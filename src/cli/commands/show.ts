@@ -4,7 +4,7 @@ import { openDb } from '../../db/db.ts';
 import { resolveTicket } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
 import { dim, safeText } from '../../core/ansi.ts';
-import { formatAgo, formatCost, statusColor, statusIcon } from '../../core/format.ts';
+import { formatAgo, formatCost, statusColor, statusIcon, statusLabel } from '../../core/format.ts';
 import { ticketTags } from '../../db/types.ts';
 import { threadSummary, type ThreadSummary } from '../../threads/store.ts';
 import { helpIf } from './_shared.ts';
@@ -57,7 +57,7 @@ export async function show(p: Parsed): Promise<number> {
   const error = safeText(t.error);
   const summary = safeText(t.summary);
   const color = statusColor(t.status);
-  console.log(`${color(statusIcon(t.status))} #${t.id} ${name} ${dim(`in ${safeText(t.project)} · ${t.status}${t.cost_usd ? ` · ${formatCost(t.cost_usd)}` : ''} · updated ${formatAgo(t.updated_at)}`)}`);
+  console.log(`${color(statusIcon(t.status))} #${t.id} ${name} ${dim(`in ${safeText(t.project)} · ${statusLabel(t.status)}${t.cost_usd ? ` · ${formatCost(t.cost_usd)}` : ''} · updated ${formatAgo(t.updated_at)}`)}`);
   if (branch) console.log(`branch   ${branch} ${dim(`(git -C ${safeText(t.project_path)} log ${branch})`)}`);
   if (error) console.log(`${t.status === 'blocked' ? 'needs    ' : 'error    '}${error}`);
   if (summary) console.log(`\n${summary}`);
