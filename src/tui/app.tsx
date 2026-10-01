@@ -17,10 +17,13 @@ import { tailLog, type LogLine } from './log-tail.ts';
 import { loadDetail, loadSnapshot, snapshotKey, type Snapshot, type TicketDetail } from './store.ts';
 import type { UsageSnapshot, UsageSource } from './usage.ts';
 import { DEEPER_CELLS } from './deeper.ts';
+import { paneWidth } from './panes.ts';
 import { ticketDenials } from '../core/allow.ts';
 import { PropsView } from './components/PropsView.tsx';
 import { DetailView } from './components/DetailView.tsx';
 import { FormView, type FormValues } from './components/FormView.tsx';
+import { layoutThread } from './thread.ts';
+import { partitionResolved } from './thread.ts';
 import { ReplyView } from './components/ReplyView.tsx';
 import { HelpView } from './components/HelpView.tsx';
 import { style as st } from './style.ts';
@@ -70,7 +73,21 @@ export const ACTIVITY_MIN_ROWS = 28;
 /** Terminals at least this wide get the project tree beside the tickets; narrower ones get one pane. */
 export const TWO_PANE_MIN_COLUMNS = 104;
 
-export const TICKET_PANE_HINTS: Array<[string, string]> = [['↑↓', 'move'], ['tab', 'switch pane'], ...LIST_HINTS.filter(([k]) => k !== 'tab' && k !== '↑↓')];
+/** Terminals at least this wide also get the selected thread's conversation as a third pane. */
+export const THREE_PANE_MIN_COLUMNS = 150;
+
+export const TICKET_PANE_HINTS: Array<[string, string]> = [['↑↓', 'move'], ['tab', 'switch pane'], ['x', 'resolve'], ...LIST_HINTS.filter(([k]) => k !== 'tab' && k !== '↑↓')];
+
+export const THREAD_PANE_HINTS: Array<[string, string]> = [
+  ['↑↓', 'scroll'],
+  ['r', 'reply'],
+  ['x', 'resolve'],
+  ['o', 'outputs'],
+  ['tab', 'switch pane'],
+  [':', 'command'],
+  ['?', 'help'],
+  ['q', 'quit'],
+];
 
 export const COMMAND_HINTS: Array<[string, string]> = [
   ['⏎', 'run'],
@@ -91,6 +108,11 @@ export const TREE_HINTS: Array<[string, string]> = [
   ['?', 'help'],
   ['q', 'quit'],
 ];
+
+/** A thread can be answered once it has run (or is running: the reply is the next turn). */
+export function canReply(t: Pick<TicketView, 'status'>): boolean {
+  return t.status !== 'backlog' && t.status !== 'todo';
+}
 
 function formValuesFor(t: TicketView | null | undefined): FormValues {
   if (!t) return { name: '', query: '', tags: '', priority: '3', queue: true };
@@ -117,7 +139,11 @@ export function App(p: AppProps) {
   const selectedIdRef = useRef<number | null>(null);
 
   const twoPane = columns >= TWO_PANE_MIN_COLUMNS && !standaloneForm;
-  const [pane, setPane] = useState<'tree' | 'tickets'>('tree');
+  const threePane = columns >= THREE_PANE_MIN_COLUMNS && twoPane;
+  const [pane, setPane] = useState<'tree' | 'tickets' | 'thread'>('tree');
+  const [back, setBack] = useState(0);
+  const [showOutputs, setShowOutputs] = useState(false);
+  const replyFrom = useRef<'list' | 'detail'>('detail');
   const [expanded, setExpanded] = useState<Set<number>>(() => revealed(p.initial?.projects ?? [], new Set(), p.projectId));
   const [projConfirm, setProjConfirm] = useState<{ id: number; name: string } | null>(null);
 
@@ -180,7 +206,7 @@ export function App(p: AppProps) {
     for (const t of scoped) c[t.status]++;
     return c;
   }, [scoped]);
-  const visible = useMemo(() => applyFilter(scoped, filter), [scoped, filter]);
+  const visible = useMemo(() => partitionResolved(applyFilter(scoped, filter)), [scoped, filter]);
   const safeCursor = clampCursor(cursor, visible.length);
   const selected: TicketView | undefined = visible[safeCursor];
   selectedIdRef.current = selected?.id ?? null;
@@ -194,9 +220,10 @@ export function App(p: AppProps) {
   const rows = overflow ? Math.max(1, rowsAvail - 1) : rowsAvail;
   const top = scrollTop(topRef.current, safeCursor, rows, visible.length);
   topRef.current = top;
-  const leftW = twoPane ? Math.max(22, Math.min(32, Math.round(columns * 0.26))) : 0;
+  const leftW = twoPane ? (threePane ? 22 : Math.max(22, Math.min(32, Math.round(columns * 0.26)))) : 0;
+  const threadInner = threePane ? Math.max(40, Math.round(columns * 0.4)) : 0;
   const showProjectCol = scopeIds == null || scopeIds.size > 1;
-  const layout = useMemo(() => computeLayout((twoPane ? columns - leftW - 8 : listInnerWidth(columns)) - DEEPER_CELLS, { showProject: showProjectCol }), [columns, twoPane, leftW, showProjectCol]);
+  const layout = useMemo(() => computeLayout((twoPane ? columns - leftW - 8 - (threePane ? paneWidth(threadInner) : 0) : listInnerWidth(columns)) - DEEPER_CELLS, { showProject: showProjectCol }), [columns, twoPane, leftW, showProjectCol]);
   const now = Date.now();
   const working = snapshot.status.workers.length > 0 || snapshot.tickets.some((t) => t.status === 'running');
   const anyRunningVisible = (mode === 'list' && working) || (mode === 'list' ? visible.slice(top, top + rows).some((t) => t.status === 'running') : mode === 'detail' && selected?.status === 'running');
@@ -241,7 +268,7 @@ export function App(p: AppProps) {
       if (!force && key === keyRef.current) return;
       keyRef.current = key;
       setSnapshot(snap);
-      const vis = applyFilter(snap.tickets, filterRef.current);
+      const vis = partitionResolved(applyFilter(snap.tickets, filterRef.current));
       const id = selectedIdRef.current;
       const idx = id == null ? -1 : vis.findIndex((t) => t.id === id);
       setCursor((c) => (idx >= 0 ? idx : clampCursor(c, vis.length)));
@@ -277,7 +304,8 @@ export function App(p: AppProps) {
   // Detail: reload the ticket, its latest run and the log tail every second while open.
   const selectedId = selected?.id ?? null;
   useEffect(() => {
-    if ((mode !== 'detail' && mode !== 'props' && mode !== 'reply') || selectedId == null) return;
+    const wantDetail = mode === 'detail' || mode === 'props' || mode === 'reply' || (mode === 'list' && threePane);
+    if (!wantDetail || selectedId == null) return;
     const load = () => {
       const t = getTicketById(db, selectedId);
       if (!t) {
@@ -291,7 +319,8 @@ export function App(p: AppProps) {
     load();
     const i = setInterval(load, 1000);
     return () => clearInterval(i);
-  }, [mode, selectedId, db]);
+  }, [mode, selectedId, db, threePane]);
+  useEffect(() => setBack(0), [selectedId]);
 
   // ----- helpers -------------------------------------------------------------------------
   const say = (text: string, tone: Message['tone'] = 'ok') => setMessage({ text, tone });
@@ -397,6 +426,17 @@ export function App(p: AppProps) {
     refresh(true);
   };
 
+  const doResolve = (t: TicketView) => {
+    if (!actions.resolve) return say('resolving threads arrives with the thread-state core branch', 'info');
+    try {
+      const r = actions.resolve(t);
+      say(r === 'resolved' ? `resolved "${t.name}": reply to bring it back` : `"${t.name}" is back in play`, 'ok');
+    } catch (e: any) {
+      say(String(e?.message ?? e), 'err');
+    }
+    refresh(true);
+  };
+
   const doToggleQueue = (t: TicketView) => {
     if (t.status === 'running' || t.status === 'paused') {
       say(`"${t.name}" is ${t.status}; it can't be queued or unqueued`, 'info');
@@ -469,7 +509,7 @@ export function App(p: AppProps) {
   /** Tab / Shift+Tab out of the command line back to the lists. */
   const leaveCommand = (back: boolean) => {
     setCmdEditing(false);
-    setPane(back || !twoPane ? 'tickets' : 'tree');
+    setPane(back ? (threePane ? 'thread' : 'tickets') : !twoPane ? 'tickets' : 'tree');
   };
 
   const execute = async (line: string) => {
@@ -566,6 +606,18 @@ export function App(p: AppProps) {
         else if (key.downArrow) move(1);
         return; // the TextField consumes the rest
       }
+      // Third pane: the conversation owns the arrows (scroll) while it has the focus.
+      if (threePane && mode === 'list' && pane === 'thread') {
+        const page = Math.max(1, Math.floor(rows / 2));
+        if (key.upArrow || input === 'k') return setBack((b) => b + 1);
+        if (key.downArrow || input === 'j') return setBack((b) => Math.max(0, b - 1));
+        if (key.pageUp || (key.ctrl && input === 'u')) return setBack((b) => b + page);
+        if (key.pageDown || (key.ctrl && input === 'd')) return setBack((b) => Math.max(0, b - page));
+        if (key.home || input === 'g') return setBack(1e6);
+        if (key.end || input === 'G') return setBack(0);
+        if (key.tab) return key.shift ? setPane('tickets') : setCmdEditing(true);
+        if (key.rightArrow || key.leftArrow || input === 'e' || input === 'd' || input === 'u' || input === 'a' || input === '/') return;
+      }
       // Two-pane: the project tree owns the arrows while it has the focus.
       if (twoPane && mode === 'list' && pane === 'tree') {
         if (key.upArrow || input === 'k') return treeStep('up');
@@ -610,6 +662,10 @@ export function App(p: AppProps) {
       // Shared navigation (list and detail).
       if (key.upArrow || input === 'k') return move(-1);
       if (key.downArrow || input === 'j') return move(1);
+      if (mode === 'detail' && (key.pageUp || key.pageDown)) {
+        const page = Math.max(1, Math.floor(rows / 2));
+        return setBack((b) => (key.pageUp ? b + page : Math.max(0, b - page)));
+      }
       if (key.pageUp || (key.ctrl && input === 'u')) return move(-rows);
       if (key.pageDown || (key.ctrl && input === 'd')) return move(rows);
       if (key.home || input === 'g') return moveTo(0);
@@ -620,12 +676,15 @@ export function App(p: AppProps) {
         return;
       }
       if (input === 'r') {
-        if (mode === 'detail' && selected && (selected.status === 'done' || selected.status === 'blocked' || selected.status === 'failed')) {
+        if (selected && canReply(selected) && (mode === 'detail' || (mode === 'list' && threePane && pane !== 'tree'))) {
+          replyFrom.current = mode;
           setReplyError(null);
           setMode('reply');
         } else if (selected) doRunNow(selected);
         return;
       }
+      if (input === 'x' && selected && (mode === 'detail' || (mode === 'list' && pane !== 'tree'))) return doResolve(selected);
+      if (input === 'o' && (mode === 'detail' || threePane)) return setShowOutputs((v) => !v);
       if (input === 'a' && mode === 'list' && selected && ticketDenials(selected).length) {
         setAllowAsk({ ticket: selected, rules: [...new Set(ticketDenials(selected).map((d) => d.rule))] });
         return;
@@ -650,7 +709,10 @@ export function App(p: AppProps) {
       if (input === 'a') return openForm('add');
       if (input === '/') return setFilterEditing(true);
       if (input === ':') return setCmdEditing(true);
-      if (key.tab) return key.shift && twoPane ? setPane('tree') : setCmdEditing(true);
+      if (key.tab) {
+        if (key.shift) return twoPane ? setPane('tree') : setCmdEditing(true);
+        return threePane && pane === 'tickets' ? setPane('thread') : setCmdEditing(true);
+      }
       if (input === '?') return setMode('help');
       if (key.escape) {
         if (filter) setFilter('');
@@ -725,12 +787,12 @@ export function App(p: AppProps) {
         turns={detail.turns}
         error={replyError}
         onChange={() => replyError && setReplyError(null)}
-        onCancel={() => setMode('detail')}
+        onCancel={() => setMode(replyFrom.current)}
         onSubmit={(msg) => {
           try {
             const t = actions.reply(selected, msg);
             say(t.status === 'running' ? `sent to "${t.name}": the next turn` : `sent to "${t.name}" and queued it`);
-            setMode('detail');
+            setMode(replyFrom.current);
             refresh(true);
           } catch (e: any) {
             setReplyError(String(e?.message ?? e));
@@ -742,7 +804,7 @@ export function App(p: AppProps) {
   if (mode === 'help') return <HelpView columns={columns} scopeName={scopeName} />;
   if (mode === 'detail' && detail) {
     return (
-      <DetailView columns={columns} rows={viewportRows(termRows, 4)} detail={detail} log={log} scopeName={scopeName} now={now} spinner={frame} confirm={confirm} message={message} />
+      <DetailView columns={columns} rows={viewportRows(termRows, 4)} detail={detail} log={log} scopeName={scopeName} now={now} spinner={frame} confirm={confirm} message={message} back={back} showOutputs={showOutputs} />
     );
   }
   let sidebar: { width: number; lines: string[] } | undefined;
@@ -785,8 +847,21 @@ export function App(p: AppProps) {
     const title = target ? `activity · ${truncate(target.name, 30)}${pinnedId != null ? ' (pinned)' : ''}${back ? ` · ↑${back}` : ''} · ${keys} · [ ] scroll` : 'activity';
     activity = { title: truncate(title, Math.max(8, actInner - 6)), lines, height: actH };
   }
+  // Third pane (wide terminals): the selected thread's conversation, live.
+  let thread: { inner: number; title: string; lines: string[] } | undefined;
+  if (threePane) {
+    const d = detail && selected && detail.ticket.id === selected.id ? detail : null;
+    const height = Math.max(1, rowsAvail);
+    if (d) {
+      const block = layoutThread({ detail: d, log, now, spinner: frame, showOutputs }, threadInner, height, back, st);
+      const note = block.below ? ` · ↓${block.below}` : block.above ? ` · ↑${block.above}` : '';
+      thread = { inner: threadInner, title: truncate(`${d.ticket.name}${note}`, threadInner - 4), lines: block.lines };
+    } else thread = { inner: threadInner, title: selected ? truncate(selected.name, threadInner - 4) : 'thread', lines: [selected ? st.dim('loading…') : st.dim('no thread selected')] };
+  }
   return (
     <ListView
+      thread={thread}
+      threadFocus={pane === 'thread'}
       sidebar={sidebar}
       activity={activity}
       commandFocus={cmdEditing}
@@ -797,7 +872,7 @@ export function App(p: AppProps) {
       ticketFocus={!twoPane || pane === 'tickets'}
       crumbs={scopeCrumbs}
       projectConfirm={projConfirm ? `remove project "${projConfirm.name}" and its tickets?` : allowAsk ? `Allow ${allowAsk.rules.join(', ')} for "${allowAsk.ticket.name}" and queue it again?` : null}
-      hints={cmdEditing ? COMMAND_HINTS : twoPane ? (pane === 'tree' ? TREE_HINTS : TICKET_PANE_HINTS) : LIST_HINTS}
+      hints={cmdEditing ? COMMAND_HINTS : twoPane ? (pane === 'tree' ? TREE_HINTS : pane === 'thread' ? THREAD_PANE_HINTS : TICKET_PANE_HINTS) : LIST_HINTS}
       columns={columns}
       rows={rowsAvail}
       tickets={visible}

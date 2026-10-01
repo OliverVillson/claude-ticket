@@ -2,6 +2,7 @@ import type { Database } from 'bun:sqlite';
 import type { Project, Run, TicketStatus, TicketView, Turn } from '../db/types.ts';
 import { countTickets, latestRun, listProjects, listTickets, listTurns } from '../db/queries.ts';
 import { countUnread } from '../notif/index.ts';
+import { toolCounts } from './log-tail.ts';
 import { readStatus, type OrchestratorStatus } from '../orchestrator/status.ts';
 
 export interface Scope {
@@ -56,8 +57,11 @@ export interface TicketDetail {
   run: Run | null;
   /** follow-ups and replies after the first prompt */
   turns: Turn[];
+  /** tools the last run used, most used first (the thread's "did" line) */
+  tools: Array<[string, number]>;
 }
 
 export function loadDetail(db: Database, ticket: TicketView): TicketDetail {
-  return { ticket, run: latestRun(db, ticket.id), turns: listTurns(db, ticket.id) };
+  const run = latestRun(db, ticket.id);
+  return { ticket, run, turns: listTurns(db, ticket.id), tools: toolCounts(run?.log_path) };
 }

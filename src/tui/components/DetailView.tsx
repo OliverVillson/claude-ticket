@@ -6,6 +6,7 @@ import type { TicketDetail } from '../store.ts';
 import { ago, displayWidth, extraTags, fmtCost, fmtDuration, labelText, modelEffort, priorityText, truncate, wrapText } from '../format.ts';
 import { blinkOn, withWritingCursor } from '../blink.ts';
 import { messageText, type Message } from '../messages.ts';
+import { layoutThread, type ThreadExtras } from '../thread.ts';
 import { style as st } from '../style.ts';
 import { SPINNER_FRAMES, STATUS_STYLE, paint, paintPriority, paintStatus } from '../theme.ts';
 import { Frame, confirmText, hintsText, titleText } from './Frame.tsx';
@@ -22,15 +23,24 @@ export interface DetailViewProps {
   spinner?: number;
   confirm: TicketView | null;
   message: Message | null;
+  /** conversation lines scrolled up from the newest (PgUp / PgDn) */
+  back?: number;
+  /** worker checklist, decision and attached outputs, once the worker tool provides them */
+  extras?: ThreadExtras;
+  /** outputs strip expanded (`o`) */
+  showOutputs?: boolean;
 }
 
 export const DETAIL_HINTS: Array<[string, string]> = [
   ['esc', 'back'],
   ['↑↓', 'next ticket'],
+  ['r', 'reply'],
+  ['x', 'resolve'],
+  ['o', 'outputs'],
+  ['pgup/dn', 'scroll'],
   ['e', 'edit'],
   ['d', 'delete'],
   ['u', 'queue'],
-  ['r', 'reply / run now'],
   ['q', 'quit'],
 ];
 
@@ -59,20 +69,7 @@ export function DetailView(p: DetailViewProps) {
   const info = STATUS_STYLE[t.status];
   const glyph = t.status === 'running' && p.spinner != null ? SPINNER_FRAMES[p.spinner % SPINNER_FRAMES.length]! : info.glyph;
 
-  // Fixed lines: status line, tags line (maybe), blank, error (maybe), run summary (maybe).
   const tagBits = [modelEffort(t), ...extraTags(t), labelText(t)].filter(Boolean);
-  const hasTags = tagBits.length > 0;
-  const hasError = !!t.error;
-  const hasRun = !!run;
-  const hasDone = t.status === 'done' && (!!t.summary || !!t.branch);
-  const fixed = 1 + (hasTags ? 1 : 0) + 1 + (hasError ? 1 : 0) + (hasDone ? 2 : 0) + (hasRun ? 2 : 0) + (p.detail.turns.length ? 3 : 0);
-  const logBudget = Math.min(p.log.length, Math.max(0, Math.min(8, p.rows - fixed - 3)));
-  const queryBudget = Math.max(2, p.rows - fixed - logBudget);
-  const queryLines = wrapText(safeText(t.query), inner);
-  const shownQuery = queryLines.slice(0, queryBudget);
-  const queryCut = queryLines.length - shownQuery.length;
-  if (queryCut > 0) shownQuery[shownQuery.length - 1] = truncate(shownQuery[shownQuery.length - 1]! + ` … (+${queryCut} lines)`, inner);
-
   const runBits: string[] = [];
   if (run) {
     runBits.push(run.ended_at ? `ended ${ago(run.ended_at, p.now)}` : `started ${ago(run.started_at, p.now)}`);
@@ -81,21 +78,6 @@ export function DetailView(p: DetailViewProps) {
     if (run.outcome) runBits.push(run.outcome);
     if (run.turns != null) runBits.push(`${run.turns} turns`);
     if (run.cost_usd) runBits.push(fmtCost(run.cost_usd));
-  }
-
-  // The conversation after the first prompt: the newest few turns, each cut to a few lines.
-  const turnBudget = Math.max(0, Math.min(10, p.rows - fixed - logBudget - shownQuery.length - 1));
-  const turnLines: string[] = [];
-  if (p.detail.turns.length && turnBudget >= 2) {
-    const perTurn = Math.max(1, Math.floor((turnBudget - 1) / Math.min(2, p.detail.turns.length)));
-    for (const x of p.detail.turns.slice(-2)) {
-      const who = x.role === 'user' ? st.accent('you ›') : paint(st, 'green', 'worker ›');
-      const wrapped = wrapText(stripControl(x.body).trim(), inner - 9);
-      const cut = wrapped.slice(0, perTurn);
-      if (wrapped.length > cut.length) cut[cut.length - 1] = truncate(cut[cut.length - 1]! + ' …', inner - 9);
-      turnLines.push(who + ' ' + cut[0] + (x.role === 'user' && !x.delivered ? st.dim('  (waiting for the worker)') : ''));
-      for (const l of cut.slice(1)) turnLines.push('         ' + l);
-    }
   }
 
   const lines: string[] = [];
@@ -108,28 +90,20 @@ export function DetailView(p: DetailViewProps) {
       (t.cost_usd ? st.dim(`   ${fmtCost(t.cost_usd)}`) : '') +
       st.dim(`   updated ${ago(t.updated_at, p.now)}`),
   );
-  if (hasTags) lines.push(st.dim(tagBits.join('   ')));
+  if (tagBits.length) lines.push(st.dim(tagBits.join('   ')));
+  if (run) lines.push(st.dim(`last run · ${runBits.join(' · ')}${run.log_path ? ` · ${run.log_path}` : ''}`));
   lines.push('');
-  for (const l of shownQuery) lines.push(l);
-  if (turnLines.length) {
-    lines.push('');
-    lines.push(...turnLines);
-  }
-  if (hasError) lines.push(paint(st, 'red', '✗ ' + truncate(safeText(t.error).replace(/\s+/g, ' '), inner - 2)));
-  if (hasDone) {
-    if (t.summary) lines.push(paint(st, 'green', GLYPHS.done + ' ' + truncate(safeText(t.summary).replace(/\s+/g, ' '), inner - 2)));
-    if (t.branch) lines.push(st.dim(`branch ${safeText(t.branch)}`));
-  }
-  if (hasRun) {
-    lines.push('');
-    lines.push(st.dim(`last run · ${runBits.join(' · ')}${run?.log_path ? ` · ${run.log_path}` : ''}`));
-  }
-  const logLines = p.log.slice(-logBudget).map((l) => '  ' + logLineText(l));
-  // A running ticket gets the blinking writing cursor after its newest log line.
-  lines.push(...(t.status === 'running' && logBudget > 0 ? withWritingCursor(logLines, inner, logBudget, blinkOn(p.spinner ?? 0), st, displayWidth) : logLines));
+
+  // Everything else is the conversation, with the outputs strip and the checklist slot pinned under it.
+  const room = Math.max(6, p.rows - lines.length);
+  const thread = layoutThread({ detail: p.detail, log: p.log, extras: p.extras, now: p.now, spinner: p.spinner, showOutputs: p.showOutputs }, inner, room, p.back ?? 0, st);
+  const body = thread.lines.slice();
+  // A running ticket gets the blinking writing cursor after its newest conversation line.
+  lines.push(...body);
 
   const crumbs = [p.scopeName ?? t.project, truncate(safeText(t.name), Math.max(8, cols - 30))];
-  const idText = `#${t.id}${t.session_id ? ` · session ${t.session_id.slice(0, 8)}` : ''}`;
+  const scrollNote = thread.below ? `  ↓ ${thread.below} newer` : thread.above ? `  ↑ ${thread.above} older` : '';
+  const idText = `#${t.id}${t.session_id ? ` · session ${t.session_id.slice(0, 8)}` : ''}${scrollNote}`;
   const footer = p.confirm
     ? { left: confirmText(`delete "${truncate(p.confirm.name, 40)}"?`) }
     : p.message

@@ -37,6 +37,8 @@ export interface TuiActions {
   allow(ticket: TicketView): string[];
   /** Send a follow-up on a ticket that has a reply (or answer a blocked one); it goes back in the queue. */
   reply(ticket: TicketView, message: string): TicketView;
+  /** Mark a thread resolved, or bring a resolved one back. Absent until the thread-state core lands. */
+  resolve?(ticket: TicketView): 'resolved' | 'reopened';
   /** Pause dispatch, or resume it when `currentlyPaused`. */
   togglePause(currentlyPaused: boolean): void;
 }
