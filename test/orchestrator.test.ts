@@ -596,7 +596,7 @@ describe('what a finished ticket leaves behind', () => {
     expect(status(other.id).branch).toBeNull();
   });
 
-  test('salu show prints the branch and summary; queueing again clears them', async () => {
+  test('salu show prints the branch and summary; queueing again keeps them until the next run replaces them', async () => {
     git('init', '-q');
     git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init');
     git('branch', 'salu/ship-it');
@@ -614,8 +614,8 @@ describe('what a finished ticket leaves behind', () => {
     expect(out).toContain('branch   salu/ship-it');
     expect(out).toContain('All shipped.');
     queueTicket(db, t.id);
-    expect(status(t.id).summary).toBeNull();
-    expect(status(t.id).branch).toBeNull();
+    expect(status(t.id).summary).toBe('All shipped.');
+    expect(status(t.id).branch).toBe('salu/ship-it');
   });
 
   test('summaryFrom drops the trailer and caps the text', () => {
