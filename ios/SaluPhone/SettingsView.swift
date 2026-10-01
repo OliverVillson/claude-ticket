@@ -75,7 +75,7 @@ struct SettingsView: View {
                                 .foregroundStyle(Salu.error)
                         } else {
                             LabeledContent("key set") {
-                                Text("…" + store.signingKey.trimmed.suffix(4)).foregroundStyle(Salu.chrome)
+                                Text(verbatim: "…" + String(store.signingKey.trimmed.suffix(4))).foregroundStyle(Salu.chrome)
                             }
                         }
                     }
