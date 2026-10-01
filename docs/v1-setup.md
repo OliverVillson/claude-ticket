@@ -65,7 +65,7 @@ salu runner doctor               # every line should be a green ✓
 If it says the sandbox cannot run, your VPS kernel may block user namespaces (some container-style VPSes do).
 Pick a full VM plan, or add `--no-sandbox` in step 6 (runner projects are sandboxed by default; see "Safety").
 
-## 4. On the server: log Claude in **[untested; flags may still change]**
+## 4. On the server: log Claude in **[untested]**
 
 The box needs one Claude login, shared by every project on it. Decision: **subscription is the default**, set up
 with a one-year token made for scripts (`claude setup-token`, documented at
@@ -153,20 +153,28 @@ token with `claude setup-token`, or fix the API key), then `sudo salu runner res
 If `remote list` shows an error, it is almost always git access: the deploy key from step 5 is missing or lacks
 write access. `sudo salu runner start|stop|restart|logs <project>` cover both services.
 
-### The signing key (required on the box) **[untested; flags may still change]**
+### The signing key (required) **[untested]**
 
-Anyone who can push to the repo can write tickets onto `salu/inbox`. A private repo is the first lock; a shared
-secret is the second: files without a valid signature are ignored on both sides (`SALU_REMOTE_KEY` is the
-setting). Decision: the box requires it, and **`salu remote add --box` generates the key for you** and prints it
-once. Copy it out of band (password manager), never through git, then:
+Anyone who can push to the repo can write tickets onto `salu/inbox`. A private repo is the first lock; a signing
+key is the second: files without a valid signature are ignored. The box requires it, and without a key
+`salu remote sync` and `--watch` refuse to start.
+
+`salu runner add` (which runs `salu remote add --box` for you) makes the key on the box if none exists. Read it
+there and give it to the Mac and the phone, out of band (password manager, never through git):
 
 ```sh
-echo 'export SALU_REMOTE_KEY=<the key>' >> ~/.zshrc      # Mac; open a new terminal
+sudo -u salu env SALU_HOME=/var/lib/salu/web salu remote key      # box: prints the key (stored mode 0600 in the project's salu home)
+```
+```sh
+cd ~/code/web
+salu remote add web --key <the key>      # Mac: sets the key and connects (or: salu remote key --set <the key>, then remote add)
 ```
 
-On the iPhone, the app asks for the same key at setup (Settings, kept in the Keychain on that phone only). Until
-a build with the generated key is released, you can make one yourself: `openssl rand -hex 32`, add
-`SALU_REMOTE_KEY=<it>` to `/etc/salu/web.env`, `sudo salu runner restart web`, and export it on the Mac.
+Without a key a client `salu remote add` stops and tells you where to get one. On the iPhone, paste the same key
+in the app's Settings (kept in the Keychain on that phone only). The environment variable `SALU_REMOTE_KEY`
+overrides the key file. `SALU_REMOTE_ALLOW_UNSIGNED=1` opts out of signing (a red warning stays); not
+recommended. To rotate: `salu remote key --new` on the box, then set the new key on the Mac and phone and restart
+(`sudo salu runner restart web`); everything must switch together.
 
 ### What tickets from the Mac may set
 
@@ -192,7 +200,7 @@ tokens or keys into that shell.
 ```sh
 cd ~/code/web
 salu add project web .                    # [tested] register the folder (skip if it already exists)
-salu remote add web                       # [untested] client side; uses origin, checks it is reachable
+salu remote add web --key <the key>       # [untested] client side; uses origin, checks it is reachable (key: step 7)
 salu add "say hello" "Create HELLO.md containing one friendly line, and commit it."
 ```
 
@@ -224,7 +232,21 @@ salu show "say hello"                         # [untested on a client] status, b
 If a ticket is **blocked** on a permission, the message shows the `salu allow "name"` command. Run it on the box:
 `sudo -u salu env SALU_HOME=/var/lib/salu/web salu allow "name"`.
 
-## 10. On your iPhone (optional, later) **[untested: never compiled]**
+## 10. Get a ping on your phone (optional) **[untested]**
+
+On the box, `salu remote ntfy` makes a private topic; install the free ntfy app on your iPhone and subscribe to
+that topic. Notifications show the title only (no ticket content).
+
+```sh
+sudo -u salu env SALU_HOME=/var/lib/salu/web salu remote ntfy          # makes and prints the topic
+sudo -u salu env SALU_HOME=/var/lib/salu/web salu remote ntfy --test   # sends a test ping
+sudo -u salu env SALU_HOME=/var/lib/salu/web salu remote ntfy --off    # turn it off
+```
+
+The topic name is the secret: anyone who knows it can read the titles, so do not share it. Apple push
+notifications from the app itself come later.
+
+## 11. On your iPhone (optional, later) **[untested: never compiled]**
 
 The phone app reads and writes `salu/inbox` directly through the GitHub API. You need Xcode on the Mac.
 
@@ -234,9 +256,9 @@ The phone app reads and writes `salu/inbox` directly through the GitHub API. You
 3. Run it in a simulator (or on your iPhone with your team under Signing).
 4. Settings in the app: repo `you/web`, project `web`, the token (kept in the Keychain), then **Test connection**.
 
-The inbox refreshes every 30 s while the app is open and on pull-down. There are no push notifications yet.
+The inbox refreshes every 30 s while the app is open and on pull-down; use ntfy (step 10) for pings.
 
-## 11. Prove the sandbox on your Mac (once) **[untested]**
+## 12. Prove the sandbox on your Mac (once) **[untested]**
 
 ```sh
 salu doctor --sandbox        # uses a few haiku requests; every line should be a green ✓ (refuses to run if SALU_SANDBOX=off)
