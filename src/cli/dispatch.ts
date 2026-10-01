@@ -3,7 +3,7 @@
 import { parseArgs } from './args.ts';
 import { CliError } from '../core/errors.ts';
 
-export const VERSION = '1.0.0';
+export const VERSION = '1.1.0';
 
 export const HELP = `salu — a fast ticket queue for Claude Code agents
 

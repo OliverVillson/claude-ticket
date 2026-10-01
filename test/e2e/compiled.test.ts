@@ -26,13 +26,16 @@ afterAll(() => rmSync(root, { recursive: true, force: true }));
 // A PATH that has bun (the stub's interpreter) and the system, but no claude unless asked for.
 const basePath = `${dirname(process.execPath)}:/usr/bin:/bin`;
 function env(withStub: boolean, extra: Record<string, string> = {}): Record<string, string> {
-  return { HOME: root, PATH: withStub ? `${stubDir}:${basePath}` : basePath, SALU_HOME: join(root, 'home'), SALU_NO_TUI: '1', ...extra };
+  return { HOME: root, PATH: withStub ? `${stubDir}:${basePath}` : basePath, SALU_HOME: join(root, 'home'), SALU_NO_TUI: '1', SALU_SANDBOX: 'off', ...extra };
 }
 async function salu(args: string[], e: Record<string, string>) {
   const p = Bun.spawn([BIN, ...args], { cwd, env: e, stdout: 'pipe', stderr: 'pipe' });
   const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
   return { code: await p.exited, out, err };
 }
+/** doctor also reports on the sandbox (off in these tests, or unsupported on the host); these tests are about Claude Code, so only other problems count. */
+const claudeProblems = (out: string) => out.split('\n').filter((l) => l.startsWith('✗') && !/sandbox/i.test(l));
+
 const tickets = async (e: Record<string, string>) => JSON.parse((await salu(['list', '--json'], e)).out) as any[];
 
 maybe('compiled salu binary', () => {
@@ -54,9 +57,9 @@ maybe('compiled salu binary', () => {
   test('with a claude on PATH: doctor is happy and a ticket runs to done', async () => {
     const e = env(true);
     const d = await salu(['doctor'], e);
-    if (d.code !== 0 || !d.out.includes('Claude Code 9.9.9')) console.error('doctor said:', d.code, d.out, d.err);
+    if (!d.out.includes('Claude Code 9.9.9')) console.error('doctor said:', d.code, d.out, d.err);
     expect(d.out).toContain('Claude Code 9.9.9');
-    expect(d.code).toBe(0);
+    expect(claudeProblems(d.out)).toEqual([]);
     const p = Bun.spawn([BIN, 'run', '--plain'], { cwd, env: e, stdout: 'pipe', stderr: 'pipe' });
     try {
       const end = Date.now() + 40_000;
@@ -81,7 +84,8 @@ maybe('compiled salu binary', () => {
 
   test('SALU_CLAUDE_PATH overrides PATH, and a wrong one is reported, not ignored', async () => {
     const good = await salu(['doctor'], env(false, { SALU_CLAUDE_PATH: join(stubDir, 'claude') }));
-    expect(good.code).toBe(0);
+    expect(good.out).toContain('Claude Code 9.9.9');
+    expect(claudeProblems(good.out)).toEqual([]);
     const bad = await salu(['doctor'], env(true, { SALU_CLAUDE_PATH: '/nope/claude' }));
     expect(bad.code).toBe(1);
     expect(bad.out).toContain('SALU_CLAUDE_PATH points to /nope/claude');
