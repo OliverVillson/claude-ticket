@@ -17,9 +17,9 @@ import { detectLimit, parseLimitText, probeWindow } from '../usage/index.ts';
 import type { LimitHit } from '../usage/types.ts';
 import { CLAUDE_MISSING, EnvironmentError, claudeExecutableOption, environmentProblem, runningCompiled } from '../core/claude-bin.ts';
 import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../core/tags.ts';
-import { containerReady, containerRequired, containerSpawner, WORKDIR } from '../core/container.ts';
+import { checkDisk, containerReady, containerRequired, containerSpawner, requireKernelAuth, WORKDIR } from '../core/container.ts';
 import { startEgress } from '../core/egress.ts';
-import { auditKernel, confinementFor, kernelOptions, prepareKernel, sandboxSupport, scrubSecrets } from '../core/kernel.ts';
+import { allowedDomains, auditKernel, confinementFor, kernelOptions, prepareKernel, sandboxSupport, scrubSecrets } from '../core/kernel.ts';
 import { DEFAULT_TOOLS, denialsFrom, toolsToSdk } from '../core/tools.ts';
 import { memoryPrompt } from '../memory/prompt.ts';
 import { refreshKernel } from '../memory/sync.ts';
@@ -237,7 +237,7 @@ export function promptFor(input: WorkerInput): string {
 let egressStop: Promise<() => void> | null = null;
 /** The egress filter every container goes through; started once per process, the first time a container ticket runs. */
 function ensureEgressProxy(): Promise<() => void> {
-  egressStop ??= startEgress({ log: (l) => process.env.SALU_DEBUG && console.error(`salu egress: ${l}`) });
+  egressStop ??= startEgress({ allowedDomains: allowedDomains(), log: (l) => process.env.SALU_DEBUG && console.error(`salu egress: ${l}`) });
   return egressStop;
 }
 
@@ -250,11 +250,18 @@ export const sdkRunner: WorkerRunner = {
     let mode = confinementFor(input.project);
     const inContainer = mode !== 'off' && containerReady();
     if (mode !== 'off' && !inContainer && containerRequired()) throw new EnvironmentError('SALU_KERNEL_REQUIRE=1 but the container kernel is not ready here. Run `salu doctor`, then `salu kernel setup`.');
-    if (inContainer) mode = 'kernel';
+    if (inContainer) {
+      mode = 'kernel';
+      requireKernelAuth(); // the container only ever gets the login from `salu kernel login`; none means no run
+    }
+    const fellBack = mode !== 'off' && !inContainer && process.platform === 'linux';
     const kernel = mode === 'kernel' ? prepareKernel(input.ticket.project, input.ticket.project_path) : undefined;
     if (kernel) refreshKernel(input.ticket.project, input.ticket.project_path, kernel); // your memory edits reach the sandbox copy
     const ticket = kernel ? { ...input.ticket, project_path: inContainer ? WORKDIR : kernel } : input.ticket;
-    if (inContainer) await ensureEgressProxy();
+    if (inContainer) {
+      checkDisk(kernel!);
+      await ensureEgressProxy();
+    }
     // Without the OS sandbox (a Linux machine lacking bubblewrap) a fenced worker keeps the file-tool fence and the
     // old narrow shell rules, so it never gets more than it can be held to.
     const fence = mode === 'fence' ? { osSandbox: sandboxSupport().ok } : undefined;
@@ -271,6 +278,7 @@ export const sdkRunner: WorkerRunner = {
       if (text) stderr.push(text);
     };
     yield { type: 'ticket_start', ts: Date.now(), ticket_id: input.ticket.id, name: input.ticket.name, project: input.ticket.project, resume: !!options.resume, runner: 'sdk', options: { model: options.model ?? null, effort: options.effort ?? null, permissionMode: options.permissionMode, maxTurns: options.maxTurns, cwd: options.cwd } };
+    if (fellBack) yield { type: 'stderr', text: 'salu: no container kernel here (run `salu kernel`), so this ticket runs in the weaker fence, not in a container', ts: Date.now() };
     const q = query({ prompt: promptFor(input), options });
     try {
       for await (const m of q) {

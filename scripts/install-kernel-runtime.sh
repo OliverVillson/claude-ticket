@@ -45,6 +45,19 @@ if [ "$CHECK" -eq 1 ]; then
   need "linger for $USER_NAME" "test -e /var/lib/systemd/linger/$USER_NAME"
   [ "$GVISOR" -eq 1 ] && need "gVisor (runsc)" "command -v runsc"
   need "AppArmor allowance for user namespaces" "test ! -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns || test \"\$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)\" = 0 || test -e $AA_PROFILE"
+  # Real checks, not file presence: the profile is loaded and enforced, and a container actually runs.
+  if [ -r /sys/kernel/security/apparmor/profiles ] && [ -e "$AA_PROFILE" ]; then
+    need "AppArmor profile loaded (salu-podman)" "grep -q '^salu-podman ' /sys/kernel/security/apparmor/profiles"
+  fi
+  if command -v podman >/dev/null 2>&1 && id "$USER_NAME" >/dev/null 2>&1; then
+    IMG="${SALU_KERNEL_IMAGE:-localhost/salu-kernel:1}"
+    if sudo -u "$USER_NAME" -H sh -c "cd ~ && podman image exists $IMG" 2>/dev/null; then
+      need "a container runs for $USER_NAME" "sudo -u $USER_NAME -H sh -c 'cd ~ && podman run --rm --network none $IMG true'"
+      [ "$GVISOR" -eq 1 ] && command -v runsc >/dev/null 2>&1 && need "a gVisor container runs for $USER_NAME" "sudo -u $USER_NAME -H sh -c 'cd ~ && podman run --rm --runtime runsc --network none $IMG true'"
+    else
+      say "skipped: a real container run (the kernel image is not built yet: salu kernel setup, then run --check again)"
+    fi
+  fi
   exit $missing
 fi
 
@@ -99,8 +112,10 @@ CONFIG
 fi
 
 say "== check"
-sudo -u "$USER_NAME" -H sh -c 'cd ~ && podman info --format "rootless={{.Host.Security.Rootless}} runtime={{.Host.OCIRuntime.Name}}"' || say "warning: podman did not start for $USER_NAME (see the message above)"
+FAILED=0
+sudo -u "$USER_NAME" -H sh -c 'cd ~ && podman info --format "rootless={{.Host.Security.Rootless}} runtime={{.Host.OCIRuntime.Name}}"' || { say "FAILED: podman did not start for $USER_NAME (see the message above)"; FAILED=1; }
 if [ "$GVISOR" -eq 1 ]; then
-  sudo -u "$USER_NAME" -H sh -c 'cd ~ && podman run --rm --runtime runsc --network none docker.io/library/alpine:3 echo "gVisor container works"' || say "warning: a gVisor test container did not run; salu will use Podman's default runtime until this is fixed"
+  sudo -u "$USER_NAME" -H sh -c 'cd ~ && podman run --rm --runtime runsc --network none docker.io/library/alpine:3 echo "gVisor container works"' || { say "FAILED: a gVisor test container did not run (see the message above)"; FAILED=1; }
 fi
+[ "$FAILED" -eq 0 ] || { say "the container runtime is not working: fix the message above, then run this script again"; exit 1; }
 say "done. Next, as $USER_NAME: salu kernel setup && salu kernel login"

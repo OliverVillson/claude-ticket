@@ -3,8 +3,9 @@ import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { createServer, connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DOCKERFILE, claudeAuthEnv, containerName, containerReady, containerSpawner, createArgs, engine, execArgs, runtime, saveToken } from '../src/core/container.ts';
-import { createEgressServer, isBlockedAddress } from '../src/core/egress.ts';
+import { DOCKERFILE, checkDisk, claudeAuthEnv, requireKernelAuth, containerName, containerReady, containerSpawner, createArgs, engine, execArgs, runtime, saveToken } from '../src/core/container.ts';
+import { judgeContainer } from '../src/core/container-check.ts';
+import { createEgressServer, domainAllowed, isBlockedAddress } from '../src/core/egress.ts';
 import { workerSdkOptions } from '../src/orchestrator/worker.ts';
 
 let root: string;
@@ -58,13 +59,22 @@ describe('container arguments', () => {
 });
 
 describe('Claude login for the container', () => {
-  test('a saved token is used when nothing is set; set variables win; the file is private', () => {
+  test('only the saved kernel token is used, never the login this machine runs on', () => {
     const f = join(root, 'tok');
     saveToken('tok-123', f);
     expect(readFileSync(f, 'utf8').trim()).toBe('tok-123');
     expect(claudeAuthEnv({}, f)).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: 'tok-123' });
-    expect(claudeAuthEnv({ ANTHROPIC_API_KEY: 'k' }, f)).toEqual({ ANTHROPIC_API_KEY: 'k' });
-    expect(claudeAuthEnv({}, join(root, 'none'))).toEqual({});
+    // the orchestrator's own token and key in the environment are ignored
+    expect(claudeAuthEnv({ ANTHROPIC_API_KEY: 'k', CLAUDE_CODE_OAUTH_TOKEN: 'main-login' }, f)).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: 'tok-123' });
+    expect(claudeAuthEnv({ ANTHROPIC_API_KEY: 'k', CLAUDE_CODE_OAUTH_TOKEN: 'main-login' }, join(root, 'none'))).toEqual({});
+    const k = join(root, 'apikey');
+    saveToken('sk-ant-api03-xyz', k);
+    expect(claudeAuthEnv({}, k)).toEqual({ ANTHROPIC_API_KEY: 'sk-ant-api03-xyz' });
+  });
+
+  test('no kernel token means no container run, with the way to get one', () => {
+    expect(() => requireKernelAuth(join(root, 'none'))).toThrow(/salu kernel login/);
+    expect(() => containerSpawner('web', join(root, 'k'), { bin: '/bin/true' })({ command: 'c', args: [], env: {}, signal: new AbortController().signal })).toThrow(/salu kernel login/);
   });
 });
 
@@ -85,7 +95,7 @@ exit 0
     const p = spawnFn({
       command: '/host/claude',
       args: ['/host/cli.js', '--output-format', 'stream-json'],
-      env: { PATH: '/bin', GITHUB_TOKEN: 'ghp', DATABASE_URL: 'x', CLAUDE_CODE_ENTRYPOINT: 'sdk-ts', ANTHROPIC_MODEL: 'm', SALU_TICKET_ID: '7' },
+      env: { PATH: '/bin', GITHUB_TOKEN: 'ghp', DATABASE_URL: 'x', CLAUDE_CODE_ENTRYPOINT: 'sdk-ts', ANTHROPIC_MODEL: 'm', SALU_TICKET_ID: '7', CLAUDE_CODE_OAUTH_TOKEN: 'main-orchestrator-login', ANTHROPIC_API_KEY: 'main-key' },
       signal: new AbortController().signal,
     });
     p.stdin.end('hello\n');
@@ -101,6 +111,7 @@ exit 0
     expect(env).toContain('CLAUDE_CODE_OAUTH_TOKEN=secret-token');
     expect(env).toContain('ANTHROPIC_MODEL=m');
     expect(env).not.toMatch(/GITHUB_TOKEN|DATABASE_URL|PATH/);
+    expect(env).not.toMatch(/main-orchestrator-login|main-key/); // the box's own login never goes in
     expect(readFileSync(join(root, 'seen-mode'), 'utf8').trim()).toBe('-rw-------');
     await new Promise((r) => setTimeout(r, 2300));
     expect(readdirSync(tmpdir()).filter((n) => n.startsWith('salu-env-')).length).toBe(0); // deleted
@@ -124,6 +135,27 @@ describe('egress filter', () => {
       expect([ip, isBlockedAddress(ip)]).toEqual([ip, true]);
     for (const ip of ['8.8.8.8', '1.1.1.1', '140.82.112.3', '172.15.0.1', '172.32.0.1', '100.63.0.1', '2606:4700::1111', '::ffff:8.8.8.8'])
       expect([ip, isBlockedAddress(ip)]).toEqual([ip, false]);
+  });
+
+  test('every spelling of a private address is blocked: expanded, mapped, 6to4, NAT64, Teredo, ISATAP, zone ids', () => {
+    for (const ip of ['0:0:0:0:0:ffff:0a00:0001', '0000:0000:0000:0000:0000:ffff:a9fe:a9fe', '2002:0a00:0001::1', '2002:a9fe:a9fe::1', '2002:c0a8:0101::', '::ffff:169.254.169.254', '::ffff:a9fe:a9fe', '::10.0.0.1', '::a9fe:a9fe', '64:ff9b::a9fe:a9fe', '64:ff9b:1::1', '2001:0:4136:e378:8000:63bf:3fff:fdd2', '::5efe:192.168.1.1', '::200:5efe:10.0.0.1', 'fe80::1%eth0', 'fec0::1', 'ff02::1'])
+      expect([ip, isBlockedAddress(ip)]).toEqual([ip, true]);
+    for (const ip of ['2002:0808:0808::1', '0:0:0:0:0:ffff:0808:0808', '64:ff9b::808:808', '2606:4700::1111'])
+      expect([ip, isBlockedAddress(ip)]).toEqual([ip, false]);
+  });
+
+  test('a project allow-list is enforced on names, and bare addresses are refused when one is set', async () => {
+    expect(domainAllowed('github.com', ['github.com'])).toBe(true);
+    expect(domainAllowed('api.github.com', ['github.com'])).toBe(false);
+    expect(domainAllowed('registry.npmjs.org', ['*.npmjs.org'])).toBe(true);
+    expect(domainAllowed('npmjs.org', ['*.npmjs.org'])).toBe(false);
+    expect(domainAllowed('evil-npmjs.org', ['*.npmjs.org'])).toBe(false);
+    expect(domainAllowed('anything.example', ['*'])).toBe(true);
+    await withProxy({ allowedDomains: ['github.com'], lookup: async () => ['93.184.216.34'], isBlocked: () => false }, async (port) => {
+      expect(await ask(port, 'CONNECT evil.example:443 HTTP/1.1\r\n\r\n')).toContain('403');
+      expect(await ask(port, 'CONNECT 93.184.216.34:443 HTTP/1.1\r\n\r\n')).toContain('403'); // a bare address is not a name on the list
+      expect(await ask(port, 'GET http://evil.example/ HTTP/1.1\r\nHost: evil.example\r\n\r\n')).toContain('403');
+    });
   });
 
   async function withProxy<T>(opts: Parameters<typeof createEgressServer>[0], fn: (port: number) => Promise<T>): Promise<T> {
@@ -187,5 +219,30 @@ describe('egress filter', () => {
     } finally {
       echo.close();
     }
+  });
+});
+
+describe('disk, limits and the container proof', () => {
+  test('containers get file and shm limits and a size limit when asked', () => {
+    const a = createArgs({ name: 'n', project: 'p', dir: '/d', disk: '20g' });
+    expect(a).toContain('nofile=4096:8192');
+    expect(a).toContain('256m');
+    expect(a.join(' ')).toContain('--storage-opt size=20g');
+    expect(createArgs({ name: 'n', project: 'p', dir: '/d', disk: null }).join(' ')).not.toContain('--storage-opt');
+  });
+
+  test('a ticket is refused when the project is over its disk limit or the box is nearly full', () => {
+    expect(() => checkDisk('/x', { limitGb: 10, used: () => 11e9, free: () => 100e9 })).toThrow(/over the 10 GB limit/);
+    expect(() => checkDisk('/x', { limitGb: 10, used: () => 1e9, free: () => 2e9 })).toThrow(/free/);
+    expect(() => checkDisk('/x', { limitGb: 10, used: () => 1e9, free: () => 100e9 })).not.toThrow();
+  });
+
+  test('the container proof fails on a leaked address, a network, a host login or an extra mount', () => {
+    const good = { egress: { '169.254.169.254': 403, '[::1]': 403 }, directExit: 7, envText: 'PATH=/usr/bin\nHTTP_PROXY=x', hostSecrets: ['main-login-token'], mountPoints: ['/', '/proc', '/work', '/run/salu/egress.sock', '/dev/pts'] };
+    expect(judgeContainer(good).every((p) => p.ok)).toBe(true);
+    expect(judgeContainer({ ...good, egress: { ...good.egress, '[2002:a9fe:a9fe::1]': 200 } }).filter((p) => !p.ok).map((p) => p.name)).toEqual(['container: the egress filter refuses private, loopback and cloud-metadata addresses']);
+    expect(judgeContainer({ ...good, directExit: 0 }).filter((p) => !p.ok).length).toBe(1);
+    expect(judgeContainer({ ...good, envText: 'CLAUDE_CODE_OAUTH_TOKEN=main-login-token' }).filter((p) => !p.ok).length).toBe(1);
+    expect(judgeContainer({ ...good, mountPoints: [...good.mountPoints, '/host/home'] }).filter((p) => !p.ok).length).toBe(1);
   });
 });

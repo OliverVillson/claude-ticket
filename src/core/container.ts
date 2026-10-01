@@ -48,6 +48,8 @@ export interface CreateOpts {
   memory?: string;
   cpus?: string;
   pids?: number;
+  /** container layer size limit, e.g. 20g; left off when the storage backend cannot enforce it */
+  disk?: string | null;
 }
 
 /** `podman create` arguments for a project's kernel container. */
@@ -63,6 +65,8 @@ export function createArgs(o: CreateOpts): string[] {
     '--security-opt', 'no-new-privileges',
     '--cap-drop', 'ALL', '--cap-add', 'CHOWN,DAC_OVERRIDE,FOWNER,FSETID,KILL,SETGID,SETUID,SETPCAP,SYS_CHROOT,AUDIT_WRITE',
     '--memory', o.memory ?? process.env.SALU_KERNEL_MEMORY ?? '4g', '--cpus', o.cpus ?? process.env.SALU_KERNEL_CPUS ?? '2', '--pids-limit', String(o.pids ?? 2048),
+    '--ulimit', 'nofile=4096:8192', '--shm-size', '256m',
+    ...(o.disk ? ['--storage-opt', `size=${o.disk}`] : []),
     '--hostname', 'salu-kernel', '--workdir', WORKDIR,
     '--label', 'salu.kernel=1', '--label', `salu.project=${o.project}`,
     '-v', `${o.dir}:${WORKDIR}:rw`,
@@ -84,24 +88,52 @@ export function tokenFile(): string {
 }
 
 /**
- * What the container's Claude Code logs in with. A dedicated token (`claude setup-token`, saved with
- * `salu kernel login`) in ~/.salu/kernel-token, or the variables already set. It lives inside the container,
- * so treat it as revocable: it is not your main login. (A later phase keeps it on the host instead.)
+ * What the container's Claude Code logs in with: ONLY the dedicated token saved by `salu kernel login`
+ * (~/.salu/kernel-token), never the orchestrator's own login. The box's main token sits in this process's
+ * environment; an agent can send whatever it holds out over the egress filter, so the container only ever gets
+ * a token you can revoke on its own. No kernel token means no container run (see requireKernelAuth).
  */
-export function claudeAuthEnv(env: NodeJS.ProcessEnv = process.env, file = tokenFile()): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const k of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX']) if (env[k]) out[k] = env[k]!;
-  if (!out.CLAUDE_CODE_OAUTH_TOKEN && !out.ANTHROPIC_API_KEY && !out.ANTHROPIC_AUTH_TOKEN && existsSync(file)) {
-    const t = readFileSync(file, 'utf8').trim();
-    if (t) out.CLAUDE_CODE_OAUTH_TOKEN = t;
-  }
-  return out;
+export function claudeAuthEnv(_env: NodeJS.ProcessEnv = process.env, file = tokenFile()): Record<string, string> {
+  if (!existsSync(file)) return {};
+  const t = readFileSync(file, 'utf8').trim();
+  if (!t) return {};
+  return /^sk-ant-api/.test(t) ? { ANTHROPIC_API_KEY: t } : { CLAUDE_CODE_OAUTH_TOKEN: t };
 }
+
+/** The container's login, or a refusal that says how to get one. Never falls back to the orchestrator's login. */
+export function requireKernelAuth(file = tokenFile()): Record<string, string> {
+  const auth = claudeAuthEnv(process.env, file);
+  if (!Object.keys(auth).length) throw new CliError('the container has no login of its own: run `claude setup-token` and then `salu kernel login` (agents never get the login this machine runs on)');
+  return auth;
+}
+
+/** Variables that carry a login or point Claude at another account/provider: never copied into the container from here. */
+export const CREDENTIAL_ENV = /^(ANTHROPIC_(API_KEY|AUTH_TOKEN|BASE_URL|CUSTOM_HEADERS|BEDROCK_.*|VERTEX_.*|FOUNDRY_.*)|CLAUDE_CODE_OAUTH_TOKEN|CLAUDE_CODE_USE_.*|CLAUDE_CODE_SKIP_.*|AWS_.*|GOOGLE_.*|AZURE_.*|GITHUB_TOKEN|GH_TOKEN)$/;
 
 export function saveToken(token: string, file = tokenFile()): void {
   mkdirSync(join(file, '..'), { recursive: true });
   writeFileSync(file, token.trim() + '\n', { mode: 0o600 });
   chmodSync(file, 0o600);
+}
+
+// ---- Disk -----------------------------------------------------------------------------------------------
+
+/** SALU_KERNEL_DISK_GB: most one project's kernel (its folder and its container) may hold. Default 20. */
+export const kernelDiskGb = (env: NodeJS.ProcessEnv = process.env) => Math.max(1, Number(env.SALU_KERNEL_DISK_GB) || 20);
+
+function dirBytes(dir: string): number {
+  const r = spawnSync('du', ['-sk', '--apparent-size', dir], { encoding: 'utf8' });
+  return r.status === 0 ? Number(r.stdout.split(/\s/)[0]) * 1024 : 0;
+}
+
+/** Refuse to start a ticket whose project is over its disk limit or when the box itself is nearly full. */
+export function checkDisk(dir: string, o: { limitGb?: number; minFreeGb?: number; used?: (d: string) => number; free?: (d: string) => number } = {}): void {
+  const limit = o.limitGb ?? kernelDiskGb();
+  const used = (o.used ?? dirBytes)(dir);
+  if (used > limit * 1e9) throw new CliError(`this project's kernel folder holds ${(used / 1e9).toFixed(1)} GB, over the ${limit} GB limit: clean it up (salu kernel shell) or raise SALU_KERNEL_DISK_GB`);
+  const free = (o.free ?? ((d) => { const r = spawnSync('df', ['-Pk', d], { encoding: 'utf8' }); return Number(r.stdout.trim().split('\n').pop()?.split(/\s+/)[3]) * 1024; }))(dir);
+  const min = o.minFreeGb ?? 5;
+  if (Number.isFinite(free) && free < min * 1e9) throw new CliError(`only ${(free / 1e9).toFixed(1)} GB is free on this machine (needs ${min}): free some space before running more tickets`);
 }
 
 // ---- Running things -------------------------------------------------------------------------------------
@@ -120,7 +152,11 @@ export function ensureContainer(project: string, dir: string, bin = engine()): s
   if (state.status !== 0) {
     if (!imageExists(bin)) throw new CliError(`the kernel image ${KERNEL_IMAGE} is not built yet: run \`salu kernel setup\``);
     const rt = runtime();
-    const c = podman(bin, createArgs({ name, project, dir, runtime: rt.name }));
+    const disk = `${kernelDiskGb()}g`;
+    let c = podman(bin, createArgs({ name, project, dir, runtime: rt.name, disk }));
+    // The size limit needs a storage backend that can enforce it (overlay on xfs with quotas); without one, the
+    // per-ticket size check below is the limit.
+    if (c.status !== 0 && /storage-opt|quota|size/i.test(c.stderr + c.stdout)) c = podman(bin, createArgs({ name, project, dir, runtime: rt.name, disk: null }));
     if (c.status !== 0) throw new CliError(`could not create the kernel container: ${(c.stderr || c.stdout).trim().split('\n').pop()}`);
   }
   if ((state.stdout ?? '').trim() !== 'running') {
@@ -138,11 +174,12 @@ export function ensureContainer(project: string, dir: string, bin = engine()): s
 export function containerSpawner(project: string, dir: string, o: { bin?: string; auth?: Record<string, string>; onStderr?: (s: string) => void } = {}): (opts: SpawnOptions) => SpawnedProcess {
   return (opts) => {
     const bin = o.bin ?? engine();
+    const auth = o.auth ?? requireKernelAuth(); // before anything starts: no kernel login, no run
     const name = ensureContainer(project, dir, bin);
-    const keep = /^(CLAUDE_|ANTHROPIC_|CLAUDE$|SALU_TICKET|SALU_KERNEL_WORKER|LANG$|LC_|TERM$)/;
+    const keep = /^(CLAUDE_|ANTHROPIC_|SALU_TICKET|SALU_KERNEL_WORKER|LANG$|LC_|TERM$)/;
     const env: Record<string, string> = {};
-    for (const [k, v] of Object.entries(opts.env)) if (v !== undefined && keep.test(k)) env[k] = v;
-    Object.assign(env, o.auth ?? claudeAuthEnv());
+    for (const [k, v] of Object.entries(opts.env)) if (v !== undefined && keep.test(k) && !CREDENTIAL_ENV.test(k)) env[k] = v;
+    Object.assign(env, auth);
     const tmp = mkdtempSync(join(tmpdir(), 'salu-env-'));
     const file = join(tmp, 'env');
     writeFileSync(file, Object.entries(env).map(([k, v]) => `${k}=${v.replace(/\n/g, ' ')}`).join('\n') + '\n', { mode: 0o600 });
@@ -189,6 +226,9 @@ export interface KernelStatus {
   gvisor: boolean;
   image: boolean;
   token: boolean;
+  /** will a ticket run in a container here, or silently in the fence? */
+  mode: 'container' | 'fence' | 'refused';
+  required: boolean;
   problems: string[];
 }
 
@@ -200,9 +240,14 @@ export function kernelStatus(): KernelStatus {
   if (!bin) problems.push('Podman is not installed (Linux: sudo scripts/install-kernel-runtime.sh; Mac: brew install podman)');
   const image = !!bin && imageExists(bin);
   if (bin && !image) problems.push('the kernel image is not built: salu kernel setup');
-  if (!Object.keys(auth).length) problems.push('agents have no Claude login: run `claude setup-token`, then `salu kernel login`');
+  if (!Object.keys(auth).length) problems.push('agents have no Claude login of their own: run `claude setup-token`, then `salu kernel login` (the login this machine runs on is never given to a container)');
   if (bin && !rt.gvisor) problems.push('gVisor (runsc) is not installed, so containers share the host kernel directly (weaker): sudo scripts/install-kernel-runtime.sh');
-  return { engine: bin, runtime: rt.name ?? 'default', gvisor: rt.gvisor, image, token: Object.keys(auth).length > 0, problems };
+  const token = Object.keys(auth).length > 0;
+  const ready = !!bin && image && containerOn() && process.platform === 'linux';
+  const required = containerRequired();
+  const mode = ready && token ? 'container' : required || ready ? 'refused' : 'fence';
+  if (mode === 'fence') problems.push('tickets are running in the weaker fence on this machine, not in a container' + (process.platform === 'linux' ? ' (set SALU_KERNEL_REQUIRE=1 to refuse instead)' : ' (the container kernel is Linux only for now)'));
+  return { engine: bin, runtime: rt.name ?? 'default', gvisor: rt.gvisor, image, token, mode, required, problems };
 }
 
 // ---- Is the container kernel usable here? ---------------------------------------------------------------

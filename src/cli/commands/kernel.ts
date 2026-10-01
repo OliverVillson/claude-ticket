@@ -61,9 +61,10 @@ export async function kernel(p: Parsed): Promise<number> {
       line(!!s.engine, s.engine ? `Podman at ${s.engine}` : 'Podman not found');
       line(s.gvisor, s.gvisor ? 'gVisor (runsc) in use' : 'gVisor not installed (containers share the host kernel)');
       line(s.image, s.image ? `image ${KERNEL_IMAGE}` : `image ${KERNEL_IMAGE} not built`);
-      line(s.token, s.token ? 'agents have a Claude login' : 'agents have no Claude login yet');
+      line(s.token, s.token ? 'agents have a Claude login of their own' : 'agents have no Claude login of their own yet (salu kernel login)');
+      line(s.mode === 'container', s.mode === 'container' ? 'tickets run in a container' : s.mode === 'refused' ? 'tickets will FAIL here until the container kernel is ready (SALU_KERNEL_REQUIRE=1 or the container is set up but incomplete)' : 'tickets run in the weaker fence, not in a container');
       for (const pr of s.problems) console.log(`  ${dim(pr)}`);
-      return s.problems.length && (!s.engine || !s.image || !s.token) ? 1 : 0;
+      return s.mode !== 'container' ? 1 : 0;
     }
     case 'setup': {
       requireHuman('kernel setup');

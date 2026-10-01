@@ -18,7 +18,36 @@ export function egressSocketPath(): string {
 
 const v4 = (ip: string) => ip.split('.').map(Number);
 
-/** True for every address a container must not reach: not part of the public internet. */
+/** An IPv6 address as 16 bytes (zone ids and any spelling: compressed, expanded, with a dotted tail), or null. */
+export function ipv6Bytes(ip: string): number[] | null {
+  let s = ip.toLowerCase().replace(/%.*$/, '');
+  if (isIP(s) !== 6) return null;
+  const tail = s.match(/^(.*:)(\d+\.\d+\.\d+\.\d+)$/);
+  if (tail) {
+    const [a, b, c, d] = v4(tail[2]!) as [number, number, number, number];
+    s = `${tail[1]}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+  const halves = s.split('::');
+  if (halves.length > 2) return null;
+  const left = halves[0] ? halves[0].split(':') : [];
+  const right = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  const missing = 8 - left.length - right.length;
+  if (halves.length === 2 ? missing < 1 : missing !== 0) return null;
+  const groups = [...left, ...Array(halves.length === 2 ? missing : 0).fill('0'), ...right];
+  const out: number[] = [];
+  for (const g of groups) {
+    if (!/^[0-9a-f]{1,4}$/.test(g)) return null;
+    const n = parseInt(g, 16);
+    out.push(n >> 8, n & 255);
+  }
+  return out.length === 16 ? out : null;
+}
+
+/**
+ * True for every address a container must not reach: not part of the public internet. Every spelling of an
+ * address is turned into its bytes first, and any IPv6 form that carries an IPv4 address (mapped, compatible,
+ * NAT64, 6to4, ISATAP) is judged by the IPv4 address inside it. Teredo and anything else unusual is refused.
+ */
 export function isBlockedAddress(ip: string): boolean {
   const kind = isIP(ip);
   if (kind === 4) {
@@ -34,17 +63,36 @@ export function isBlockedAddress(ip: string): boolean {
     );
   }
   if (kind === 6) {
-    const s = ip.toLowerCase();
-    const mapped = s.match(/^(?:::ffff:|64:ff9b::)(\d+\.\d+\.\d+\.\d+)$/);
-    if (mapped) return isBlockedAddress(mapped[1]!);
-    const hex = s.match(/^(?:::ffff:|64:ff9b::)([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-    if (hex) {
-      const hi = parseInt(hex[1]!, 16), lo = parseInt(hex[2]!, 16);
-      return isBlockedAddress(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`);
-    }
-    return s === '::' || s === '::1' || /^f[cd]/.test(s) || /^fe[89ab]/.test(s) || s.startsWith('ff') || s.startsWith('2001:db8');
+    const x = ipv6Bytes(ip);
+    if (!x) return true;
+    const inner = (o: number) => isBlockedAddress(`${x[o]}.${x[o + 1]}.${x[o + 2]}.${x[o + 3]}`);
+    const zeros = (from: number, to: number) => x.slice(from, to).every((v) => v === 0);
+    if (zeros(0, 10) && x[10] === 255 && x[11] === 255) return inner(12); // ::ffff:a.b.c.d (any spelling)
+    if (zeros(0, 12)) return true; // :: and ::1, and the old IPv4-compatible form ::a.b.c.d
+    if (x[0] === 0 && x[1] === 0x64 && x[2] === 0xff && x[3] === 0x9b && zeros(4, 12)) return inner(12); // NAT64 64:ff9b::/96
+    if (x[0] === 0x00 && x[1] === 0x64 && x[2] === 0xff && x[3] === 0x9b) return true; // 64:ff9b:1::/48, local-use NAT64
+    if (x[0] === 0x20 && x[1] === 0x02) return inner(2); // 6to4
+    if (x[0] === 0x20 && x[1] === 0x01 && x[2] === 0 && x[3] === 0) return true; // Teredo
+    if ((x[8] === 0 || x[8] === 2) && x[9] === 0 && x[10] === 0x5e && x[11] === 0xfe) return inner(12); // ISATAP, in any prefix
+    if ((x[0]! & 0xfe) === 0xfc) return true; // fc00::/7 unique local
+    if (x[0] === 0xfe && (x[1]! & 0xc0) >= 0x80) return true; // fe80::/10 link-local and fec0::/10 site-local
+    if (x[0] === 0xff) return true; // multicast
+    if (x[0] === 0x20 && x[1] === 0x01 && x[2] === 0x0d && x[3] === 0xb8) return true; // documentation
+    if (x[0] === 0x01 && zeros(1, 8)) return true; // 100::/64 discard
+    return false;
   }
   return true; // not an address at all
+}
+
+/** Does a host match an allow-list entry: `a.com` (that name), `*.a.com` (any subdomain of it), or `*` (everything)? */
+export function domainAllowed(host: string, list: string[]): boolean {
+  const h = host.toLowerCase().replace(/\.$/, '');
+  return list.some((raw) => {
+    const d = raw.toLowerCase();
+    if (d === '*') return true;
+    if (d.startsWith('*.')) return h.endsWith(d.slice(1)) && h.length > d.length - 1;
+    return h === d;
+  });
 }
 
 const BLOCKED_PORTS = new Set([25, 465, 587]); // outgoing mail
@@ -53,6 +101,8 @@ export interface EgressOptions {
   lookup?: (host: string) => Promise<string[]>;
   isBlocked?: (ip: string) => boolean;
   log?: (line: string) => void;
+  /** names agents may reach (SALU_SANDBOX_DOMAINS); `['*']` or nothing means any public site */
+  allowedDomains?: string[];
 }
 
 const defaultLookup = async (host: string) => (isIP(host) ? [host] : (await dnsLookup(host, { all: true })).map((a) => a.address));
@@ -62,11 +112,14 @@ export function createEgressServer(o: EgressOptions = {}): Server {
   const lookup = o.lookup ?? defaultLookup;
   const blocked = o.isBlocked ?? isBlockedAddress;
   const log = o.log ?? (() => {});
+  const allow = o.allowedDomains ?? ['*'];
 
   /** The address to connect to, or a reason it is refused. */
   async function target(host: string, port: number): Promise<{ ip: string } | { refuse: string }> {
     if (!host || !Number.isInteger(port) || port < 1 || port > 65535) return { refuse: 'bad target' };
     if (BLOCKED_PORTS.has(port)) return { refuse: `port ${port} is closed` };
+    // a project's allow-list is checked on the name asked for, before anything is resolved; a bare address is not a name
+    if (!allow.includes('*') && (isIP(host.replace(/^\[|\]$/g, '')) || !domainAllowed(host, allow))) return { refuse: 'not on this project\'s allowed sites' };
     let ips: string[];
     try {
       ips = await lookup(host.replace(/^\[|\]$/g, ''));
