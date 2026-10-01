@@ -172,7 +172,9 @@ ticket. Files and installed packages stay on disk; background processes an agent
 
 How many tickets run at once: by default what the machine's memory carries ((RAM - 3 GiB) / the container limit, 4 GB each,
 so 16 GB gives 3). `--concurrency`, `SALU_CONCURRENCY` and the saved setting override it, and `SALU_KERNEL_MEMORY=2g` changes the
-per-container limit. gVisor's platform is a setting: `salu kernel platform [systrap|kvm|ptrace|default]` (default systrap; kvm
+per-container limit. That default is box-wide: every project's orchestrator counts running container tickets in
+`~/.local/state/salu/slots`, so three busy projects together still run at most 3 (`SALU_BOX_CONCURRENCY` changes the box total; an
+explicit per-orchestrator setting skips the box check). gVisor's platform is a setting: `salu kernel platform [systrap|kvm|ptrace|default]` (default systrap; kvm
 needs VT-x and /dev/kvm, and may be faster for install-and-test work, unmeasured) and `salu kernel bench` times a file-heavy
 workload on each platform that can run here so you can compare on your box.
 

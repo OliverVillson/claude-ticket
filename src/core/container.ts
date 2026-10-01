@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { accessSync, appendFileSync, chmodSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { accessSync, appendFileSync, chmodSync, constants, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SpawnedProcess, SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
 import { CliError } from './errors.ts';
@@ -388,6 +388,64 @@ const GIB = 1024 ** 3;
 export function memoryConcurrency(totalBytes: number, env: NodeJS.ProcessEnv = process.env): number {
   const per = parseMemory(env.SALU_KERNEL_MEMORY ?? '4g') ?? 4 * GIB;
   return Math.max(1, Math.min(8, Math.floor((totalBytes - 3 * GIB) / per)));
+}
+
+// ---- box-wide slots -----------------------------------------------------------------------------------------
+
+/**
+ * The box runs one orchestrator per project, each with its own SALU_HOME, so the memory-based default cannot be
+ * counted per orchestrator. Running container tickets are counted box-wide with one small file per ticket in a
+ * folder under the real home (shared by all `salu@<project>` units, like Podman's own storage): `<pid>-<ticket>`.
+ * Files whose process is gone are ignored and removed.
+ */
+export function boxSlotsDir(env: NodeJS.ProcessEnv = process.env): string {
+  return env.SALU_BOX_SLOTS_DIR || join(env.HOME || homedir(), '.local', 'state', 'salu', 'slots');
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e: any) {
+    return e?.code === 'EPERM';
+  }
+}
+
+/** Container tickets running on this box right now, across all orchestrators. */
+export function boxRunning(dir = boxSlotsDir()): number {
+  let n = 0;
+  let names: string[] = [];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return 0;
+  }
+  for (const f of names) {
+    const pid = Number(f.split('-')[0]);
+    if (Number.isInteger(pid) && pidAlive(pid)) n++;
+    else rmSync(join(dir, f), { force: true });
+  }
+  return n;
+}
+
+/** Take a slot for a ticket (the caller checked `boxRunning` against the cap first). */
+export function takeBoxSlot(ticketId: number | string, dir = boxSlotsDir()): void {
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o755 });
+    writeFileSync(join(dir, `${process.pid}-${ticketId}`), '');
+  } catch {
+    /* counting is best effort */
+  }
+}
+
+export function releaseBoxSlot(ticketId: number | string, dir = boxSlotsDir()): void {
+  rmSync(join(dir, `${process.pid}-${ticketId}`), { force: true });
+}
+
+/** The box-wide cap: SALU_BOX_CONCURRENCY, else what the machine's memory carries (see memoryConcurrency). */
+export function boxConcurrency(totalBytes: number, env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.SALU_BOX_CONCURRENCY);
+  return Number.isInteger(n) && n > 0 ? n : memoryConcurrency(totalBytes, env);
 }
 
 // ---- gVisor platform ---------------------------------------------------------------------------------------

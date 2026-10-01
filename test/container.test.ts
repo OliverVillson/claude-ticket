@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { createServer, connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ensureContainer, holdContainer, idleMinutes, recordStart, startStats, GVISOR_PLATFORMS, gvisorPlatform, memoryConcurrency, parseMemory, setGvisorPlatform, DOCKERFILE, checkDisk, claudeAuthEnv, requireKernelAuth, containerName, containerReady, containerSpawner, createArgs, engine, execArgs, runtime, saveToken } from '../src/core/container.ts';
+import { boxConcurrency, boxRunning, releaseBoxSlot, takeBoxSlot, ensureContainer, holdContainer, idleMinutes, recordStart, startStats, GVISOR_PLATFORMS, gvisorPlatform, memoryConcurrency, parseMemory, setGvisorPlatform, DOCKERFILE, checkDisk, claudeAuthEnv, requireKernelAuth, containerName, containerReady, containerSpawner, createArgs, engine, execArgs, runtime, saveToken } from '../src/core/container.ts';
 import { judgeContainer } from '../src/core/container-check.ts';
 import { createEgressServer, domainAllowed, isBlockedAddress, WEB_PORTS } from '../src/core/egress.ts';
 import { workerSdkOptions } from '../src/orchestrator/worker.ts';
@@ -284,6 +285,21 @@ describe('concurrency and gVisor platform', () => {
     expect(parseMemory('4g')).toBe(4 * GiB);
     expect(parseMemory('512m')).toBe(512 * 1024 ** 2);
     expect(parseMemory('nope')).toBeNull();
+  });
+
+  test('running container tickets are counted box-wide across orchestrators, ignoring dead ones', () => {
+    const dir = mkdtempSync(join(root, 'slots-'));
+    expect(boxRunning(dir)).toBe(0);
+    takeBoxSlot(1, dir); // this orchestrator
+    writeFileSync(join(dir, `${process.ppid}-7`), ''); // another live process = another project's orchestrator
+    const dead = spawnSync('true').pid!; // a finished process
+    writeFileSync(join(dir, `${dead}-9`), '');
+    expect(boxRunning(dir)).toBe(2);
+    expect(readdirSync(dir)).not.toContain(`${dead}-9`); // stale slot cleaned up
+    releaseBoxSlot(1, dir);
+    expect(boxRunning(dir)).toBe(1);
+    expect(boxConcurrency(16 * GiB, {})).toBe(3);
+    expect(boxConcurrency(16 * GiB, { SALU_BOX_CONCURRENCY: '5' })).toBe(5); // overridable
   });
 
   test('the gVisor platform comes from the environment, then the file; bad values are ignored; default is unset', () => {
