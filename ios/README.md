@@ -16,6 +16,9 @@ No Xcode-generator? File > New > Project > iOS App (SwiftUI, name SaluPhone), de
 
 After pulling new Swift files, run `xcodegen generate` again so Xcode sees them.
 
+No box yet? Tap **Look around with sample data** on the first screen (or Settings > Sample data): made-up tickets in
+every state and a pretend box that answers what you send. Nothing goes to GitHub while it is on.
+
 ## Screens
 - **Inbox**: what the box said, newest first, by day. A green bar marks unread (swipe right to toggle); filter all /
   unread / needs you. The header dog runs while a ticket runs and sleeps otherwise (tap it: it barks).

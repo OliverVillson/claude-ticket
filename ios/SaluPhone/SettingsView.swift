@@ -122,6 +122,13 @@ struct SettingsView: View {
                 .listRowBackground(Salu.surface)
 
                 Section {
+                    Toggle("Sample data", isOn: $store.demo)
+                } footer: {
+                    note("Shows made-up tickets and a pretend box that answers what you send, so you can look around without one. Nothing goes to GitHub while it is on.")
+                }
+                .listRowBackground(Salu.surface)
+
+                Section {
                     HStack(alignment: .bottom) {
                         DogView(mood: .sleeping, pixel: 3)
                         Spacer()

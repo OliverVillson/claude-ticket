@@ -14,7 +14,7 @@ final class Store: ObservableObject {
     @Published var signingKey: String {
         didSet {
             Keychain.set(signingKey.trimmed, for: "remote-key")
-            messages = []  // what was accepted under the old key is checked again
+            if !demo { messages = [] }  // what was accepted under the old key is checked again
             rejected = []
         }
     }
@@ -28,6 +28,15 @@ final class Store: ObservableObject {
     @Published var replyDrafts: [String: String] { didSet { defaults.set(replyDrafts, forKey: "replyDrafts") } }
 
     @Published var messages: [SaluMessage] = []
+    /// Sample data instead of a box (Demo.swift): nothing goes to GitHub while it is on.
+    @Published var demo: Bool {
+        didSet {
+            defaults.set(demo, forKey: "demo")
+            messages = demo ? Demo.messages().sorted { $0.id > $1.id } : []
+            error = nil
+            if !demo { Task { await refresh() } }
+        }
+    }
     /// Message ids whose signature failed: not fetched again, counted in the inbox.
     @Published private(set) var rejected: Set<String> = []
     @Published var error: String?
@@ -71,6 +80,8 @@ final class Store: ObservableObject {
             replies = []
         }
         replyDrafts = defaults.dictionary(forKey: "replyDrafts") as? [String: String] ?? [:]
+        demo = defaults.bool(forKey: "demo")
+        if demo { messages = Demo.messages().sorted { $0.id > $1.id } }
     }
 
     // MARK: derived
@@ -80,9 +91,12 @@ final class Store: ObservableObject {
         guard let r = GitHubClient.parseRepo(repo), !token.isEmpty, !Self.keyTooShort(signingKey), let key = Signing.key(signingKey) else { return nil }
         return GitHubClient(owner: r.owner, repo: r.repo, token: token, key: key)
     }
-    private var repoKey: String { GitHubClient.parseRepo(repo).map { "\($0.owner)/\($0.repo)".lowercased() } ?? "" }
+    private var repoKey: String {
+        if demo { return "demo" }
+        return GitHubClient.parseRepo(repo).map { "\($0.owner)/\($0.repo)".lowercased() } ?? ""
+    }
 
-    var configured: Bool { client != nil }
+    var configured: Bool { demo || client != nil }
     var unread: Int { messages.filter { !read.contains($0.id) }.count }
     func isRead(_ m: SaluMessage) -> Bool { read.contains(m.id) }
 
@@ -106,6 +120,7 @@ final class Store: ObservableObject {
     // MARK: actions
 
     func refresh() async {
+        if demo { lastSync = Date(); return }
         guard let c = client else { return }  // not set up yet: the inbox shows how, not an error
         guard !loading else { return }
         loading = true
@@ -131,6 +146,13 @@ final class Store: ObservableObject {
 
     /// Writes the ticket to salu/inbox. Returns nil when it went, else what went wrong.
     func send(name: String, query: String, queue: Bool, priority: Int) async -> String? {
+        if demo {
+            let (id, ms) = newTicketId()
+            sent.insert(SentTicket(id: id, repo: repoKey, project: Demo.project, name: name, query: query, queue: queue, priority: priority, at: ms), at: 0)
+            let number = (messages.compactMap { $0.ticket?.id }.max() ?? 15) + 1
+            pretendBox(Demo.answers(number: number, name: name, ref: id, reply: false).prefix(queue ? 3 : 1))
+            return nil
+        }
         guard let c = client else { return SaluError.notConfigured.localizedDescription }
         let (id, ms) = newTicketId()
         do {
@@ -146,6 +168,13 @@ final class Store: ObservableObject {
     /// Writes a follow-up for the ticket to salu/inbox; the box resumes the worker's conversation with it.
     /// Returns nil when it went, else what went wrong.
     func reply(to t: TicketSummary, body: String, now: Bool) async -> String? {
+        if demo {
+            let (id, ms) = newTicketId()
+            replies.insert(SentReply(id: id, repo: repoKey, ticket: t.id, body: body, now: now, at: ms, after: t.messages.first?.id), at: 0)
+            let ref = t.id.hasPrefix("box:") ? nil : t.id
+            pretendBox(Demo.answers(number: t.number ?? 0, name: t.name, ref: ref, reply: true)[...])
+            return nil
+        }
         guard let c = client else { return SaluError.notConfigured.localizedDescription }
         let (id, ms) = newTicketId()
         let ref = t.id.hasPrefix("box:") ? nil : t.id  // tickets this phone sent are keyed by their file id
@@ -156,6 +185,17 @@ final class Store: ObservableObject {
             return nil
         } catch {
             return error.localizedDescription
+        }
+    }
+
+    /// Sample data: the pretend box answers after a few seconds, like a real one would on its next syncs.
+    private func pretendBox(_ steps: ArraySlice<(seconds: Double, make: () -> SaluMessage)>) {
+        for step in steps {
+            Task {
+                try? await Task.sleep(for: .seconds(step.seconds))
+                guard demo else { return }
+                messages.insert(step.make(), at: 0)
+            }
         }
     }
 

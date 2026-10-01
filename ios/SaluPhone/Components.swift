@@ -213,6 +213,7 @@ struct EmptyDog: View {
 
 /// First run: what salu needs before it can show anything.
 struct ConnectCard: View {
+    @EnvironmentObject var store: Store
     var action: () -> Void
     var body: some View {
         Card(title: "connect a project", tint: Salu.accent) {
@@ -231,6 +232,13 @@ struct ConnectCard: View {
                 .buttonStyle(.borderedProminent)
                 .tint(Salu.accent)
                 .foregroundStyle(Color.black)
+                Button {
+                    store.demo = true
+                } label: {
+                    Text("Look around with sample data").font(Salu.mono(.callout, weight: .semibold)).frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .tint(Salu.chrome)
             }
         }
     }

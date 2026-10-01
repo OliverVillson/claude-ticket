@@ -47,6 +47,9 @@ struct InboxView: View {
                     if let e = store.error {
                         Banner(glyph: "✗", text: e, color: Salu.error).bareRow()
                     }
+                    if store.demo {
+                        Banner(glyph: "◌", text: "Sample data: nothing goes to a box. Turn it off in Settings.", color: Salu.paused).bareRow()
+                    }
                     if !store.rejected.isEmpty {
                         Banner(glyph: "!", text: rejectedText, color: Salu.warn).bareRow()
                     }
