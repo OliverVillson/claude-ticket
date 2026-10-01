@@ -33,14 +33,14 @@ keyboard are fine), and your Mac.
 
 ## Part B. BIOS/UEFI settings 🔸
 
-Plug the laptop in, power on, and tap the BIOS key repeatedly (usually **F2**, **Del**, **F10** or **F1**; the
+Plug the laptop in, power on, and tap the BIOS key repeatedly (usually **F2**, **Del**, **F10** or **F1**; HP OMEN: **F10**, boot menu **F9**; the
 boot logo often shows it). Names vary by brand, so look for the closest match:
 
 | Setting | Value | Why |
 | --- | --- | --- |
 | Intel Virtualization Technology (VT-x) | **Enabled** | needed for VMs/containers with real isolation (KVM) |
 | VT-d / Intel Virtualization for Directed I/O | Enabled (if present) | harmless, sometimes needed |
-| SATA/storage mode | **AHCI** (not "RST"/"RAID"/"Intel Optane") | otherwise Ubuntu can't see the SSD |
+| SATA/storage mode | **AHCI** (not "RST"/"VMD"/"RAID"/"Intel Optane"), only if the option exists: many laptops (e.g. HP OMEN with an NVMe SSD) have none, and that is fine | otherwise Ubuntu can't see the SSD |
 | Power on after AC loss / "Restore on AC power loss" / "Wake on AC" | **Power on** (if present) | box comes back after a power cut |
 | Battery charge limit (some Lenovo/Dell/ASUS) | 60-80% (if present) | a laptop that's always plugged in lasts longer |
 | Secure Boot | leave as is; turn **off** only if the stick won't boot | Ubuntu works with it on |
