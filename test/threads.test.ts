@@ -46,8 +46,8 @@ const ctx = (id: number) => ({ db, ticket: getTicketById(db, id)! });
 const script = (calls: unknown[], then: string) => `FAKE:tools ${JSON.stringify(calls)} then ${then}`;
 
 describe('schema', () => {
-  test('is v10 with the thread tables', () => {
-    expect(db.query<{ user_version: number }, []>('PRAGMA user_version').get()!.user_version).toBe(10);
+  test('is v9 with the thread tables', () => {
+    expect(db.query<{ user_version: number }, []>('PRAGMA user_version').get()!.user_version).toBe(9);
     const t = mk('a', 'FAKE:done');
     expect(threadSummary(db, t.id)).toEqual({ checklist: [], decisions: [], outputs: [], parent: null, children: [] });
   });

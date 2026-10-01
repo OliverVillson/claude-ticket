@@ -1,6 +1,6 @@
 /**
  * What a thread (ticket) carries beyond its conversation: the live checklist, decisions the worker
- * asked, outputs it attached, and the sub-threads it started. Schema v10; see
+ * asked, outputs it attached, and the sub-threads it started. Schema v9; see
  * /mnt/project-files/salu-threads/worker-tool.md for the contract.
  */
 import type { Database } from 'bun:sqlite';
@@ -58,7 +58,7 @@ export interface ThreadSummary {
 
 const now = () => Date.now();
 
-/** Create the v10 tables and column. Idempotent, so it does not depend on which other migrations ran. */
+/** Create the v9 tables and column. Idempotent, so it does not depend on which other migrations ran. */
 export function ensureThreadTables(db: Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS thread_status (
