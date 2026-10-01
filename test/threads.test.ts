@@ -243,3 +243,42 @@ describe('answering decisions', () => {
     expect(listDecisions(db, t.id)[0]).toMatchObject({ status: 'answered', chosen: null, answer_text: 'use three instead' });
   });
 });
+
+describe('telling the box clients', () => {
+  test('status, decision and attach post thread messages with the sync shapes', async () => {
+    const { setThreadPoster } = await import('../src/threads/post.ts');
+    const { answerFromReply } = await import('../src/threads/decide.ts');
+    const seen: any[] = [];
+    setThreadPoster((_db, id, m) => seen.push({ id, ...m }));
+    try {
+      const t = mk('box', 'x');
+      callTool(ctx(t.id), 'status', { items: [{ text: 'a', state: 'doing' }] });
+      callTool(ctx(t.id), 'ask_decision', { question: 'q?', options: [{ label: 'x', consequence: 'cx' }, { label: 'y', consequence: 'cy' }], recommended: 1 });
+      callTool(ctx(t.id), 'attach', { kind: 'branch', ref: 'salu/box' });
+      expect(seen.map((m) => m.type)).toEqual(['ticket.status', 'ticket.decision', 'ticket.output']);
+      expect(seen[0].checklist).toEqual([{ text: 'a', state: 'doing' }]);
+      const [d] = listDecisions(db, t.id);
+      expect(seen[1].decision).toEqual({ id: String(d!.id), question: 'q?', options: [{ label: 'x', consequence: 'cx' }, { label: 'y', consequence: 'cy' }], recommended: 1 });
+      expect(seen[2].outputs).toEqual([{ kind: 'branch', ref: 'salu/box' }]);
+      // a reply from the phone carrying the decision answers it once
+      expect(answerFromReply(db, t.id, { id: String(d!.id), option: 0 }, 'x please')).toBe(true);
+      expect(listDecisions(db, t.id)[0]).toMatchObject({ status: 'answered', chosen: 0 });
+      expect(answerFromReply(db, t.id, { id: String(d!.id), option: 1 }, 'again')).toBe(false);
+    } finally {
+      setThreadPoster(null);
+    }
+  });
+
+  test('a failing poster never fails the tool call', async () => {
+    const { setThreadPoster } = await import('../src/threads/post.ts');
+    setThreadPoster(() => {
+      throw new Error('remote down');
+    });
+    try {
+      const t = mk('box2', 'x');
+      expect(callTool(ctx(t.id), 'status', { items: [{ text: 'a', state: 'doing' }] }).error).toBeUndefined();
+    } finally {
+      setThreadPoster(null);
+    }
+  });
+});

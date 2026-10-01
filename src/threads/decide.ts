@@ -27,3 +27,15 @@ export function answerOpenWithText(db: Database, ticketId: number, text: string)
   for (const d of open) answerDecision(db, d.id, { text });
   return open.length;
 }
+
+/**
+ * A reply that came over git sync with `decision: {id, option?}` answers that decision. The reply's own
+ * text is delivered to the worker by the reply itself, so this only records the answer.
+ */
+export function answerFromReply(db: Database, ticketId: number, ref: { id: string; option?: number }, text: string): boolean {
+  const d = getDecision(db, Number(ref.id));
+  if (!d || d.ticket_id !== ticketId || d.status !== 'open') return false;
+  const chosen = ref.option !== undefined && ref.option >= 0 && ref.option < d.options.length ? ref.option : null;
+  answerDecision(db, d.id, { chosen, text: chosen === null ? text : null });
+  return true;
+}

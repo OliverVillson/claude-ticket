@@ -12,6 +12,7 @@ import { createTicket, getTicketById, queueTicket } from '../db/queries.ts';
 import { ticketTags } from '../db/types.ts';
 import type { TicketView } from '../db/types.ts';
 import { ticketSlug } from '../orchestrator/prompt.ts';
+import { decisionMessage, outputMessage, postThread, statusMessage } from './post.ts';
 import { OUTPUT_KINDS, addDecision, addOutput, listChildren, setChecklist, threadDepth } from './store.ts';
 
 export const MCP_NAME = 'salu';
@@ -48,7 +49,9 @@ const status = define({
   description: 'Post your progress checklist (replaces the whole list). Call it when you start and whenever a step changes. 1 to 12 short items, each todo, doing or done.',
   shape: { items: z.array(z.object({ text: z.string().max(200), state: z.enum(['todo', 'doing', 'done']) })).min(1).max(12) },
   handler: ({ db, ticket }, { items }) => {
-    setChecklist(db, ticket.id, items.map((i) => ({ text: clip(i.text, 80), state: i.state })));
+    const list = items.map((i) => ({ text: clip(i.text, 80), state: i.state }));
+    setChecklist(db, ticket.id, list);
+    postThread(db, ticket.id, statusMessage(list));
     return ok('ok');
   },
 });
@@ -66,6 +69,7 @@ const askDecision = define({
     if (a.recommended >= a.options.length) return fail(`recommended must be between 0 and ${a.options.length - 1}`);
     const options = a.options.map((o) => ({ label: clip(o.label, 40), consequence: clip(o.consequence, 200) }));
     const d = addDecision(db, ticket.id, { question: clip(a.question, 300), context: clip(a.context ?? '', 1200), options, recommended: a.recommended });
+    postThread(db, ticket.id, decisionMessage(d));
     return ok(`Recorded as decision #${d.id}. Carry on with the recommended option (${options[a.recommended]!.label}) unless a later message says otherwise.`);
   },
 });
@@ -79,7 +83,8 @@ const attach = define({
     if (!ref) return fail('ref is empty');
     if (!OUTPUT_KINDS.includes(a.kind)) return fail(`kind must be one of ${OUTPUT_KINDS.join(', ')}`);
     if ((a.kind === 'pr' || a.kind === 'link') && !/^https?:\/\//i.test(ref)) return fail(`a ${a.kind} needs an http(s) URL`);
-    addOutput(db, ticket.id, { kind: a.kind, ref, title: clip(a.title ?? '', 120) });
+    const out = addOutput(db, ticket.id, { kind: a.kind, ref, title: clip(a.title ?? '', 120) });
+    postThread(db, ticket.id, outputMessage(out));
     return ok('attached');
   },
 });
