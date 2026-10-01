@@ -94,7 +94,7 @@ sudo ufw default deny incoming && sudo ufw allow OpenSSH && sudo ufw --force ena
 # 5. automatic security updates (usually already on; this confirms it)
 sudo apt install -y unattended-upgrades && sudo dpkg-reconfigure -plow unattended-upgrades    # answer Yes
 
-# 6. temperature check, useful on a laptop that runs 24/7
+# 6. temperature check (install-box.sh also installs thermald, which keeps a laptop CPU out of throttling)
 sudo apt install -y lm-sensors && sensors
 ```
 
@@ -194,3 +194,10 @@ the topic in the free ntfy app. The iPhone app itself still waits for your first
 The container kernel (Part F step 6) is built in its own pull request and has not run on a real box. The first run
 on your laptop is the real test: paste any error from `install-box.sh`, `salu kernel setup` or the kernel-check ticket
 back and it gets fixed.
+
+## Keeping it healthy (an old gaming laptop, always on)
+
+- Put it somewhere with air: on a stand, lid open a crack or closed but not under anything, fan inlets free. Check `sensors` once under load (a running ticket); steady 85 °C or more means clean the fans.
+- Cap the battery charge at 60-80% in the BIOS if it offers it, or unplug the battery if it's removable and the laptop runs fine without it.
+- The dedicated graphics card is not used by salu. On Ubuntu Server it stays idle with the open driver; do not install NVIDIA drivers.
+- Leave Docker off: salu uses rootless Podman with gVisor, which does not need it.

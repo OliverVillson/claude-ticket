@@ -105,6 +105,8 @@ if [ "$PROFILE" = laptop ]; then
   systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target >/dev/null 2>&1
   systemctl kill -s HUP systemd-logind 2>/dev/null || true
   ok "never sleeps (lid closed is fine)"
+  # an always-on laptop lives or dies by heat: thermald keeps an Intel CPU out of throttling and the fans sane
+  apt-get install -y -qq thermald lm-sensors >/dev/null && systemctl enable --now thermald >/dev/null 2>&1 && ok "thermal management (thermald)"
 fi
 
 # --- 5. firewall: nothing inbound except ssh (salu itself needs no open port) ---
