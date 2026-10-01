@@ -83,6 +83,7 @@ salu log "fix login" --follow                  # worker transcript
 | `salu run [project\|"name"...] [--concurrency N] [--detach] [--plain]` | Queues every saved ticket (or only the named tickets, or those in the named project) and starts the orchestrator. If one is already running it just queues and lets it pick them up. |
 | `salu pause` / `salu resume` / `salu stop` | Pause dispatch after current workers finish; resume early; stop a detached orchestrator. |
 | `salu status [--json]` | One screen of state. |
+| `salu sched [off\|advise\|on]` | The token-aware scheduler: queue cost forecast, mode (see below). |
 | `salu log "name" [--follow] [--raw] [--run N]` | Worker transcript for a ticket. |
 | `salu plan "name" [--yes]` | Asks Claude to split a ticket into sub-tickets and adds them on approval. |
 
