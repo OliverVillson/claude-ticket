@@ -86,8 +86,11 @@ extension SaluMessage {
         switch type {
         case "ticket.accepted": return Look(glyph: "○", color: Salu.dim, label: "queued")
         case "ticket.started": return Look(glyph: "●", color: Salu.accent, label: "started")
-        case "ticket.done", "ticket.resolved": return Look(glyph: "✓", color: Salu.ok, label: "resolved")
-        case "ticket.reopened": return Look(glyph: "○", color: Salu.dim, label: "reopened")
+        case "ticket.done": return Look(glyph: "✓", color: Salu.ok, label: "resolved")
+        case "ticket.state": return Tickets.state(after: self)?.look ?? Look(glyph: "·", color: Salu.dim, label: state ?? "state")
+        case "ticket.status": return Look(glyph: "◐", color: Salu.accent, label: "checklist")
+        case "ticket.decision": return Look(glyph: "?", color: Salu.warn, label: "decision")
+        case "ticket.output": return Look(glyph: "↗", color: Salu.accent, label: "output")
         case "ticket.blocked": return Look(glyph: "?", color: Salu.warn, label: "needs you")
         case "ticket.failed": return Look(glyph: "✗", color: Salu.error, label: "failed")
         case "orchestrator.paused": return Look(glyph: "‖", color: Salu.paused, label: "paused")
@@ -103,7 +106,9 @@ extension SaluMessage {
     }
 
     /// Worth a look from you: blocked tickets, failures, warnings.
-    var needsYou: Bool { type == "ticket.blocked" || type == "ticket.failed" || level == "warn" || level == "error" }
+    var needsYou: Bool {
+        type == "ticket.blocked" || type == "ticket.failed" || type == "ticket.decision" || level == "warn" || level == "error"
+    }
 }
 
 /// Priority colours from the TUI: 1 loud, 2 amber, 3 plain, 4 and 5 fade out.

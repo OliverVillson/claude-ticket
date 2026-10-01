@@ -27,31 +27,31 @@ enum Demo {
 
     /// The inbox as it looks after a day of use. Oldest first.
     static func messages() -> [SaluMessage] {
-        var working = message(2, "note", "info", "fix login redirect: checklist updated", ticket: t(14, "fix login redirect"))
+        let login = t(14, "fix login redirect")
+        var working = message(2, "ticket.status", "info", "fix login redirect: checklist updated", ticket: login)
         working.checklist = Lenient([
             ChecklistItem(text: "reproduce the loop after SSO", state: "done"),
             ChecklistItem(text: "keep `next` through the callback", state: "done"),
             ChecklistItem(text: "run the full test suite", state: "doing"),
             ChecklistItem(text: "open a PR", state: "todo"),
         ])
-        working.decisions = Lenient([
-            SaluDecision(id: 1, question: "Keep the old /auth/return route working?",
-                         context: "Two bookmarks in the docs still point at it.",
-                         options: [.init(label: "Redirect it", consequence: "Old links keep working; one extra route to maintain."),
-                                   .init(label: "Remove it", consequence: "Less code; old links land on a 404.")],
-                         recommended: 0, status: "open", chosen: nil),
-        ])
-        var gridDone = message(62, "ticket.done", "success", "fix css grid is done: 3 files changed, tests pass", ticket: t(11, "fix css grid"),
+        var asked = message(3, "ticket.decision", "info", "fix login redirect asks: Keep the old /auth/return route working?", ticket: login)
+        asked.decision = Lenient(SaluDecision(
+            id: "1", question: "Keep the old /auth/return route working?",
+            options: [.init(label: "Redirect it", consequence: "Old links keep working; one extra route to maintain."),
+                      .init(label: "Remove it", consequence: "Less code; old links land on a 404.")],
+            recommended: 0))
+        let gridDone = message(62, "ticket.done", "success", "fix css grid is done: 3 files changed, tests pass", ticket: t(11, "fix css grid"),
                                body: "3 files changed, tests pass.", branch: "salu/fix-css-grid",
                                reply: "Done on salu/fix-css-grid. The pricing grid now uses minmax(200px, 1fr) with three columns down to 700px, then two. I added a Playwright test at 768px and 700px. 3 files changed, tests pass.")
-        gridDone.outputs = Lenient([
+        var gridOutputs = message(63, "ticket.output", "info", "fix css grid made PR #71 and 1 file", ticket: t(11, "fix css grid"))
+        gridOutputs.outputs = Lenient([
             SaluOutput(kind: "pr", ref: "https://github.com/acme/web/pull/71", title: "PR #71 fix css grid"),
             SaluOutput(kind: "file", ref: "tests/pricing-grid.spec.ts", title: nil),
         ])
         let dark = t(10, "dark mode toggle")
         let grid = t(11, "fix css grid")
         let clone = t(12, "clone api repo")
-        let login = t(14, "fix login redirect")
         let deps = t(15, "bump dependencies")
         return [
             message(26 * 60, "ticket.accepted", "info", "Accepted as #10", ticket: dark),
@@ -64,10 +64,12 @@ enum Demo {
             message(18 * 60, "orchestrator.resumed", "info", "Resumed: the usage window reset"),
             message(125, "ticket.accepted", "info", "Accepted as #11", ticket: grid),
             message(121, "ticket.started", "info", "Started fix css grid", ticket: grid),
+            gridOutputs,
             gridDone,
             message(30, "ticket.accepted", "info", "Accepted as #15", ticket: deps),
             message(14, "ticket.accepted", "info", "Accepted as #14", ticket: login),
             message(9, "ticket.started", "info", "Started fix login redirect", ticket: login),
+            asked,
             working,
             message(6, "ticket.accepted", "info", "Accepted as #12", ticket: clone),
             message(5, "ticket.started", "info", "Started clone api repo", ticket: clone),

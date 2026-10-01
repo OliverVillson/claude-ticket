@@ -25,10 +25,13 @@ every state and a pretend box that answers what you send. Nothing goes to GitHub
 - **Message**: blocked tickets show what they need and the `salu allow` command to copy; done ones their result branch.
 - **Tickets**: every ticket as a thread, grouped by needs you / working / waiting, built from the messages plus the
   tickets this phone sent (they show as "sent" until the box answers). Finished tickets are **resolved** and collapse
-  into one line each at the bottom (tap "resolved" to show them). A ticket opens as a thread: its outputs (result
-  branch, with the command to check it out), the conversation (what you asked, the worker's replies, your follow-ups)
-  and, folded away, every step the box reported. **Resolve** (top right) resolves it from the phone, written to
-  `salu-inbox/resolves/<id>.json`; replying to a resolved ticket reopens it.
+  into one line each at the bottom (tap "resolved" to show them). A ticket opens as a thread: the worker's live
+  checklist (`ticket.status`) while it works, its open decisions (`ticket.decision`: tap an option; the recommended
+  one is only noted, another goes to the worker as a reply carrying `decision`), its outputs (`ticket.output` and the
+  result branch, with the command to check it out), the conversation (what you asked, the worker's replies, your
+  follow-ups) and, folded away, every step the box reported. **Resolve** (top right) writes an action file to
+  `salu-inbox/actions/<id>.json`; the box answers with `ticket.state`. Replying to a resolved ticket reopens it.
+  Checklist updates show on the thread only, not in the Inbox.
 - **Keep chatting** (bottom of a ticket, or of its done / blocked / failed message): one field, sent as a `ticket-reply`
   to `salu-inbox/replies/<id>.json`, the phone's `salu reply`. The worker resumes the same session on the same branch.
   "Jump the queue" is `--now`. The ticket shows as "sent" until the box answers; the draft is kept per ticket.

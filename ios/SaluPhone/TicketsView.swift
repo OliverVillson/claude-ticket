@@ -402,15 +402,14 @@ struct DecisionCard: View {
         Card(title: "decision", tint: Salu.warn) {
             VStack(alignment: .leading, spacing: 10) {
                 Text(decision.question).font(Salu.mono(.callout, weight: .semibold))
-                if let c = decision.context, !c.isEmpty {
-                    Text(c).font(Salu.mono(.footnote)).foregroundStyle(Salu.dim)
-                }
                 ForEach(Array(decision.options.enumerated()), id: \.offset) { item in
                     option(item.offset, item.element, picked: picked)
                 }
-                Text(picked == nil
-                     ? "It carries on with the recommended option unless you pick another."
-                     : "Picked. Another option goes to the worker as a reply.")
+                Text(picked != nil
+                     ? "Picked. Another option goes to the worker as a reply."
+                     : decision.recommended == nil
+                        ? "Your pick goes to the worker as a reply."
+                        : "It carries on with the recommended option unless you pick another.")
                     .font(Salu.mono(.caption2))
                     .foregroundStyle(Salu.chrome)
                 if let failure {

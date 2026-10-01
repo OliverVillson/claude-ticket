@@ -16,16 +16,17 @@ struct SaluMessage: Codable, Identifiable, Hashable {
     var ticket: TicketRef?
     var until: Double?  // orchestrator.paused: epoch ms it resumes
     var reply: String?  // ticket.done / ticket.blocked: the worker's whole final message (body is its one-line summary)
-    // Thread extras from the worker's `salu` tool (worker-tool.md). The inbox format for them is not
-    // final, so they decode leniently: a shape the phone doesn't know yet is skipped, not fatal.
-    var checklist: Lenient<[ChecklistItem]>?  // the ticket's whole checklist while it works
-    var decisions: Lenient<[SaluDecision]>?   // the ticket's decisions
-    var outputs: Lenient<[SaluOutput]>?       // branches, PRs, files, links it attached
+    // Thread extras (MessageFile in format.ts). They decode leniently: a shape the phone doesn't know
+    // is skipped, not fatal for the whole message.
+    var state: String?                        // ticket.state: the ticket's new state in the core's words (done, todo, ...)
+    var checklist: Lenient<[ChecklistItem]>?  // ticket.status: the worker's whole checklist, replacing the last one
+    var decision: Lenient<SaluDecision>?      // ticket.decision: a question with options
+    var outputs: Lenient<[SaluOutput]>?       // ticket.output: branches, PRs, files, links it made
 
     /// What the worker said, as fully as the box sent it.
     var workerText: String? {
         switch type {
-        case "ticket.done", "ticket.resolved": return reply ?? body
+        case "ticket.done": return reply ?? body
         case "ticket.blocked": return reply ?? question ?? body
         case "ticket.failed": return reply ?? body
         case "note" where ticket != nil && level == "warn": return title  // e.g. a reply the box refused
@@ -44,18 +45,38 @@ struct ChecklistItem: Codable, Hashable {
 }
 
 /// A question the worker asked with options; it carries on with the recommended one meanwhile.
+/// Answer it with a reply carrying `decision` (SaluReply.Answer).
 struct SaluDecision: Codable, Hashable, Identifiable {
     struct Option: Codable, Hashable {
         var label: String
         var consequence: String?
     }
-    var id: Int
+    var id: String
     var question: String
-    var context: String?
     var options: [Option]
-    var recommended: Int
-    var status: String?  // open or answered
-    var chosen: Int?
+    var recommended: Int?  // index into options; nil when the worker didn't pick one
+
+    init(id: String, question: String, options: [Option], recommended: Int?) {
+        self.id = id
+        self.question = question
+        self.options = options
+        self.recommended = recommended
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, question, options, recommended }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        if let s = try? c.decode(String.self, forKey: .id) {
+            id = s
+        } else {
+            id = String(try c.decode(Int.self, forKey: .id))  // the database's number, if a box sends it bare
+        }
+        question = try c.decode(String.self, forKey: .question)
+        options = try c.decode([Option].self, forKey: .options)
+        let r = try? c.decodeIfPresent(Int.self, forKey: .recommended)
+        recommended = r.flatMap { options.indices.contains($0) ? $0 : nil }
+    }
 }
 
 /// Something the worker attached to its thread. `kind`: branch, pr, file or link.
@@ -103,19 +124,36 @@ struct SaluReply: Codable {
     var project: String
     var ref: String?
     var name: String?
+    var ticket: Target?  // the same ticket again, with its number on the box (flat ref/name is for older boxes)
     var body: String
     var now = false  // jump the queue, like `salu reply --now`
+    var decision: Answer?  // this reply answers one of the worker's decisions
     var at: Double
+
+    /// `salu reply --pick`: the decision's id and the chosen option (0-based).
+    struct Answer: Codable {
+        var id: String
+        var option: Int?
+    }
 }
 
-/// Resolve a ticket from the phone (`salu resolve`). Written once to salu-inbox/resolves/<id>.json; the
-/// box finds the ticket like a reply (`ref`, else `name`) and answers with `ticket.resolved`.
-struct SaluResolve: Codable {
+/// Which ticket a reply or action is about: `ref` (the ticket file id, preferred), else `id` (its number
+/// on the box), else `name`.
+struct Target: Codable {
+    var ref: String?
+    var id: Int?
+    var name: String?
+}
+
+/// Resolve or reopen a ticket from the phone (`salu resolve` / `salu reopen`), ActionFile in format.ts.
+/// Written once to salu-inbox/actions/<id>.json; the box answers with a `ticket.state` message, or a
+/// warning when its salu can't resolve tickets yet.
+struct SaluAction: Codable {
     var v = 1
     var id: String
     var project: String
-    var ref: String?
-    var name: String?
+    var ticket: Target
+    var action: String  // resolve or reopen
     var at: Double
 }
 

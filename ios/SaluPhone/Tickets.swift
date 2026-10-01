@@ -45,10 +45,10 @@ struct SentReply: Codable, Identifiable, Hashable {
     var date: Date { Date(timeIntervalSince1970: at / 1000) }
 }
 
-/// A ticket this phone resolved. It shows as resolved at once; anything the box reports afterwards
-/// (a reply reviving it, a new run) wins.
+/// A ticket this phone resolved (an action file). It shows as resolved at once; anything the box reports
+/// afterwards (a reply reviving it, a new run, a warning that it can't) wins.
 struct SentResolve: Codable, Identifiable, Hashable {
-    var id: String       // the resolve file's id
+    var id: String       // the action file's id
     var repo: String
     var ticket: String   // TicketSummary.id
     var at: Double
@@ -114,16 +114,24 @@ struct TicketSummary: Identifiable, Hashable {
         return out
     }
 
-    /// The worker's checklist, while it works.
+    /// The worker's checklist while it works: the newest `ticket.status` since this run started.
     var checklist: [ChecklistItem] {
         guard state == .running else { return [] }
-        return messages.lazy.compactMap { $0.checklist?.value }.first ?? []
+        let start = messages.firstIndex { $0.type == "ticket.started" } ?? messages.endIndex
+        return messages[..<start].lazy.compactMap { $0.checklist?.value }.first ?? []
     }
 
-    /// Decisions nobody has answered yet, from the newest message that lists them.
+    /// The worker's decisions still worth answering, oldest first: asked during this run (any reply,
+    /// which queues the ticket again, answers them all) and the ticket isn't finished.
     var openDecisions: [SaluDecision] {
-        let all = messages.lazy.compactMap { $0.decisions?.value }.first ?? []
-        return all.filter { $0.status != "answered" && $0.options.indices.contains($0.recommended) }
+        guard [.running, .queued, .blocked, .sent].contains(state) else { return [] }
+        let since = messages.firstIndex { $0.type == "ticket.accepted" } ?? messages.endIndex
+        var seen = Set<String>()
+        var out: [SaluDecision] = []
+        for m in messages[..<since] {  // newest first: a decision sent again keeps its newest wording
+            if let d = m.decision?.value, d.options.count >= 2, seen.insert(d.id).inserted { out.append(d) }
+        }
+        return out.reversed()
     }
 
     /// What you said and what the worker said, oldest first.
@@ -142,15 +150,34 @@ struct TicketSummary: Identifiable, Hashable {
 
 enum Tickets {
     /// The state a message moves its ticket to; nil for messages that do not change it.
-    static func state(after type: String) -> TicketState? {
-        switch type {
-        case "ticket.accepted", "ticket.reopened": return .queued
+    static func state(after m: SaluMessage) -> TicketState? {
+        switch m.type {
+        case "ticket.accepted": return .queued
         case "ticket.started": return .running
-        case "ticket.done", "ticket.resolved": return .resolved
+        case "ticket.done": return .resolved  // the box stores a finished ticket as done and shows it as resolved
         case "ticket.blocked": return .blocked
         case "ticket.failed": return .failed
+        case "ticket.state": return m.state.flatMap(state(named:))
         default: return nil
         }
+    }
+
+    /// A `ticket.state` word: the core's stored status or its display name. Unknown words change nothing.
+    static func state(named s: String) -> TicketState? {
+        switch s {
+        case "done", "resolved": return .resolved
+        case "todo", "queued", "waiting", "open", "paused", "reopened": return .queued
+        case "running", "working": return .running
+        case "backlog": return .backlog
+        case "blocked": return .blocked
+        case "failed": return .failed
+        default: return nil
+        }
+    }
+
+    /// The box's answer to a resolve from the phone.
+    static func confirmsResolve(_ m: SaluMessage) -> Bool {
+        m.type == "ticket.state" && state(after: m) == .resolved
     }
 
     /// Tickets newest activity first. Messages may come in any order.
@@ -179,7 +206,7 @@ enum Tickets {
             s.name = t.name
             s.number = t.id
             if !m.project.isEmpty { s.project = m.project }
-            if var next = state(after: m.type) {
+            if var next = state(after: m) {
                 if next == .queued && s.state == .sent && queueOf[key] == false { next = .backlog }
                 if next == .queued && s.state == .running { next = .running }  // a reply during a run: it stays running, the reply is its next turn
                 s.state = next
@@ -210,12 +237,15 @@ enum Tickets {
                 // Resolved at once, unless the box has reported something else about the ticket since.
                 guard var s = byKey[r.ticket] else { continue }
                 let since = s.messages.filter { $0.id > (r.after ?? "") }
-                let confirmed = since.contains { $0.type == "ticket.resolved" }
+                let confirmed = since.contains(where: confirmsResolve)
                 let movedOn = since.contains { m in
-                    guard let next = state(after: m.type) else { return false }
+                    guard let next = state(after: m) else { return false }
                     return next != .resolved  // a reply's ack or a new run: the ticket is alive again
                 }
-                if !movedOn {
+                // A warning instead of a confirmation: the box couldn't resolve it (an older salu). It shows
+                // in the conversation and the ticket keeps the state the box knows.
+                let refused = !confirmed && since.contains { $0.type == "note" && $0.level == "warn" }
+                if !movedOn && !refused {
                     s.state = .resolved
                     s.resolvePending = !confirmed
                     s.lastSent = nil

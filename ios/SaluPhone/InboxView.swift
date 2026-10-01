@@ -30,9 +30,9 @@ struct InboxView: View {
 
     private var shown: [SaluMessage] {
         switch filter {
-        case .all: return store.messages
-        case .unread: return store.messages.filter { !store.isRead($0) }
-        case .needsYou: return store.messages.filter(\.needsYou)
+        case .all: return store.inbox
+        case .unread: return store.inbox.filter { !store.isRead($0) }
+        case .needsYou: return store.inbox.filter(\.needsYou)
         }
     }
 

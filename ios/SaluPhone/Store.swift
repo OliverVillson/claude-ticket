@@ -32,6 +32,8 @@ final class Store: ObservableObject {
     @Published var replyDrafts: [String: String] { didSet { defaults.set(replyDrafts, forKey: "replyDrafts") } }
 
     @Published var messages: [SaluMessage] = []
+    /// What the Inbox lists: everything but checklist updates, which only show on the ticket's thread.
+    var inbox: [SaluMessage] { messages.filter { $0.type != "ticket.status" } }
     /// Sample data instead of a box (Demo.swift): nothing goes to GitHub while it is on.
     @Published var demo: Bool {
         didSet {
@@ -107,7 +109,7 @@ final class Store: ObservableObject {
     }
 
     var configured: Bool { demo || client != nil }
-    var unread: Int { messages.filter { !read.contains($0.id) }.count }
+    var unread: Int { inbox.filter { !read.contains($0.id) }.count }
     func isRead(_ m: SaluMessage) -> Bool { read.contains(m.id) }
 
     var tickets: [TicketSummary] {
@@ -153,7 +155,7 @@ final class Store: ObservableObject {
 
     func markRead(_ m: SaluMessage) { if !read.contains(m.id) { read.insert(m.id) } }
     func toggleRead(_ m: SaluMessage) { if read.contains(m.id) { read.remove(m.id) } else { read.insert(m.id) } }
-    func markAllRead() { read.formUnion(messages.map(\.id)) }
+    func markAllRead() { read.formUnion(inbox.map(\.id)) }
 
     /// Writes the ticket to salu/inbox. Returns nil when it went, else what went wrong.
     func send(name: String, query: String, queue: Bool, priority: Int) async -> String? {
@@ -178,7 +180,7 @@ final class Store: ObservableObject {
 
     /// Writes a follow-up for the ticket to salu/inbox; the box resumes the worker's conversation with it.
     /// Returns nil when it went, else what went wrong.
-    func reply(to t: TicketSummary, body: String, now: Bool) async -> String? {
+    func reply(to t: TicketSummary, body: String, now: Bool, decision: SaluReply.Answer? = nil) async -> String? {
         if demo {
             let (id, ms) = newTicketId()
             replies.insert(SentReply(id: id, repo: repoKey, ticket: t.id, body: body, now: now, at: ms, after: t.messages.first?.id), at: 0)
@@ -188,15 +190,21 @@ final class Store: ObservableObject {
         }
         guard let c = client else { return SaluError.notConfigured.localizedDescription }
         let (id, ms) = newTicketId()
-        let ref = t.id.hasPrefix("box:") ? nil : t.id  // tickets this phone sent are keyed by their file id
+        let target = Self.target(t)
         do {
-            try await c.send(SaluReply(id: id, project: t.project, ref: ref, name: t.name, body: body, now: now, at: ms))
+            try await c.send(SaluReply(id: id, project: t.project, ref: target.ref, name: t.name, ticket: target,
+                                       body: body, now: now, decision: decision, at: ms))
             replies.insert(SentReply(id: id, repo: repoKey, ticket: t.id, body: body, now: now, at: ms, after: t.messages.first?.id), at: 0)
             if replies.count > 500 { replies.removeLast(replies.count - 500) }
             return nil
         } catch {
             return error.localizedDescription
         }
+    }
+
+    /// How the box finds a ticket: tickets this phone sent are keyed by their file id, the rest by number.
+    private static func target(_ t: TicketSummary) -> Target {
+        Target(ref: t.id.hasPrefix("box:") ? nil : t.id, id: t.number, name: t.name)
     }
 
     func pick(_ t: TicketSummary, _ d: SaluDecision) -> Int? { picks["\(t.id)#\(d.id)"] }
@@ -206,7 +214,8 @@ final class Store: ObservableObject {
     func choose(_ t: TicketSummary, _ d: SaluDecision, option: Int) async -> String? {
         guard d.options.indices.contains(option) else { return nil }
         if option != d.recommended {
-            if let problem = await reply(to: t, body: "Decision: \(d.question) -> \(d.options[option].label)", now: false) { return problem }
+            let body = "Decision: \(d.question) -> \(d.options[option].label)"
+            if let problem = await reply(to: t, body: body, now: false, decision: .init(id: d.id, option: option)) { return problem }
         }
         picks["\(t.id)#\(d.id)"] = option
         return nil
@@ -216,20 +225,23 @@ final class Store: ObservableObject {
     /// A reply revives it. Returns nil when it went, else what went wrong.
     func resolve(_ t: TicketSummary) async -> String? {
         let (id, ms) = newTicketId()
-        let ref = t.id.hasPrefix("box:") ? nil : t.id
         let record = SentResolve(id: id, repo: repoKey, ticket: t.id, at: ms, after: t.messages.first?.id)
         if demo {
             resolves.insert(record, at: 0)
-            let ticket = TicketRef(ref: ref, name: t.name, id: t.number ?? 0)
+            let ticket = TicketRef(ref: Self.target(t).ref, name: t.name, id: t.number ?? 0)
             let steps: [(seconds: Double, make: () -> SaluMessage)] = [
-                (2, { Demo.message(at: Date(), "ticket.resolved", "info", "Resolved \(t.name)", ticket: ticket) }),
+                (2, {
+                    var m = Demo.message(at: Date(), "ticket.state", "info", "Resolved \(t.name)", ticket: ticket)
+                    m.state = "resolved"
+                    return m
+                }),
             ]
             pretendBox(steps[...])
             return nil
         }
         guard let c = client else { return SaluError.notConfigured.localizedDescription }
         do {
-            try await c.send(SaluResolve(id: id, project: t.project, ref: ref, name: t.name, at: ms))
+            try await c.send(SaluAction(id: id, project: t.project, ticket: Self.target(t), action: "resolve", at: ms))
             resolves.insert(record, at: 0)
             if resolves.count > 500 { resolves.removeLast(resolves.count - 500) }
             return nil
