@@ -111,7 +111,9 @@ curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up --ssh
 One script does the OS side, on a home laptop and on a rented VPS alike. It is safe to re-run, and `--check`
 only reports. It checks disk (60 GB free), RAM, virtualization (`/dev/kvm`), then lets bubblewrap use user namespaces on Ubuntu 24.04
 (a scoped AppArmor profile; the system-wide restriction stays on), disables sleep and the lid switch on a laptop, turns on a firewall with
-nothing inbound but ssh, turns on automatic security updates, and installs the runner (Part F step 1).
+nothing inbound but ssh, turns on automatic security updates, installs the runner (Part F step 1), and installs the
+container runtime for the safe kernel (Podman, gVisor, a scoped AppArmor allowance: `scripts/install-kernel-runtime.sh`,
+no KVM needed). If that script is not in your copy yet, the installer says so and skips it.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/OliverVillson/salu/main/scripts/install-box.sh -o install-box.sh
@@ -120,9 +122,7 @@ sudo bash install-box.sh             # fix it and install the runner
 ```
 
 On a VPS the same script works (`--profile vps` is picked automatically); pick Ubuntu 24.04 and 60 GB of disk or more.
-A VPS needs no VT-x or `/dev/kvm` (the BIOS steps in Part B are for the laptop only). The container runtime itself comes from the Safe kernel thread's own script: see the
-end of this file.
-
+A VPS needs no VT-x or `/dev/kvm` (the BIOS steps in Part B are for the laptop only). 
 ## Part F. Put salu on the box
 
 Long version with all the explanations: `docs/v1-setup.md` in the repo. The short run:
@@ -167,7 +167,17 @@ salu add "say hello" "Create HELLO.md containing one friendly line, and commit i
 salu notif                                             # shows "done" after a minute or two
 ```
 
-**6. Phone pings (optional):** `sudo -u salu env SALU_HOME=/var/lib/salu/web salu remote ntfy`, then subscribe to
+**6. On the box: build the container kernel, then prove a ticket runs in it** (every ticket then runs in a per-project
+rootless container; installs work there and nothing reaches your files or logins):
+```sh
+sudo -iu salu salu kernel setup      # builds the image, a few GB, once
+sudo -iu salu salu kernel login      # a separate agent token: run claude setup-token on the Mac again, paste it; revocable
+sudo -iu salu salu kernel status     # want: ready
+```
+Then send a ticket from the Mac that shows it: `salu add "kernel check" "Run uname -a and whoami, install the npm package left-pad in a temp folder, and write what you saw to KERNEL.md; commit it."`
+Its `KERNEL.md` should say you are root in a gVisor container, and the install should work.
+
+**7. Phone pings (optional):** `sudo -u salu env SALU_HOME=/var/lib/salu/web salu remote ntfy`, then subscribe to
 the topic in the free ntfy app. The iPhone app itself still waits for your first Xcode build.
 
 ## If you get stuck
@@ -178,8 +188,8 @@ the topic in the free ntfy app. The iPhone app itself still waits for your first
 - Box stops after a while: Part D step 2 (sleep) wasn't applied. `systemctl status sleep.target` should say *masked*.
 - Everything salu: `salu runner doctor`, `salu runner logs web -f`, `journalctl -u salu-sync@web`.
 
-## Expect changes once the safe-kernel design lands
+## Not tested yet
 
-Everything above through Part E stays. The Safe kernel thread will supply a separate script that installs the
-container runtime and the kernel image (a bigger download, as you said) and makes agents run inside it by default.
-It runs after Part F step 1 and replaces anything in the later steps that changes. This file gets updated then.
+The container kernel (Part F step 6) is built in its own pull request and has not run on a real box. The first run
+on your laptop is the real test: paste any error from `install-box.sh`, `salu kernel setup` or the kernel-check ticket
+back and it gets fixed.

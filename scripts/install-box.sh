@@ -127,10 +127,26 @@ if [ "$RUNNER" = 1 ]; then
   else curl -fsSL https://raw.githubusercontent.com/OliverVillson/salu/main/scripts/install-runner.sh | bash; fi
 fi
 
-# --- 8. container runtime for the safe kernel (owned by the Safe kernel work; not available yet) ---
-if [ -n "${SALU_KERNEL_INSTALLER:-}" ] && [ -f "$SALU_KERNEL_INSTALLER" ]; then bash "$SALU_KERNEL_INSTALLER"
-else note "safe-kernel container runtime: skipped (no installer yet; set SALU_KERNEL_INSTALLER=<script> once there is one)"; fi
+# --- 8. container runtime for the safe kernel (Podman, gVisor, scoped AppArmor): scripts/install-kernel-runtime.sh ---
+KERNEL_SH="${SALU_KERNEL_INSTALLER:-}"
+if [ -z "$KERNEL_SH" ] && [ -n "${HERE:-}" ] && [ -f "$HERE/install-kernel-runtime.sh" ]; then KERNEL_SH="$HERE/install-kernel-runtime.sh"; fi
+if [ -z "$KERNEL_SH" ]; then
+  KERNEL_SH="$(mktemp)"
+  curl -fsSL https://raw.githubusercontent.com/OliverVillson/salu/main/scripts/install-kernel-runtime.sh -o "$KERNEL_SH" 2>/dev/null || { rm -f "$KERNEL_SH"; KERNEL_SH=""; }
+fi
+if [ -n "$KERNEL_SH" ] && [ -f "$KERNEL_SH" ]; then
+  bash "$KERNEL_SH" --user "${SALU_RUNNER_USER:-salu}"
+  ok "container runtime for the safe kernel"
+  KERNEL_DONE=1
+else
+  note "safe-kernel container runtime: skipped (install-kernel-runtime.sh is not available yet; set SALU_KERNEL_INSTALLER=<script> to use another copy)"
+fi
 
 echo
 echo "Box ready. Next: make a login token on a machine with a browser (claude setup-token), then see docs/home-server.md"
+if [ "${KERNEL_DONE:-0}" = 1 ]; then
+  echo "Then, as the runner user, build the container kernel and give it its own login token:"
+  echo "  sudo -iu ${SALU_RUNNER_USER:-salu} salu kernel setup      # builds the image (a few GB, once)"
+  echo "  sudo -iu ${SALU_RUNNER_USER:-salu} salu kernel login      # an agent token from claude setup-token; revocable"
+fi
 echo "Check anytime:  sudo bash install-box.sh --check   and   salu runner doctor"
