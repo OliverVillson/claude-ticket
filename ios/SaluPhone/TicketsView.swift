@@ -174,7 +174,7 @@ struct TicketDetail: View {
         .sheet(isPresented: $replying) {
             ReplySheet(ticketId: id).environmentObject(store)
         }
-        .sensoryFeedback(.success, trigger: store.ticket(id)?.state == .resolved) { old, new in !old && new }
+        .sensoryFeedback(.success, trigger: t?.state == .resolved) { old, new in !old && new }
     }
 
     private func resolve(_ t: TicketSummary) {

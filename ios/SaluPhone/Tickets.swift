@@ -35,10 +35,14 @@ struct SentReply: Codable, Identifiable, Hashable {
     var at: Double
     var after: String? = nil  // newest message id the phone had for the ticket when it sent this
 
-    /// The box answers every reply: "Got your reply" (ticket.accepted) or a warning note.
+    /// The box answers every reply: "Got your reply" (ticket.accepted) or a warning note. Anything else
+    /// that moves the ticket on (it reopened, a run started) means it got there too.
     func answered(by messages: [SaluMessage]) -> Bool {
         messages.contains { m in
-            (m.type == "ticket.accepted" || (m.type == "note" && m.level == "warn")) && m.id > (after ?? "")
+            guard m.id > (after ?? "") else { return false }
+            if m.type == "ticket.accepted" || (m.type == "note" && m.level == "warn") { return true }
+            guard let next = Tickets.state(after: m) else { return false }
+            return next != .resolved  // the confirmation of a resolve is not about the reply
         }
     }
 
@@ -219,8 +223,8 @@ enum Tickets {
 
         // What this phone did to tickets the box knows, oldest first: replies and resolves.
         enum Action { case reply(SentReply), resolve(SentResolve) }
-        let actions: [(at: Double, action: Action)] =
-            replies.map { (at: $0.at, action: Action.reply($0)) } + resolves.map { (at: $0.at, action: Action.resolve($0)) }
+        var actions: [(at: Double, action: Action)] = replies.map { (at: $0.at, action: Action.reply($0)) }
+        actions += resolves.map { (at: $0.at, action: Action.resolve($0)) }
         for (_, action) in actions.sorted(by: { $0.at < $1.at }) {
             switch action {
             case .reply(let r):
@@ -242,9 +246,11 @@ enum Tickets {
                     guard let next = state(after: m) else { return false }
                     return next != .resolved  // a reply's ack or a new run: the ticket is alive again
                 }
-                // A warning instead of a confirmation: the box couldn't resolve it (an older salu). It shows
-                // in the conversation and the ticket keeps the state the box knows.
-                let refused = !confirmed && since.contains { $0.type == "note" && $0.level == "warn" }
+                // A warning about resolving instead of a confirmation: the box couldn't ("cannot resolve tickets
+                // yet", an older salu). It shows in the conversation and the ticket keeps the state the box knows.
+                let refused = !confirmed && since.contains {
+                    $0.type == "note" && $0.level == "warn" && $0.title.localizedCaseInsensitiveContains("resolve")
+                }
                 if !movedOn && !refused {
                     s.state = .resolved
                     s.resolvePending = !confirmed
