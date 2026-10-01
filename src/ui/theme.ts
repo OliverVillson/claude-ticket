@@ -27,8 +27,8 @@ export const PALETTE: Record<Role, Swatch> = {
   ok: { rgb: [0, 200, 83], c256: 41, c16: 32 },
   /** chrome: borders, hints, secondary text */
   chrome: { rgb: [30, 143, 60], c256: 29, c16: 32 },
-  /** warnings, blocked: amber, so it never blends into the greens */
-  warn: { rgb: [255, 176, 0], c256: 214, c16: 33 },
+  /** warnings, blocked: lime green (never amber: the TUI is green only), told apart by symbol and label */
+  warn: { rgb: [190, 255, 60], c256: 154, c16: 92 },
   /** errors, failed */
   error: { rgb: [255, 85, 85], c256: 203, c16: 91 },
   /** paused by the usage window: cool teal, distinct from every green */
