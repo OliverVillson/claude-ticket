@@ -56,15 +56,15 @@ MEM_GB=$(awk '/MemTotal/ {printf "%d", $2/1048576 + 0.5}' /proc/meminfo)
 
 if grep -qE '(vmx|svm)' /proc/cpuinfo; then
   [ -e /dev/kvm ] && ok "hardware virtualization on, /dev/kvm present (microVM-capable)" \
-    || bad "CPU supports virtualization but /dev/kvm is missing (BIOS: enable VT-x/VT-d; on a VPS: nested virtualization is off)"
+    || { [ "$PROFILE" = laptop ] && bad "CPU supports virtualization but /dev/kvm is missing (BIOS: enable VT-x/VT-d)" || note "/dev/kvm missing: fine on a VPS"; }
 else
   if [ "$PROFILE" = laptop ]; then bad "no virtualization: turn on Intel VT-x / VT-d in the BIOS"
-  else note "no virtualization (normal on most VPSes): containers work, microVMs need a plan with nested virtualization or bare metal"; fi
+  else note "no hardware virtualization (normal on a VPS): fine, not required there"; fi
 fi
 
 if [ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
-  [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" = 0 ] && ok "unprivileged user namespaces allowed" \
-    || bad "AppArmor blocks unprivileged user namespaces (Ubuntu 24.04): the sandbox cannot start until this is relaxed (the installer does it)"
+  [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" = 0 ] || [ -f /etc/apparmor.d/salu-bwrap ] && ok "bubblewrap may use user namespaces" \
+    || bad "AppArmor blocks user namespaces for bubblewrap (Ubuntu 24.04): the installer adds a profile for it"
 fi
 
 if [ "$PROFILE" = laptop ]; then
@@ -81,15 +81,21 @@ fi
 # --- 2. packages ---
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq curl ca-certificates git unattended-upgrades cpu-checker >/dev/null
+apt-get install -y -qq curl ca-certificates git unattended-upgrades cpu-checker bubblewrap socat apparmor >/dev/null
 [ "$FIREWALL" = 1 ] && apt-get install -y -qq ufw >/dev/null
 ok "packages"
 
-# --- 3. let the sandbox use user namespaces (Ubuntu 24.04 restricts them) ---
-if [ -w /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
-  echo 'kernel.apparmor_restrict_unprivileged_userns=0' > /etc/sysctl.d/60-salu.conf
-  sysctl -q --system >/dev/null
-  ok "user namespaces allowed (sandbox can start)"
+# --- 3. let bubblewrap (and only bubblewrap) use user namespaces: Ubuntu 24.04 restricts them via AppArmor ---
+if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)" = 1 ]; then
+  BWRAP="$(command -v bwrap || true)"
+  if [ -n "$BWRAP" ] && command -v apparmor_parser >/dev/null 2>&1; then
+    BWRAP="$(readlink -f "$BWRAP")"
+    printf 'abi <abi/4.0>,\ninclude <tunables/global>\n\nprofile salu-bwrap %s flags=(unconfined) {\n  userns,\n  include if exists <local/salu-bwrap>\n}\n' "$BWRAP" > /etc/apparmor.d/salu-bwrap
+    apparmor_parser -r /etc/apparmor.d/salu-bwrap
+    ok "AppArmor profile lets bubblewrap use user namespaces (the system-wide restriction stays on)"
+  else
+    bad "AppArmor blocks user namespaces and no bubblewrap/apparmor_parser to write a profile for it"
+  fi
 fi
 
 # --- 4. a laptop must never sleep, lid open or closed ---
@@ -120,6 +126,10 @@ if [ "$RUNNER" = 1 ]; then
   if [ -n "$HERE" ] && [ -f "$HERE/install-runner.sh" ]; then bash "$HERE/install-runner.sh"
   else curl -fsSL https://raw.githubusercontent.com/OliverVillson/salu/main/scripts/install-runner.sh | bash; fi
 fi
+
+# --- 8. container runtime for the safe kernel (owned by the Safe kernel work; not available yet) ---
+if [ -n "${SALU_KERNEL_INSTALLER:-}" ] && [ -f "$SALU_KERNEL_INSTALLER" ]; then bash "$SALU_KERNEL_INSTALLER"
+else note "safe-kernel container runtime: skipped (no installer yet; set SALU_KERNEL_INSTALLER=<script> once there is one)"; fi
 
 echo
 echo "Box ready. Next: make a login token on a machine with a browser (claude setup-token), then see docs/home-server.md"

@@ -109,8 +109,8 @@ curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up --ssh
 ## Part E. Prepare the box (one script)
 
 One script does the OS side, on a home laptop and on a rented VPS alike. It is safe to re-run, and `--check`
-only reports. It checks disk (60 GB free), RAM, virtualization (`/dev/kvm`), then allows the sandbox on Ubuntu 24.04
-(AppArmor restricts user namespaces), disables sleep and the lid switch on a laptop, turns on a firewall with
+only reports. It checks disk (60 GB free), RAM, virtualization (`/dev/kvm`), then lets bubblewrap use user namespaces on Ubuntu 24.04
+(a scoped AppArmor profile; the system-wide restriction stays on), disables sleep and the lid switch on a laptop, turns on a firewall with
 nothing inbound but ssh, turns on automatic security updates, and installs the runner (Part F step 1).
 
 ```sh
@@ -120,8 +120,7 @@ sudo bash install-box.sh             # fix it and install the runner
 ```
 
 On a VPS the same script works (`--profile vps` is picked automatically); pick Ubuntu 24.04 and 60 GB of disk or more.
-Most VPSes have no hardware virtualization, so microVMs need bare metal or a plan with nested virtualization;
-containers work everywhere. The container runtime itself comes from the Safe kernel thread's own script: see the
+A VPS needs no VT-x or `/dev/kvm` (the BIOS steps in Part B are for the laptop only). The container runtime itself comes from the Safe kernel thread's own script: see the
 end of this file.
 
 ## Part F. Put salu on the box
