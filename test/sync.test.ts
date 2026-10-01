@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { statSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { openDb } from '../src/db/db.ts';
 import { addTurn, listTurns, replyToTicket, claimNextTicket, createProject, createTicket, getTicketById, listTickets, updateTicket } from '../src/db/queries.ts';
 import { addRemoteTicket, enqueueMessage, listNotifications, markRead, setRemote, unreadCount } from '../src/sync/store.ts';
-import { publishReply, publishTicket, syncProject } from '../src/sync/sync.ts';
+import { rotateKey, publishReply, publishTicket, syncProject } from '../src/sync/sync.ts';
 import { recordRemoteEvent } from '../src/sync/events.ts';
-import { unsignedWarning, signFile, stripControl, parseReplyFile, parseMessageFile, parseTicketFile, newId } from '../src/sync/format.ts';
+import { keyFilePath, remoteKey, saveKey, unsignedWarning, signFile, stripControl, parseReplyFile, parseMessageFile, parseTicketFile, newId } from '../src/sync/format.ts';
 import { git } from '../src/sync/git.ts';
 
 let root: string;
@@ -31,6 +31,9 @@ const sync = (s: Side) => {
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'salu-sync-'));
+  process.env.SALU_HOME = join(root, 'home'); // no real key file
+  process.env.SALU_REMOTE_ALLOW_UNSIGNED = '1'; // most tests are about the transport, not signing
+  delete process.env.SALU_REMOTE_KEY;
   bare = join(root, 'remote.git');
   git(root, ['init', '-q', '--bare', bare]);
   client = side('client', 'client');
@@ -40,6 +43,8 @@ afterEach(() => {
   client.db.close();
   box.db.close();
   delete process.env.SALU_SYNC_DIR;
+  delete process.env.SALU_HOME;
+  delete process.env.SALU_REMOTE_ALLOW_UNSIGNED;
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -211,6 +216,108 @@ describe('replies', () => {
   });
 });
 
+describe('required signing key', () => {
+  test('sync refuses without a key unless unsigned is explicitly allowed', () => {
+    delete process.env.SALU_REMOTE_ALLOW_UNSIGNED;
+    sendTicket('needs key');
+    expect(() => sync(client)).toThrow(/no signing key/);
+    expect(() => sync(box)).toThrow(/no signing key/);
+    process.env.SALU_REMOTE_ALLOW_UNSIGNED = '1';
+    expect(sync(client).ticketsSent).toBe(1);
+  });
+
+  test('a key saved in the key file is used, and the environment wins', () => {
+    delete process.env.SALU_REMOTE_ALLOW_UNSIGNED;
+    expect(remoteKey()).toBeNull();
+    saveKey('file-key-0123456789');
+    expect(remoteKey()).toBe('file-key-0123456789');
+    expect(statSync(keyFilePath()).mode & 0o777).toBe(0o600);
+    sendTicket('keyed');
+    expect(sync(client).ticketsSent).toBe(1);
+    expect(sync(box).ticketsReceived).toBe(1);
+    process.env.SALU_REMOTE_KEY = 'env-key-0123456789ab';
+    try {
+      expect(remoteKey()).toBe('env-key-0123456789ab');
+    } finally {
+      delete process.env.SALU_REMOTE_KEY;
+    }
+  });
+
+  test('salu remote add --box makes and shows a key; the client needs it', () => {
+    const run = (home: string, ...args: string[]) =>
+      Bun.spawnSync(['bun', join(import.meta.dir, '../src/index.ts'), ...args], { cwd: join(root, home + '-web'), env: { ...process.env, SALU_HOME: join(root, home + '-home'), SALU_REMOTE_ALLOW_UNSIGNED: '' } as Record<string, string>, stdout: 'pipe', stderr: 'pipe' });
+    const text = (r: ReturnType<typeof run>) => r.stdout.toString() + r.stderr.toString();
+    run('client', 'add', 'project', 'web', '.');
+    run('box', 'add', 'project', 'web', '.');
+    const b = run('box', 'remote', 'add', 'web', bare, '--box');
+    expect(b.exitCode).toBe(0);
+    const key = /\n {2}([0-9a-f]{64})\n/.exec(text(b))?.[1];
+    expect(key).toBeTruthy();
+    expect(run('box', 'remote', 'key').stdout.toString().trim()).toBe(key!);
+    const noKey = run('client', 'remote', 'add', 'web', bare);
+    expect(noKey.exitCode).not.toBe(0);
+    expect(text(noKey)).toContain('signing key');
+    const c = run('client', 'remote', 'add', 'web', bare, '--key', key!);
+    expect(c.exitCode).toBe(0);
+    expect(run('client', 'remote', 'key').stdout.toString().trim()).toBe(key!);
+    expect(run('client', 'remote', 'key', '--set', 'short').exitCode).not.toBe(0);
+  });
+});
+
+describe('key rotation', () => {
+  test('rotating on the box re-signs the history so a client with the new key sees all of it', () => {
+    delete process.env.SALU_REMOTE_ALLOW_UNSIGNED;
+    process.env.SALU_REMOTE_KEY = 'old-key-0123456789ab';
+    try {
+      sendTicket('history');
+      sync(client);
+      sync(box); // accepted message
+      const run = claimNextTicket(box.db)!;
+      recordRemoteEvent(box.db, { type: 'dispatch', ticket: run, runId: 1, resumed: false });
+      sync(box);
+      // A pusher plants a file that was never signed with the old key.
+      const evil = join(root, 'evil4');
+      git(root, ['clone', '-q', '--branch', 'salu/inbox', bare, evil]);
+      const forged = { v: 1, id: newId(), project: 'web', from: 'box', at: 1, type: 'ticket.done', level: 'success', title: 'forged' };
+      writeFileSync(join(evil, 'salu-inbox', 'messages', `${forged.id}.json`), JSON.stringify({ ...forged, sig: 'f'.repeat(64) }));
+      git(evil, ['add', '-A']);
+      git(evil, ['-c', 'user.name=x', '-c', 'user.email=x@x', 'commit', '-qm', 'forged']);
+      git(evil, ['push', '-q', 'origin', 'HEAD:refs/heads/salu/inbox']);
+
+      process.env.SALU_SYNC_DIR = box.sync;
+      const r = rotateKey(box.db, 'old-key-0123456789ab', 'new-key-0123456789ab');
+      expect(r).toEqual([{ project: 'web', resigned: 3 }]); // the ticket and two messages; the forgery is left alone
+
+      // The client switches to the new key and has never synced: it sees the full history, not the forgery.
+      process.env.SALU_REMOTE_KEY = 'new-key-0123456789ab';
+      const s = sync(client);
+      expect(s.messagesReceived).toBe(2);
+      expect(listNotifications(client.db).map((n) => n.title)).not.toContain('forged');
+      // Rotating again to the same key changes nothing.
+      process.env.SALU_SYNC_DIR = box.sync;
+      expect(rotateKey(box.db, 'old-key-0123456789ab', 'new-key-0123456789ab')).toEqual([{ project: 'web', resigned: 0 }]);
+    } finally {
+      delete process.env.SALU_REMOTE_KEY;
+    }
+  });
+
+  test('salu remote key --new on a box re-signs; on a client it only saves', () => {
+    const run = (home: string, ...args: string[]) =>
+      Bun.spawnSync(['bun', join(import.meta.dir, '../src/index.ts'), ...args], { cwd: join(root, home + '-web'), env: { ...process.env, SALU_HOME: join(root, home + '-home'), SALU_SYNC_DIR: join(root, home + '-syncdir'), SALU_REMOTE_ALLOW_UNSIGNED: '' } as Record<string, string>, stdout: 'pipe', stderr: 'pipe' });
+    const text = (r: ReturnType<typeof run>) => r.stdout.toString() + r.stderr.toString();
+    run('box', 'add', 'project', 'web', '.');
+    const added = text(run('box', 'remote', 'add', 'web', bare, '--box'));
+    const k1 = /\n {2}([0-9a-f]{64})\n/.exec(added)![1]!;
+    run('box', 'remote', 'sync'); // writes the inbox (README) under k1
+    const rot = run('box', 'remote', 'key', '--new');
+    expect(rot.exitCode).toBe(0);
+    const k2 = /\n {2}([0-9a-f]{64})\n/.exec(text(rot))![1]!;
+    expect(k2).not.toBe(k1);
+    expect(run('box', 'remote', 'key').stdout.toString().trim()).toBe(k2);
+    expect(text(rot)).toContain('re-signed');
+  });
+});
+
 describe('runner events', () => {
   test('an environment stop becomes an error note with the restart hint', () => {
     recordRemoteEvent(box.db, { type: 'environment', message: 'Claude login expired' } as any);
@@ -270,7 +377,8 @@ describe('untrusted remote', () => {
   });
 
   test('unsignedWarning is loud without a key and silent with one', () => {
-    expect(unsignedWarning({})).toContain('NOT authenticated');
+    expect(unsignedWarning({ SALU_REMOTE_ALLOW_UNSIGNED: '1' })).toContain('NOT authenticated');
+    expect(unsignedWarning({})).toContain('refuse');
     expect(unsignedWarning({ SALU_REMOTE_KEY: 'k' })).toBeNull();
   });
 

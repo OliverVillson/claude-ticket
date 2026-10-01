@@ -396,7 +396,7 @@ export function countTickets(db: Database, projectId?: number, recursive = true)
  */
 export function claimNextTicket(
   db: Database,
-  opts: { projectIds?: number[]; excludeModels?: string[]; preferPaused?: boolean } = {},
+  opts: { projectIds?: number[]; excludeModels?: string[]; preferPaused?: boolean; choose?: (candidates: TicketView[]) => TicketView | null } = {},
 ): TicketView | null {
   const where: string[] = [];
   const vals: any[] = [];
@@ -409,12 +409,19 @@ export function claimNextTicket(
       AND NOT EXISTS (SELECT 1 FROM remote_tickets r WHERE r.ticket_id = t.id AND r.direction = 'out') ${where.length ? 'AND ' + where.join(' AND ') : ''}
     ORDER BY CASE t.status WHEN 'paused' THEN 0 ELSE 1 END, t.priority ASC, t.created_at ASC`;
   const tx = db.transaction(() => {
-    const candidates = db.query<TicketView, any[]>(sql).all(...vals);
-    for (const c of candidates) {
-      if (opts.excludeModels?.length) {
+    let candidates = db.query<TicketView, any[]>(sql).all(...vals);
+    if (opts.excludeModels?.length) {
+      candidates = candidates.filter((c) => {
         const model = effectiveModel(db, c);
-        if (model && opts.excludeModels.some((m) => model.toLowerCase().startsWith(m.toLowerCase()))) continue;
-      }
+        return !(model && opts.excludeModels!.some((m) => model.toLowerCase().startsWith(m.toLowerCase())));
+      });
+    }
+    // `choose` may take any one candidate; null holds them all (the token-aware scheduler).
+    if (opts.choose) {
+      const one = opts.choose(candidates);
+      candidates = one ? [one] : [];
+    }
+    for (const c of candidates) {
       const ts = now();
       db.run(
         `UPDATE tickets SET status = 'running', attempts = attempts + 1, started_at = COALESCE(started_at, ?), finished_at = NULL, error = NULL, denied = NULL, updated_at = ? WHERE id = ? AND status IN ('paused','todo')`,

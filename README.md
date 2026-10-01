@@ -85,6 +85,7 @@ salu log "fix login" --follow                  # worker transcript
 | `salu run [project\|"name"...] [--concurrency N] [--detach] [--plain]` | Queues every saved ticket (or only the named tickets, or those in the named project) and starts the orchestrator. If one is already running it just queues and lets it pick them up. |
 | `salu pause` / `salu resume` / `salu stop` | Pause dispatch after current workers finish; resume early; stop a detached orchestrator. |
 | `salu status [--json]` | One screen of state. |
+| `salu sched [off\|advise\|on]` | The token-aware scheduler: queue cost forecast, mode (see below). |
 | `salu notif [--all] [--json]` | Messages from your project orchestrators: a ticket is done, blocked on a question, failed, or paused for the usage limit. In a terminal it opens the notification window; `--plain` (or a pipe) prints them. `salu notif read <id>... \| --all` marks them read from the shell. |
 | `salu log "name" [--follow] [--raw] [--run N]` | Worker transcript for a ticket. |
 | `salu plan "name" [--yes]` | Asks Claude to split a ticket into sub-tickets and adds them on approval. |
@@ -122,7 +123,7 @@ Any other token (`bug`, `docs`, `team=core`) is stored as a label or custom tag 
 (on an always-on Linux box) run a project on the box with git as the only link: tickets you add go to the box,
 `salu reply "name" "text"` keeps the conversation going, and results (`salu/<ticket>` branches) and messages come
 back through the project's own git remote, on the branch `salu/inbox`. No server, no open port. Use a private
-repository: anyone who can push to it can send the box tickets. Format and details: INTERFACES.md ("Git sync transport").
+repository: anyone who can push to it can send the box tickets unless the inbox is signed (it is: `salu remote add web --box` makes the signing key and shows it; give it to your computer with `--key` and to the phone). Format and details: INTERFACES.md ("Git sync transport").
 
 ## The kernel (sandbox, opt-in per project)
 
@@ -164,6 +165,16 @@ Not covered: the OS sandbox fences shell commands; the file tools are fenced by 
 Anything an agent can read inside the kernel can be sent to any site it can reach. Linux needs
 `sudo apt-get install bubblewrap socat`. `SALU_SANDBOX=off` switches it off everywhere.
 
+## The token-aware scheduler
+
+`salu sched` shows what the queue will cost and whether it fits your plan. Three layers, each usable alone:
+
+- **Estimates.** Every finished run records its cost; salu keeps a median per model and effort (a built-in guess until five runs exist) and learns how many percent of the 5-hour window a dollar of work uses, from runs that had the orchestrator to themselves.
+- **Window-aware dispatch.** Before a ticket starts, its estimate is compared with what is left of the 5-hour window (5% margin) and the week (15% reserve, which `--now` tickets may use). A ticket that does not fit is passed over for a smaller one, at most 3 times, then waited for; when nothing fits the queue is held until the reset. Running tickets are never stopped. With an API key there is no meter: `SALU_BUDGET_USD_PER_DAY` counts dollars the same way.
+- **Model routing.** Tickets labelled docs, chore, typo, lint, format or rename go to Sonnet, and when the Opus window is 85% used (and Sonnet has room) so does any new ticket. Tickets that name a model, ask for effort high or more, have `route=off`, or live in a project with its own default model are never touched. The model and reason are written onto the ticket (`model=sonnet routed=light-task`).
+
+Modes: `salu sched advise` (default) only reports what it would do; `salu sched on` does it; `salu sched off` runs the queue in order as before. The 5-hour numbers have not been checked against a real subscription window yet.
+
 ## The runner (an always-on Linux box)
 
 Write a ticket, go do something else: on a rented Linux VPS salu runs one orchestrator per project under
@@ -173,14 +184,20 @@ their Claude session. Runner projects have the sandbox on by default.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/OliverVillson/salu/main/scripts/install-runner.sh | sudo bash
-sudo -iu salu            # once: run `claude`, then /login   (skip with --auth api-key below)
-sudo salu runner add web --clone https://github.com/you/web
+claude setup-token       # on any machine with a browser: prints a one-year token (Pro, Max, Team or Enterprise plan); save it to a file
+sudo salu runner add web --clone https://github.com/you/web --token-file ./token
 salu runner list         # service state and ticket counts per project
 salu runner logs web -f
 ```
 
-`--auth subscription` (default, the box's Claude login) or `--auth api-key --api-key-file <file>`: the key
-is stored in `/etc/salu/<project>.env` (root-readable, not on any command line). Workers still receive it in their environment, and sandboxed workers can reach any URL by default, so use a key with a spend limit, or the subscription login. `--auth subscription` prints a warning: Anthropic's terms may not allow a subscription login for unattended or automated use (an API key is the supported route), and a long headless session can lose its login until restarted. A login that breaks mid-run restarts the service; one that is still dead at start leaves the service failed (exit 78, no restart loop; `salu runner list` shows it) until you fix the login and `salu runner restart <project>`. `salu runner --help` lists `setup`, `start|stop|restart`,
+Subscription (the default) uses the setup-token: Anthropic documents `claude setup-token` for "CI pipelines and
+scripts where browser login isn't available", whereas a copied `/login` lives in `~/.claude/.credentials.json`
+and stops working unattended once it expires (so `add` warns when you give no token). Whether always-on use of a
+subscription is within its terms is still being confirmed: check them, or use `--auth api-key --api-key-file <file>`
+(an `ANTHROPIC_API_KEY` wins over the subscription). The token or key is stored in `/etc/salu/<project>.env`
+(root-readable, not on any command line). Workers still receive it in their environment and sandboxed workers can
+reach any URL by default, so a leaked token is possible: revoke it by running `claude setup-token` again or from
+your Claude account's settings, and for an API key use one with a spend limit. A login that breaks mid-run restarts the service; one that is still dead at start leaves the service failed (exit 78, no restart loop; `salu runner list` shows it) until you fix it and `salu runner restart <project>`. `salu runner --help` lists `setup`, `start|stop|restart`,
 `remove [--purge]` and `doctor`. The systemd units confine the service itself (read-only system, an empty home holding only what that service needs, only its own project folder; the orchestrator never sees ssh keys, the sync never sees the Claude login); `salu runner setup --no-harden` drops that if the sandbox's bubblewrap fails under it. Hardened units are syntax-checked with `systemd-analyze verify` but not yet run on a real box. `salu run --no-queue` is what the service runs: start, but never queue the backlog.
 
 ## Interactive list (demo: `bun run src/tui/demo.ts`)

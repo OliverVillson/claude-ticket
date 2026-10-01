@@ -10,6 +10,10 @@
  *   salu-inbox/messages/<id>.json   box -> client   something the orchestrator wants you to know
  */
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { CliError } from '../core/errors.ts';
+import { ticketHome } from '../core/paths.ts';
 
 export const INBOX_BRANCH = 'salu/inbox';
 export const TICKETS_DIR = 'salu-inbox/tickets';
@@ -105,13 +109,54 @@ const str = (v: unknown, max: number): string | null => (typeof v === 'string' &
  * Without a key, anyone who can push to the remote can forge tickets, replies and messages.
  */
 export function remoteKey(env: NodeJS.ProcessEnv = process.env): string | null {
-  return env.SALU_REMOTE_KEY?.trim() || null;
+  const fromEnv = env.SALU_REMOTE_KEY?.trim();
+  if (fromEnv) return fromEnv;
+  return env === process.env ? readKeyFile() : null;
+}
+
+/** Where `salu remote add` keeps the key: ~/.salu/remote.key (0600). The environment variable wins over it. */
+export function keyFilePath(): string {
+  return join(ticketHome(), 'remote.key');
+}
+
+export function readKeyFile(): string | null {
+  try {
+    const p = keyFilePath();
+    return existsSync(p) ? readFileSync(p, 'utf8').trim() || null : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Save the signing key (this machine only, readable by you alone). */
+export function saveKey(key: string): void {
+  const p = keyFilePath();
+  mkdirSync(dirname(p), { recursive: true });
+  writeFileSync(p, key.trim() + '\n', { mode: 0o600 });
+  chmodSync(p, 0o600);
+}
+
+export function generateKey(): string {
+  return randomBytes(32).toString('hex');
+}
+
+/** Explicit opt-out of signing (SALU_REMOTE_ALLOW_UNSIGNED=1): the inbox is then unauthenticated. */
+export function unsignedAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
+  return /^(1|true|yes)$/i.test(env.SALU_REMOTE_ALLOW_UNSIGNED ?? '');
+}
+
+/** Sync refuses to run without a signing key, unless the opt-out above is set. */
+export function requireKey(): void {
+  if (remoteKey() || unsignedAllowed()) return;
+  throw new CliError('there is no signing key for the remote, so sync is refusing to run: anyone who can push to the git remote could send the box tickets. On the box, `salu remote add <project> --box` makes one; on your computer, `salu remote key --set <key>` (or SALU_REMOTE_KEY). To run without one anyway: SALU_REMOTE_ALLOW_UNSIGNED=1.');
 }
 
 /** The loud warning for a box or client that syncs without SALU_REMOTE_KEY (null when a key is set). */
 export function unsignedWarning(env: NodeJS.ProcessEnv = process.env): string | null {
   if (remoteKey(env)) return null;
-  return 'SALU_REMOTE_KEY is not set: the inbox is NOT authenticated, so anyone who can push to the git remote can send this box tickets and forge its messages. Set the same secret on your computer and the box (share it outside git), and use a private repository.';
+  return unsignedAllowed(env)
+    ? 'SALU_REMOTE_ALLOW_UNSIGNED is set and there is no signing key: the inbox is NOT authenticated, so anyone who can push to the git remote can send the box tickets and forge its messages.'
+    : 'there is no signing key (salu remote key --set <key>, or SALU_REMOTE_KEY), so sync will refuse to run.';
 }
 
 function canonical(v: unknown): string {
@@ -127,7 +172,7 @@ export function signFile<T extends object>(o: T, key = remoteKey()): T & { sig?:
   return key ? { ...o, sig: createHmac('sha256', key).update(canonical(o)).digest('hex') } : o;
 }
 
-function signatureOk(o: any, key = remoteKey()): boolean {
+export function signatureOk(o: any, key = remoteKey()): boolean {
   if (!key) return true;
   if (typeof o?.sig !== 'string' || !/^[0-9a-f]{64}$/.test(o.sig)) return false;
   const want = createHmac('sha256', key).update(canonical(o)).digest();
