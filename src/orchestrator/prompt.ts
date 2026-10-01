@@ -56,6 +56,30 @@ export function buildResumePrompt(t: TicketView, why: string): string {
   ].join('\n');
 }
 
+/** The prompt for a follow-up: the worker already has the ticket and its own earlier work in its session. */
+export function buildFollowUpPrompt(t: TicketView, messages: string[]): string {
+  return [
+    `Follow-up on ticket "${t.name}" (#${t.id}) in project "${t.project}". ${messages.length > 1 ? 'The human sent these messages since your last reply:' : 'The human wrote:'}`,
+    '',
+    ...messages.flatMap((m) => [m.trim(), '']),
+    'Check the current state of the files first if it matters, then do what they ask. Keep committing on the same salu/ branch.',
+    'End your final message with the TICKET: trailer.',
+  ].join('\n');
+}
+
+/** A follow-up when the old session is gone: the ticket, the conversation so far, then the new message. */
+export function buildFollowUpFreshPrompt(t: TicketView, history: Array<{ role: 'user' | 'assistant'; body: string }>, messages: string[]): string {
+  return [
+    buildPrompt(t),
+    '',
+    'This ticket already has a conversation; your earlier session is not available, so here it is:',
+    ...history.flatMap((h) => ['', `${h.role === 'user' ? 'Human' : 'You'}: ${h.body.trim()}`]),
+    '',
+    `The human now writes:`,
+    ...messages.map((m) => m.trim()),
+  ].join('\n');
+}
+
 /** Appended to Claude Code's own system prompt for every worker. */
 export function systemAppend(t: TicketView): string {
   return [

@@ -9,23 +9,28 @@ import { CliError } from '../../core/errors.ts';
 import { helpIf, isTTY } from './_shared.ts';
 import { applyAuthPolicy } from '../../core/env.ts';
 
-const HELP = `salu run [project|"name"...] [--concurrency N] [--detach] [--plain]
+const HELP = `salu run [project|"name"...] [--concurrency N] [--detach] [--plain] [--no-queue]
 
-Queues every saved ticket (backlog), or only the tickets you name, or those in the project you name,
-then starts the orchestrator. Adding a ticket never starts anything by itself. The orchestrator: claims tickets by priority then age, runs each as its own Claude
+Queues every saved ticket (backlog, from salu add --save), or only the tickets you name, or those in the
+project you name, then starts the orchestrator. Tickets added without --save are already queued and
+start as soon as an orchestrator runs. The orchestrator: claims tickets by priority then age, runs each as its own Claude
 Code session (up to the concurrency cap, default 2), pauses on a rate limit and resumes
 when the window resets. Foreground by default with a live view; --plain logs lines
-instead; --detach runs it in the background (salu stop ends it).`;
+instead; --detach runs it in the background (salu stop ends it). --no-queue starts the orchestrator
+without queueing anything (what the always-on runner uses, so a restart never queues the backlog).`;
 
 export async function run(p: Parsed): Promise<number> {
   if (helpIf(p, HELP)) return 0;
   const db = openDb();
+  // Under the always-on runner (--no-queue) a machine that cannot work exits 78 (EX_CONFIG): the systemd unit
+  // does not restart on 78, so a dead login shows up as a failed service instead of a restart loop.
+  const envExit = flagBool(p, 'no-queue') ? 78 : 1;
   const missing = preflightClaude();
-  if (missing) throw new CliError(missing);
+  if (missing) throw new CliError(missing, envExit);
   if (process.env.SALU_WORKER !== 'fake') {
     const c = checkClaude();
     const logged = c.ok && c.path ? await loginProblem(c.path) : null;
-    if (logged) throw new CliError(logged);
+    if (logged) throw new CliError(logged, envExit);
   }
   const auth = applyAuthPolicy();
   if (auth.warning) console.error(`warning: ${auth.warning}`);
@@ -47,7 +52,9 @@ export async function run(p: Parsed): Promise<number> {
   }
   const scope = project ? subtreeIds(db, project.id) : undefined;
   let queued = 0;
-  if (tickets.length) {
+  if (flagBool(p, 'no-queue')) {
+    /* start only what is already queued */
+  } else if (tickets.length) {
     for (const id of tickets) {
       const t = getTicketById(db, id);
       if (t && t.status !== 'running' && t.status !== 'paused') {
