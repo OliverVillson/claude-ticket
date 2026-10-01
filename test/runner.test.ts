@@ -71,6 +71,9 @@ describe('runner files', () => {
     expect(renderEnvFile({ auth: 'api-key', apiKey: 'sk-x', sandbox: false })).toContain('ANTHROPIC_API_KEY=sk-x');
     expect(() => renderEnvFile({ auth: 'api-key', apiKey: 'a b', sandbox: true })).toThrow();
     expect(() => renderEnvFile({ auth: 'api-key', sandbox: true })).toThrow();
+    expect(renderEnvFile({ auth: 'subscription', oauthToken: 'tok', sandbox: true })).toContain('CLAUDE_CODE_OAUTH_TOKEN=tok');
+    expect(renderEnvFile({ auth: 'api-key', apiKey: 'k', oauthToken: 'tok', sandbox: true })).not.toContain('OAUTH');
+    expect(() => renderEnvFile({ auth: 'subscription', oauthToken: 'a b', sandbox: true })).toThrow();
   });
 });
 
@@ -116,7 +119,7 @@ describe('salu runner (fake systemctl)', () => {
     const b = box();
     const r = await b.run('add', 'web', '--no-sandbox');
     expect(r.code).toBe(0);
-    expect(r.err).toContain('terms'); // --auth subscription (the default) warns about Anthropic's terms
+    expect(r.err).toContain('setup-token'); // subscription without a token warns: a copied login stops working unattended
     expect(existsSync(join(b.d, 'units', 'salu-runner@.service'))).toBe(true);
     expect(existsSync(join(b.d, 'var', 'web', 'tickets.db'))).toBe(true);
     expect(existsSync(join(b.d, 'caller-home', 'tickets.db'))).toBe(false); // the caller's own salu was not touched
@@ -179,13 +182,30 @@ describe('salu runner (fake systemctl)', () => {
     expect(r.err).toContain('needs the key');
   });
 
+  test('a setup-token goes into the root env file as CLAUDE_CODE_OAUTH_TOKEN, with the terms note and no login warning', async () => {
+    const b = box();
+    const tf = join(b.d, 'token');
+    writeFileSync(tf, 'sk-ant-oat01-abc123\n');
+    const r = await b.run('add', 'web', '--no-sandbox', '--token-file', tf);
+    expect(r.code).toBe(0);
+    expect(r.err).toContain('still being confirmed');
+    expect(r.err).not.toContain('no setup-token given');
+    const envText = readFileSync(join(b.d, 'etc', 'web.env'), 'utf8');
+    expect(envText).toContain('SALU_AUTH=subscription');
+    expect(envText).toContain('CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-abc123');
+    expect(statSync(join(b.d, 'etc', 'web.env')).mode & 0o777).toBe(0o600);
+    expect(b.calls()).not.toContain('sk-ant');
+    writeFileSync(tf, '\n');
+    expect((await b.run('add', 'x', '--no-sandbox', '--token-file', tf)).err).toContain('is empty');
+  });
+
   test('an api key goes only into the root env file, never onto a command line', async () => {
     const b = box();
     const keyFile = join(b.d, 'key');
     writeFileSync(keyFile, 'sk-ant-test123\n');
     const added = await b.run('add', 'web', '--no-sandbox', '--api-key-file', keyFile);
     expect(added.code).toBe(0);
-    expect(added.err).not.toContain('terms'); // the API key route does not warn
+    expect(added.err).not.toContain('setup-token'); // the API key route does not warn
     const env = readFileSync(join(b.d, 'etc', 'web.env'), 'utf8');
     expect(env).toContain('SALU_AUTH=api-key');
     expect(env).toContain('ANTHROPIC_API_KEY=sk-ant-test123');
@@ -241,6 +261,23 @@ describe('a dead login on the runner', () => {
     expect(runner.code).toBe(78);
     expect(runner.err).toContain('/login');
     expect((await go()).code).toBe(1);
+  });
+});
+
+describe('a setup-token reaches workers and skips the `auth status` check', () => {
+  test('CLAUDE_CODE_OAUTH_TOKEN survives the worker env scrub and loginProblem trusts it', async () => {
+    const { workerEnv } = await import('../src/core/env.ts');
+    const { scrubSecrets } = await import('../src/core/kernel.ts');
+    const { loginProblem } = await import('../src/core/claude-bin.ts');
+    const base = { PATH: '/bin', CLAUDE_CODE_OAUTH_TOKEN: 'tok', CLAUDE_CODE_SESSION_ID: 'x' };
+    expect(workerEnv(base).CLAUDE_CODE_OAUTH_TOKEN).toBe('tok');
+    expect(scrubSecrets(base).CLAUDE_CODE_OAUTH_TOKEN).toBe('tok');
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'tok';
+    try {
+      expect(await loginProblem('/nonexistent/claude')).toBeNull();
+    } finally {
+      delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    }
   });
 });
 

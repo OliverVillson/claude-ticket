@@ -175,22 +175,34 @@ WantedBy=multi-user.target
 `;
 }
 
-/** Shown by `salu runner add --auth subscription`. Sources are secondhand; the wording stays a question, not a verdict. */
-export const SUBSCRIPTION_WARNING =
-  'warning: --auth subscription runs Claude on this box with a Pro/Max login. Anthropic\'s terms may not allow a ' +
-  'subscription login in other tools or for automated, unattended use (an API key is the supported route for that), ' +
-  'and long headless sessions can lose their login until restarted. Check the current terms before relying on it; ' +
-  'to switch: --auth api-key --api-key-file <file>.';
+/**
+ * Subscription on a box. Anthropic documents `claude setup-token` (a one-year OAuth token, Pro/Max/Team/Enterprise
+ * plans) for "CI pipelines and scripts where browser login isn't available"; a normal /login on Linux lives in
+ * ~/.claude/.credentials.json and stops working unattended once it expires. Whether unattended use of a
+ * subscription is within the terms is still being confirmed, so the wording says so.
+ */
+export const SETUP_TOKEN_WARNING =
+  'note: --auth subscription with a setup-token is the route Anthropic documents for scripts (the token needs a Pro, Max, Team or ' +
+  'Enterprise plan and lasts a year). Whether always-on use of a subscription is within its terms is still being confirmed: ' +
+  'check the current terms, or use --auth api-key.';
+export const NO_TOKEN_WARNING =
+  'warning: no setup-token given, so this box would rely on a copied `claude` login, which stops working unattended once it expires. ' +
+  'Run `claude setup-token` (on any machine with a browser), then: salu runner add <project> --token-file <file>  ' +
+  '(or CLAUDE_CODE_OAUTH_TOKEN in the environment).';
 
 export type AuthMode = 'subscription' | 'api-key';
 
 /** Contents of /etc/salu/<project>.env. The key lives only here, root-readable. */
-export function renderEnvFile(o: { auth: AuthMode; apiKey?: string; sandbox: boolean; sync?: boolean }): string {
+export function renderEnvFile(o: { auth: AuthMode; apiKey?: string; oauthToken?: string; sandbox: boolean; sync?: boolean }): string {
   const lines = ['# salu runner settings for one project (root-only; edit, then `salu runner restart <project>`)', `SALU_AUTH=${o.auth}`];
   if (o.auth === 'api-key') {
     if (!o.apiKey) throw new CliError('SALU_AUTH=api-key needs a key');
     if (/[\s"'\\$]/.test(o.apiKey)) throw new CliError('that API key has characters an env file cannot hold safely');
     lines.push(`ANTHROPIC_API_KEY=${o.apiKey}`);
+  }
+  if (o.auth === 'subscription' && o.oauthToken) {
+    if (/[\s"'\\$]/.test(o.oauthToken)) throw new CliError('that token has characters an env file cannot hold safely');
+    lines.push(`CLAUDE_CODE_OAUTH_TOKEN=${o.oauthToken}`);
   }
   if (!o.sandbox) lines.push('SALU_SANDBOX=off');
   // Read back by `salu runner` (start/stop/list/remove) to know the project also has a sync service; the orchestrator ignores it.
@@ -212,7 +224,7 @@ export function boxProblems(f: BoxFacts): string[] {
   const out: string[] = [];
   if (!f.linux) out.push('the runner is for Linux boxes (this is not Linux); on a Mac just use `salu run`');
   if (f.linux && !f.systemd) out.push('systemd is not running here; the runner needs it for restart and boot start');
-  if (!f.claude) out.push('Claude Code is not installed: curl -fsSL https://claude.ai/install.sh | bash, then run `claude` once and /login');
+  if (!f.claude) out.push('Claude Code is not installed: curl -fsSL https://claude.ai/install.sh | bash (then `claude setup-token` for the subscription)');
   if (!f.sandbox.ok) out.push(`the sandbox cannot run (${f.sandbox.problem}); runner projects have it on by default`);
   if (!f.unitInstalled) out.push('the systemd unit is not installed: sudo salu runner setup');
   return out;
