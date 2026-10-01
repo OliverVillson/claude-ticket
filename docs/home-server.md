@@ -106,6 +106,21 @@ curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up --ssh
 # open the link it prints, log in; install Tailscale on the Mac too, then: ssh oliver@salubox
 ```
 
+## Part D2. Get salu from the branches (until the pull requests are merged)
+
+The container kernel (#74), the box test list (#75) and this installer (#73) are not in a release yet, so build salu from
+the branches on the box. Once Oliver says "merge it" for all three and a release is tagged, this whole part is replaced by one line
+(the `curl ... install-box.sh | sudo bash` in Part E). Public repo, so no login is needed.
+
+```sh
+sudo apt install -y git unzip curl
+curl -fsSL https://bun.sh/install | bash && source ~/.bashrc      # bun, to build salu
+git clone https://github.com/OliverVillson/salu.git ~/salu && cd ~/salu
+git checkout -b box origin/claude/project-thread-w24er4           # #75, which already contains #74
+git merge --no-edit origin/claude/project-thread-8y6opi           # #73: the installer and this guide
+bun install && bun run build && ./dist/salu --version             # builds dist/salu (a minute or two)
+```
+
 ## Part E. Prepare the box (one script)
 
 One script does the OS side, on a home laptop and on a rented VPS alike. It is safe to re-run, and `--check`
@@ -116,9 +131,10 @@ container runtime for the safe kernel (Podman, gVisor, a scoped AppArmor allowan
 no KVM needed), and makes tickets on the box *require* the container (they fail with a message instead of running unprotected). If that script is not in your copy yet, the installer says so and skips it.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/OliverVillson/salu/main/scripts/install-box.sh -o install-box.sh
-sudo bash install-box.sh --check     # what is ready, what is not
-sudo bash install-box.sh             # fix it and install the runner
+cd ~/salu
+sudo bash scripts/install-box.sh --check                          # what is ready, what is not
+sudo SALU_BINARY=$PWD/dist/salu bash scripts/install-box.sh       # fix it and install the runner (with the salu you just built)
+# after the merge and a release, instead:  curl -fsSL https://raw.githubusercontent.com/OliverVillson/salu/main/scripts/install-box.sh | sudo bash
 ```
 
 On a VPS the same script works (`--profile vps` is picked automatically); pick Ubuntu 24.04 and 60 GB of disk or more.

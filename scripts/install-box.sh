@@ -10,7 +10,7 @@
 #   --no-firewall    do not touch the firewall
 #   --no-runner      prepare the OS but skip scripts/install-runner.sh
 #   --profile P      laptop | vps (default: laptop if a battery or a lid is found and this is bare metal, else vps)
-# Environment: SALU_VERSION, SALU_RUNNER_USER are passed to the runner installer. Safe to re-run.
+# Environment: SALU_VERSION, SALU_BINARY (a locally built salu, to run a branch before it is released), SALU_RUNNER_USER are passed to the runner installer. Safe to re-run.
 set -euo pipefail
 
 CHECK=0; FIREWALL=1; RUNNER=1; PROFILE=""
