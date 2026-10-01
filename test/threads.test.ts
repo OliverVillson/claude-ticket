@@ -282,3 +282,14 @@ describe('telling the box clients', () => {
     }
   });
 });
+
+describe('ticketOutputs', () => {
+  test('lists the branch, then attached outputs, without duplicates', async () => {
+    const { ticketOutputs } = await import('../src/core/outputs.ts');
+    const t = mk('o', 'x');
+    callTool(ctx(t.id), 'attach', { kind: 'branch', ref: 'salu/o' });
+    callTool(ctx(t.id), 'attach', { kind: 'pr', ref: 'https://github.com/o/r/pull/3', title: 'PR' });
+    expect(ticketOutputs({ id: t.id, branch: 'salu/o' })).toEqual([{ kind: 'branch', ref: 'salu/o' }, { kind: 'pr', ref: 'https://github.com/o/r/pull/3', title: 'PR' }]);
+    expect(ticketOutputs({ branch: 'salu/o' })).toEqual([{ kind: 'branch', ref: 'salu/o' }]);
+  });
+});
