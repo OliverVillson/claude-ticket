@@ -3,7 +3,7 @@ import { flagBool } from '../args.ts';
 import { openDb } from '../../db/db.ts';
 import { countTickets, getTicketById, listProjects } from '../../db/queries.ts';
 import { readStatus } from '../../orchestrator/status.ts';
-import { bold, cyan, dim, green, magenta, red, yellow } from '../../core/ansi.ts';
+import { safeText, bold, cyan, dim, green, magenta, red, yellow } from '../../core/ansi.ts';
 import { formatClock, formatDuration, statusColor } from '../../core/format.ts';
 import { helpIf, isEmbedded } from './_shared.ts';
 import { formatUsageHeader, getPause, formatPause, peekUsageSnapshot, getUsageSnapshot, sdkFetcher } from '../../usage/index.ts';
@@ -52,7 +52,7 @@ export async function status(p: Parsed): Promise<number> {
     lines.push('');
     for (const w of st.workers) {
       const t = getTicketById(db, w.ticketId);
-      const name = t ? t.name : `#${w.ticketId}`;
+      const name = t ? safeText(t.name) : `#${w.ticketId}`;
       const detail = [w.model, `${w.turns} turn${w.turns === 1 ? '' : 's'}`, w.lastTool && `last: ${w.lastTool}`].filter(Boolean).join(', ');
       lines.push(`  ${cyan(GLYPHS.running)} ${name} ${dim(`${formatDuration(now - w.startedAt)} · ${detail}`)}`);
     }

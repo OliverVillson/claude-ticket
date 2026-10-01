@@ -977,7 +977,7 @@ describe('ticket properties (right arrow on a ticket)', () => {
     const f = await term.waitFor((s) => s.includes('properties'), 'props');
     expect(f).not.toContain('\u001b');
     expect(f).not.toContain('\u0007');
-    expect(f).toContain('do]0;pwned it');
+    expect(f).toContain('do it');
   });
 
   test('a text property is edited in place and saved through salu change', async () => {

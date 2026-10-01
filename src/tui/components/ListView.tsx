@@ -1,4 +1,5 @@
 import React from 'react';
+import { safeText } from '../../core/ansi.ts';
 import { Text } from 'ink';
 import type { TicketStatus, TicketView } from '../../db/types.ts';
 import type { OrchestratorStatus } from '../../orchestrator/status.ts';
@@ -129,7 +130,7 @@ export function ListView(p: ListViewProps) {
     footer = { left: confirmText(p.projectConfirm), right: st.dim(position) };
   } else if (p.confirm) {
     const t = p.confirm;
-    const text = `delete "${truncate(t.name, 40)}"?${t.status === 'running' ? ' (running: its worker is stopped)' : ''}`;
+    const text = `delete "${truncate(safeText(t.name), 40)}"?${t.status === 'running' ? ' (running: its worker is stopped)' : ''}`;
     footer = { left: confirmText(text), right: st.dim(position) };
   } else if (p.message) {
     footer = { left: messageText(p.message), right: st.dim(position) };

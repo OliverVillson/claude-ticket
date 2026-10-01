@@ -629,7 +629,7 @@ describe('what a finished ticket leaves behind', () => {
     const { safeText } = require('../src/core/ansi.ts');
     const { summaryFrom } = require('../src/orchestrator/worker.ts');
     const evil = 'ok\u001b]52;c;ZXZpbA==\u0007 \u001b[2Jdone\u009b31m\r\tx\ny';
-    expect(safeText(evil)).toBe('ok]52;c;ZXZpbA== [2Jdone31m\tx\ny');
+    expect(safeText(evil)).toBe('ok done\tx\ny');
     expect(safeText(evil)).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/);
     expect(summaryFrom(`${evil}\nTICKET: done`)).not.toContain('\u001b');
   });

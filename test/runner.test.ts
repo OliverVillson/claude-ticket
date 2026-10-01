@@ -213,7 +213,7 @@ describe('salu run --no-queue', () => {
       const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
       return { out, err, code: await p.exited };
     };
-    await sh('add', 'one', '--project', 'p');
+    await sh('add', 'one', '--project', 'p', '--save');
     const p = Bun.spawn([process.execPath, ENTRY, 'run', '--plain', '--no-queue'], { stdout: 'pipe', stderr: 'pipe', env, cwd: d });
     await Bun.sleep(1500);
     p.kill('SIGTERM');

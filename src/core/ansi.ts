@@ -44,7 +44,7 @@ export function stripControl(s: string): string {
     // eslint-disable-next-line no-control-regex
     .replace(/\u001b[ -~]?/g, '')
     // eslint-disable-next-line no-control-regex
-    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, '');
 }
 
 /** Null-safe stripControl for fields that may be missing (errors, summaries, branches). */
