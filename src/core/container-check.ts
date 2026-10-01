@@ -31,6 +31,10 @@ export interface ContainerFacts {
   egress: Record<string, number>;
   /** HTTP status the proxy gave for a public address on each non-web port (0 = no answer) */
   ports: Record<string, number>;
+  /** HTTP status of a plain web request through the proxy to a public site (0 = no answer); omitted = not tried */
+  control?: number;
+  /** what the container shows about its proxy forwarder when nothing answers (processes, socket, a verbose curl) */
+  diagnostics?: string;
   /** exit status of a request made around the proxy: must fail, the container has no network */
   directExit: number;
   /** everything the container can see of its environment */
@@ -45,6 +49,17 @@ export function judgeContainer(f: ContainerFacts): Probe[] {
   const portsOpen = Object.entries(f.ports).filter(([, code]) => code !== 403);
   const leaked = f.hostSecrets.filter((v) => v && f.envText.includes(v));
   const extra = f.mountPoints.filter((m) => !MOUNT_OK.test(m));
+  // Nothing answering at all means the in-container forwarder or the host proxy is unreachable: that fails closed,
+  // but it proves nothing about the filter and agents have no web access either, so say so instead of "not refused".
+  const dead = f.control === 0 && Object.values(f.egress).concat(Object.values(f.ports)).every((c) => c === 0);
+  if (dead) {
+    return [
+      { name: 'container: the egress proxy answers from inside the container', ok: false, detail: `no request through the proxy got an answer, not even to a public site: agents have no web access, and the filter could not be tested. ${f.diagnostics ?? ''}`.trim() },
+      { name: 'container: no network of its own', ok: f.directExit !== 0, detail: f.directExit !== 0 ? 'a request that skips the filter cannot connect' : 'the container reached the internet around the filter' },
+      { name: 'container: the login this machine runs on is not inside', ok: leaked.length === 0, detail: leaked.length ? 'a credential from this machine is in the container environment' : 'no host credential in the container environment' },
+      { name: 'container: only the kernel folder and the egress socket are mounted from the host', ok: extra.length === 0, detail: extra.length ? `unexpected mounts: ${extra.join(', ')}` : 'nothing else from this machine is visible' },
+    ];
+  }
   return [
     { name: 'container: the egress filter refuses private, loopback and cloud-metadata addresses', ok: open.length === 0, detail: open.length ? `not refused: ${open.map(([t, c]) => `${t} (${c || 'no answer'})`).join(', ')}` : `${Object.keys(f.egress).length} spellings all refused` },
     { name: 'container: only web ports (80, 443) are open', ok: portsOpen.length === 0 && Object.keys(f.ports).length > 0, detail: portsOpen.length ? `not refused: ${portsOpen.map(([t, code]) => `${t} (${code || 'no answer'})`).join(', ')}` : `${Object.keys(f.ports).length} non-web ports all refused` },
@@ -79,11 +94,18 @@ export async function runContainerCheck(o: { bin?: string | null } = {}): Promis
     for (const t of EGRESS_TARGETS) egress[t] = Number(inside(['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '10', `http://${t}/`]).stdout.trim()) || 0;
     const ports: Record<string, number> = {};
     for (const t of NON_WEB_TARGETS) ports[t] = Number(inside(['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '10', `http://${t}/`]).stdout.trim()) || 0;
+    const probe = (url: string) => Number(inside(['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '10', url]).stdout.trim()) || 0;
+    const control = probe('http://example.com/');
+    let diagnostics: string | undefined;
+    if (control === 0) {
+      const d = inside(['sh', '-c', 'echo "proxy env: $HTTP_PROXY"; ls -l /run/salu 2>&1; (ps -eo pid,args 2>&1 | grep -c "[s]ocat TCP-LISTEN") | sed "s/^/forwarders running: /"; curl -sv --max-time 5 http://example.com/ -o /dev/null 2>&1 | tail -4; echo | socat - UNIX-CONNECT:/run/salu/egress.sock 2>&1 | head -2']);
+      diagnostics = `Inside the container: ${(d.stdout + d.stderr).trim().replace(/\n+/g, ' | ')}`;
+    }
     const direct = inside(['curl', '-s', '-o', '/dev/null', '--noproxy', '*', '--max-time', '6', 'http://1.1.1.1/']);
     const envText = inside(['sh', '-c', 'env; cat /proc/1/environ | tr "\\0" "\\n"']).stdout;
     const mounts = inside(['cat', '/proc/self/mountinfo']).stdout.split('\n').map((l) => l.split(' ')[4] ?? '').filter(Boolean);
     const hostSecrets = Object.entries(process.env).filter(([k, v]) => CREDENTIAL_ENV.test(k) && v && v.length > 8).map(([, v]) => v!);
-    return judgeContainer({ egress, ports, directExit: direct.status ?? 1, envText, hostSecrets, mountPoints: mounts });
+    return judgeContainer({ egress, ports, control, diagnostics, directExit: direct.status ?? 1, envText, hostSecrets, mountPoints: mounts });
   } finally {
     sh(bin, ['rm', '-f', name]);
     stop?.();
