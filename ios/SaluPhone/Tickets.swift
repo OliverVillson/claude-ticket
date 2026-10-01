@@ -35,14 +35,16 @@ struct SentReply: Codable, Identifiable, Hashable {
     var at: Double
     var after: String? = nil  // newest message id the phone had for the ticket when it sent this
 
-    /// The box answers every reply: "Got your reply" (ticket.accepted) or a warning note. Anything else
-    /// that moves the ticket on (it reopened, a run started) means it got there too.
+    /// The box answers every reply: "Got your reply" (ticket.accepted) or a warning note. The ticket
+    /// reopening or a run starting means it got there too.
     func answered(by messages: [SaluMessage]) -> Bool {
         messages.contains { m in
             guard m.id > (after ?? "") else { return false }
             if m.type == "ticket.accepted" || (m.type == "note" && m.level == "warn") { return true }
+            // Queued again or started: the reply got there. (blocked, failed or resolved can be the run it
+            // interrupted, or a resolve, so they don't count.)
             guard let next = Tickets.state(after: m) else { return false }
-            return next != .resolved  // the confirmation of a resolve is not about the reply
+            return next == .queued || next == .running
         }
     }
 
@@ -125,11 +127,11 @@ struct TicketSummary: Identifiable, Hashable {
         return messages[..<start].lazy.compactMap { $0.checklist?.value }.first ?? []
     }
 
-    /// The worker's decisions still worth answering, oldest first: asked during this run (any reply,
-    /// which queues the ticket again, answers them all) and the ticket isn't finished.
+    /// The worker's decisions still worth answering, oldest first: asked during this run (since it was last
+    /// queued, started or reopened; any reply answers them all) and the ticket isn't finished.
     var openDecisions: [SaluDecision] {
         guard [.running, .queued, .blocked, .sent].contains(state) else { return [] }
-        let since = messages.firstIndex { $0.type == "ticket.accepted" } ?? messages.endIndex
+        let since = messages.firstIndex { ["ticket.accepted", "ticket.started", "ticket.state"].contains($0.type) } ?? messages.endIndex
         var seen = Set<String>()
         var out: [SaluDecision] = []
         for m in messages[..<since] {  // newest first: a decision sent again keeps its newest wording
