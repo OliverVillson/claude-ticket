@@ -17,7 +17,7 @@ import { detectLimit, parseLimitText, probeWindow } from '../usage/index.ts';
 import type { LimitHit } from '../usage/types.ts';
 import { CLAUDE_MISSING, EnvironmentError, claudeExecutableOption, environmentProblem, runningCompiled } from '../core/claude-bin.ts';
 import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../core/tags.ts';
-import { auditKernel, kernelOptions, prepareKernel, sandboxOn, scrubSecrets } from '../core/kernel.ts';
+import { auditKernel, confinementFor, kernelOptions, prepareKernel, sandboxSupport, scrubSecrets } from '../core/kernel.ts';
 import { DEFAULT_TOOLS, denialsFrom, toolsToSdk } from '../core/tools.ts';
 import { TRAILER_RE, buildFollowUpFreshPrompt, buildFollowUpPrompt, buildPrompt, buildResumePrompt, parseTrailer, systemAppend } from './prompt.ts';
 import type { WorkerInput, WorkerLive, WorkerResult, WorkerRunner } from './types.ts';
@@ -71,7 +71,7 @@ export function effectiveSettings(t: TicketView, project: Project | null): Effec
 }
 
 /** Pure mapping from a ticket to Agent SDK options, so it can be tested without spawning anything. */
-export function workerSdkOptions(t: TicketView, project: Project | null, extra: { resume?: string | null; abort?: AbortController; kernel?: string } = {}): Options {
+export function workerSdkOptions(t: TicketView, project: Project | null, extra: { resume?: string | null; abort?: AbortController; kernel?: string; fence?: { osSandbox: boolean } } = {}): Options {
   const s = effectiveSettings(t, project);
   const opts: Options = {
     cwd: extra.kernel ?? t.project_path,
@@ -107,11 +107,15 @@ export function workerSdkOptions(t: TicketView, project: Project | null, extra: 
     default:
       opts.permissionMode = 'acceptEdits';
   }
-  Object.assign(opts, toolsToSdk(s.tools, s.permission));
-  if (extra.kernel) {
-    // The kernel: OS sandbox around shell commands, secret paths closed to the file tools, no logins in the environment.
-    const k = kernelOptions(extra.kernel);
-    opts.sandbox = k.sandbox;
+  // Project settings (CLAUDE.md, skills, hooks, .mcp.json) always load: a worker is a full Claude Code session.
+  opts.settingSources = ['user', 'project', 'local'];
+  const confined = !!extra.kernel || (!!extra.fence && extra.fence.osSandbox);
+  Object.assign(opts, toolsToSdk(s.tools, s.permission, { confined }));
+  if (extra.kernel || extra.fence) {
+    // The kernel (own copy) or the fence (real project): writes confined to the folder by the OS sandbox around shell
+    // commands and by a hook on the file tools; credentials closed to the file tools; no logins in the environment.
+    const k = kernelOptions(extra.kernel ?? t.project_path, { mode: extra.kernel ? 'kernel' : 'fence' });
+    if (extra.kernel || extra.fence?.osSandbox) opts.sandbox = k.sandbox;
     opts.disallowedTools = [...(opts.disallowedTools ?? []), ...k.disallowedTools];
     opts.env = scrubSecrets(opts.env ?? {});
     opts.hooks = { ...opts.hooks, ...k.hooks };
@@ -216,9 +220,13 @@ export const sdkRunner: WorkerRunner = {
     // The compiled binary has no claude of its own: fail with instructions, not the SDK's error.
     if (runningCompiled() && !claudeExecutableOption()) throw new EnvironmentError(process.env.SALU_CLAUDE_PATH ? `SALU_CLAUDE_PATH points to ${process.env.SALU_CLAUDE_PATH}, which is not an executable file` : CLAUDE_MISSING);
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
-    const kernel = input.project?.sandbox && sandboxOn() ? prepareKernel(input.ticket.project, input.ticket.project_path) : undefined;
+    const mode = confinementFor(input.project);
+    const kernel = mode === 'kernel' ? prepareKernel(input.ticket.project, input.ticket.project_path) : undefined;
     const ticket = kernel ? { ...input.ticket, project_path: kernel } : input.ticket;
-    const options = workerSdkOptions(ticket, input.project, { resume: input.resume, abort: input.abort, kernel });
+    // Without the OS sandbox (a Linux machine lacking bubblewrap) a fenced worker keeps the file-tool fence and the
+    // old narrow shell rules, so it never gets more than it can be held to.
+    const fence = mode === 'fence' ? { osSandbox: sandboxSupport().ok } : undefined;
+    const options = workerSdkOptions(ticket, input.project, { resume: input.resume, abort: input.abort, kernel, fence });
     input = { ...input, ticket };
     const stderr: string[] = [];
     options.stderr = (data: string) => {

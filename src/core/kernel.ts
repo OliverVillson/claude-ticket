@@ -21,6 +21,18 @@ export function sandboxOn(env: NodeJS.ProcessEnv = process.env): boolean {
   return !['off', '0', 'no', 'false'].includes((env.SALU_SANDBOX ?? '').toLowerCase());
 }
 
+/**
+ * How a worker is confined. `kernel`: a private copy of the project (project.sandbox). `fence`: the real
+ * project folder, but file changes are fenced to it (the default for every project). `off`: no
+ * confinement, only when you set SALU_SANDBOX=off yourself.
+ */
+export type Confinement = 'kernel' | 'fence' | 'off';
+
+export function confinementFor(project: { sandbox?: number | boolean } | null | undefined, env: NodeJS.ProcessEnv = process.env): Confinement {
+  if (!sandboxOn(env)) return 'off';
+  return project?.sandbox ? 'kernel' : 'fence';
+}
+
 export function kernelRoot(): string {
   return process.env.SALU_KERNEL || join(ticketHome(), 'kernel');
 }
@@ -96,6 +108,12 @@ export function secretPaths(home = homedir()): string[] {
     .map((p) => join(home, p));
 }
 
+/** The credential stores of secretPaths: what a fenced worker (working in the real project) may not read. Git identity and shell setup stay readable. */
+export function credentialPaths(home = homedir()): string[] {
+  return ['.ssh', '.aws', '.gnupg', '.config/gh', '.config/gcloud', '.config/op', '.azure', '.git-credentials', '.netrc', '.npmrc', '.pgpass', '.my.cnf', '.docker', '.kube', '.terraform.d', '.salu/tickets.db', '.salu/logs', '.claude/.credentials.json', '.claude.json']
+    .map((p) => join(home, p));
+}
+
 /**
  * Environment allow-list: a worker gets what it needs to run and to log in to Claude, nothing else.
  * (A deny-list of "secret-looking" names always misses one: DATABASE_URL, STRIPE_SECRET_KEY, ...)
@@ -168,8 +186,11 @@ const PATH_FIELDS = ['file_path', 'notebook_path', 'path', 'directory'];
  * not cover. An allow-list on real paths: writes only inside the kernel folder (and temp), reads only
  * the kernel, temp, runtime folders and system libraries. Returns the reason to refuse, or null.
  */
-export function fileToolGuard(dir: string, o: { home?: string; tmp?: string } = {}): (tool: string, input: unknown) => string | null {
+export function fileToolGuard(dir: string, o: { home?: string; tmp?: string; fence?: boolean } = {}): (tool: string, input: unknown) => string | null {
   const home = o.home ?? homedir();
+  // fence: the folder is the real project. Reads are open except credential stores; only writes are confined.
+  const what = o.fence ? 'project' : 'kernel';
+  const blockedReads = o.fence ? credentialPaths(home).map((p) => canon(p, dir, home)) : [];
   const kernel = canon(dir, dir, home);
   const tmps = [...new Set((o.tmp ? [o.tmp] : [process.env.TMPDIR ?? tmpdir(), '/tmp', '/private/tmp']).map((t) => canon(t, kernel, home)))];
   const readable = [kernel, ...tmps, ...toolDirs(home).map((d) => canon(d, kernel, home)), ...SYSTEM_READ];
@@ -182,13 +203,15 @@ export function fileToolGuard(dir: string, o: { home?: string; tmp?: string } = 
     // Search patterns can climb out with `..` or start at the root.
     for (const f of ['pattern', 'glob']) {
       const v = inp[f];
-      if ((tool === 'Glob' || (tool === 'Grep' && f === 'glob')) && typeof v === 'string' && (isAbsolute(v) || v.startsWith('~') || v.split(/[\\/]/).includes('..'))) return `${tool} pattern "${v}" leaves the kernel folder`;
+      if (!o.fence && (tool === 'Glob' || (tool === 'Grep' && f === 'glob')) && typeof v === 'string' && (isAbsolute(v) || v.startsWith('~') || v.split(/[\\/]/).includes('..'))) return `${tool} pattern "${v}" leaves the ${what} folder`;
     }
     for (const raw of paths) {
       const real = canon(raw, kernel, home);
       if (writes) {
         const ok = within(real, kernel) ? !protectedInKernel(real.slice(kernel.length + 1)) : tmps.some((t) => within(real, t));
-        if (!ok) return `${tool} may only change files inside the kernel folder ${kernel} (not ${real})`;
+        if (!ok) return `${tool} may only change files inside the ${what} folder ${kernel} (not ${real})`;
+      } else if (o.fence) {
+        if (blockedReads.some((b) => within(real, b))) return `${tool} may not read credential files (${real})`;
       } else if (!readable.some((r) => within(real, r)) && !toolResult(real, home)) {
         return `${tool} may only read inside the kernel folder ${kernel} (not ${real})`;
       }
@@ -200,7 +223,7 @@ export function fileToolGuard(dir: string, o: { home?: string; tmp?: string } = 
 }
 
 /** The SDK hook that applies fileToolGuard to every tool call, denying on any error. */
-export function fileToolHook(dir: string, o: { home?: string; tmp?: string } = {}): HookCallback {
+export function fileToolHook(dir: string, o: { home?: string; tmp?: string; fence?: boolean } = {}): HookCallback {
   const guard = fileToolGuard(dir, o);
   return async (input) => {
     if (input.hook_event_name !== 'PreToolUse') return {};
@@ -226,24 +249,30 @@ export interface KernelOptions {
   hooks: NonNullable<Options['hooks']>;
 }
 
-/** The SDK settings that put a worker in the kernel folder `dir`. */
-export function kernelOptions(dir: string, o: { home?: string; env?: NodeJS.ProcessEnv } = {}): KernelOptions {
+/**
+ * The SDK settings that confine a worker working in `dir`. `kernel` (default): `dir` is the private copy; the
+ * home folder is closed to reads. `fence`: `dir` is the real project; writes are confined to it just the same,
+ * reads stay open except credential stores (git identity, tool caches and sibling folders keep working).
+ */
+export function kernelOptions(dir: string, o: { home?: string; env?: NodeJS.ProcessEnv; mode?: 'kernel' | 'fence' } = {}): KernelOptions {
   const home = o.home ?? homedir();
-  const secrets = secretPaths(home);
+  const fence = o.mode === 'fence';
+  const secrets = fence ? credentialPaths(home) : secretPaths(home);
+  const domains = allowedDomains(o.env);
+  const sandbox: KernelOptions['sandbox'] = {
+    enabled: true,
+    failIfUnavailable: true, // a sandbox that cannot start stops the ticket instead of running unprotected
+    autoAllowBashIfSandboxed: true,
+    allowUnsandboxedCommands: false,
+    filesystem: fence ? { allowWrite: [dir], denyRead: credentialPaths(home) } : { allowWrite: [dir], denyRead: [...new Set([home, kernelRoot()])], allowRead: [dir, ...toolDirs(home)] },
+    network: { allowedDomains: domains, strictAllowlist: domains[0] !== '*' },
+  };
   return {
-    sandbox: {
-      enabled: true,
-      failIfUnavailable: true, // a sandbox that cannot start stops the ticket instead of running unprotected
-      autoAllowBashIfSandboxed: true,
-      allowUnsandboxedCommands: false,
-      filesystem: { allowWrite: [dir], denyRead: [...new Set([home, kernelRoot()])], allowRead: [dir, ...toolDirs(home)] },
-      network: { allowedDomains: allowedDomains(o.env), strictAllowlist: allowedDomains(o.env)[0] !== '*' },
-    },
+    sandbox,
     disallowedTools: secrets.flatMap((p) => ['Read', 'Edit', 'Write'].flatMap((t) => [`${t}(${p})`, `${t}(${p}/**)`])),
-    hooks: { PreToolUse: [{ hooks: [fileToolHook(dir, { home })] }] },
+    hooks: { PreToolUse: [{ hooks: [fileToolHook(dir, { home, fence })] }] },
   };
 }
-
 
 /**
  * The orchestrator's own environment is readable by a worker's shell on Linux (`/proc/<pid>/environ`, same user),
@@ -252,6 +281,7 @@ export function kernelOptions(dir: string, o: { home?: string; env?: NodeJS.Proc
  * that orchestrator lose variables the list does not name; `SALU_ENV_PASS=NAME` brings one back, and
  * `SALU_ORCH_ENV=keep` turns the whole thing off.
  */
+/** (Every project is confined now, so any project at all means workers get the allow-listed environment.) */
 export function orchestratorEnvToScrub(anySandboxed: boolean, env: NodeJS.ProcessEnv = process.env): Record<string, string | undefined> | null {
   if (!anySandboxed || !sandboxOn(env) || env.SALU_ORCH_SCRUBBED === '1' || (env.SALU_ORCH_ENV ?? '').toLowerCase() === 'keep') return null;
   const out = scrubSecrets(env, (env.SALU_ENV_PASS ?? '').split(',').map((x) => x.trim()).filter(Boolean));

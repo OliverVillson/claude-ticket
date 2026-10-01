@@ -108,8 +108,9 @@ export async function doctor(p: Parsed): Promise<number> {
   ok(`salu ${VERSION} (${runningCompiled() ? 'compiled binary' : 'running from source'})`);
 
   const sb = sandboxSupport();
-  if (sb.ok) ok('the kernel sandbox can run here (salu add project --sandbox)');
-  else console.log(`${dim('·')} the kernel sandbox cannot run here: ${sb.problem}`);
+  if (!sandboxOn()) no('SALU_SANDBOX=off: workers can change any file you can', 'Unset SALU_SANDBOX to confine workers to their project folder again.');
+  else if (sb.ok) ok('workers can only change files in their project folder (the sandbox can run here; salu add project --sandbox gives them their own copy)');
+  else no(`the sandbox cannot run here, so workers get file-tool confinement only and no free shell: ${sb.problem}`, 'Install it, then tickets get the full Claude Code toolset inside the fence.');
 
   const c = checkClaude();
   if (!c.ok) {

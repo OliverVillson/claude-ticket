@@ -125,7 +125,20 @@ Any other token (`bug`, `docs`, `team=core`) is stored as a label or custom tag 
 back through the project's own git remote, on the branch `salu/inbox`. No server, no open port. Use a private
 repository: anyone who can push to it can send the box tickets unless the inbox is signed (it is: `salu remote add web --box` makes the signing key and shows it; give it to your computer with `--key` and to the phone). Format and details: INTERFACES.md ("Git sync transport").
 
-## The kernel (sandbox, opt-in per project)
+## What workers can do, and where they can write
+
+A worker is a full Claude Code session: all built-in tools (shell, web, subagents, skills), the project's `CLAUDE.md`,
+settings, skills and `.mcp.json`. **Every project is fenced by default** (nothing to turn on): shell commands run in the OS
+sandbox with writes allowed only in the project folder, and the file tools (Edit, Write, NotebookEdit) go through a check that
+refuses any path outside it, through symlinks, `..` or hard links. `.git/hooks`, `.git/config`, `.claude/` and `.mcp.json` are
+read-only for workers (they run code later). Reads stay open except credential stores (`~/.ssh`, `~/.aws`, tokens), and the
+environment is the same allow-list as in the kernel. Tests in `test/confine.test.ts` prove the refusals; `salu doctor --sandbox`
+proves the OS part on your machine. Two things are not covered by the OS sandbox: MCP servers run outside it, so MCP tools are
+not auto-allowed (a ticket that needs one blocks, and `salu allow` grants it); and on a Linux machine without bubblewrap the
+shell stays limited to local git (`salu doctor` says so) while the file-tool fence still applies. `SALU_SANDBOX=off` drops all of
+this and `salu doctor` flags it.
+
+## The kernel (own copy, opt-in per project)
 
 `salu add project web --sandbox` (or `salu change project web --sandbox` / `--no-sandbox`) runs that
 project's workers in a kernel:

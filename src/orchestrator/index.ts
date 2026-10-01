@@ -72,7 +72,7 @@ export async function startOrchestratorCommand(o: { projectIds?: number[]; concu
   }
 
   // A worker's shell must not be able to read this process's environment: start over with only what workers get.
-  const clean = orchestratorEnvToScrub(listProjects(db).some((p) => p.sandbox));
+  const clean = orchestratorEnvToScrub(listProjects(db).length > 0);
   if (clean && !o.detach) {
     // Replace this process, do not wait for a clean child: a waiting parent would keep the old environment readable.
     const args = ['run', ...(o.plain ? ['--plain'] : []), ...(o.concurrency ? ['--concurrency', String(o.concurrency)] : [])];
@@ -136,7 +136,7 @@ function detach(o: { projectIds?: number[]; concurrency?: number }): number {
   ensureHome();
   const args = ['run', '--plain'];
   if (o.concurrency) args.push('--concurrency', String(o.concurrency));
-  const env: Record<string, string | undefined> = orchestratorEnvToScrub(listProjects(db).some((p) => p.sandbox)) ?? { ...process.env };
+  const env: Record<string, string | undefined> = orchestratorEnvToScrub(listProjects(db).length > 0) ?? { ...process.env };
   if (o.projectIds?.length === 1) {
     const p = getProjectById(db, o.projectIds[0]!);
     if (p) args.push(p.name);
