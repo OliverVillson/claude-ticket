@@ -27,10 +27,13 @@ describe('palette', () => {
     expect(sgr('accent', 0)).toBeNull();
     expect(hex('accent')).toBe('#00ff41');
   });
-  test('errors and warnings are red/amber, not green', () => {
-    for (const r of ['error', 'warn'] as const) {
-      const [rr, g, b] = PALETTE[r].rgb;
+  test('errors are red; warnings are lime green (the TUI is green only, no amber)', () => {
+    {
+      const [rr, g, b] = PALETTE.error.rgb;
       expect(rr > g || b > g).toBe(true);
+      const [wr, wg, wb] = PALETTE.warn.rgb;
+      expect(wg).toBeGreaterThan(wr);
+      expect(wg).toBeGreaterThan(wb);
     }
   });
   test('painter is the identity without colour', () => {

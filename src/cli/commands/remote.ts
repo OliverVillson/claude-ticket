@@ -12,7 +12,7 @@ import { ensureHome } from '../../core/paths.ts';
 import { loadNtfy, newTopic, publishNtfy, saveNtfy } from '../../sync/ntfy.ts';
 import { generateKey, keyFilePath, remoteKey, requireKey, saveKey, unsignedAllowed, unsignedWarning } from '../../sync/format.ts';
 import { checkRemote } from '../../sync/git.ts';
-import { getRemote, listRemotes, pendingMessages, pendingOutReplies, pendingOutTickets, removeRemote, setRemote, unreadCount } from '../../sync/store.ts';
+import { getRemote, listRemotes, pendingMessages, pendingOutActions, pendingOutReplies, pendingOutTickets, removeRemote, setRemote, unreadCount } from '../../sync/store.ts';
 import { boxName, rotateKey, syncAll, syncProject, type SyncSummary } from '../../sync/sync.ts';
 import { helpIf } from './_shared.ts';
 
@@ -55,6 +55,8 @@ function describe(s: SyncSummary): string {
   if (s.ticketsReceived) bits.push(`got ${s.ticketsReceived} ticket${s.ticketsReceived === 1 ? '' : 's'}`);
   if (s.repliesSent) bits.push(`sent ${s.repliesSent} repl${s.repliesSent === 1 ? 'y' : 'ies'}`);
   if (s.repliesReceived) bits.push(`got ${s.repliesReceived} repl${s.repliesReceived === 1 ? 'y' : 'ies'}`);
+  if (s.actionsSent) bits.push(`sent ${s.actionsSent} resolve/reopen`);
+  if (s.actionsReceived) bits.push(`got ${s.actionsReceived} resolve/reopen`);
   if (s.messagesSent) bits.push(`sent ${s.messagesSent} message${s.messagesSent === 1 ? '' : 's'}`);
   if (s.messagesReceived) bits.push(`${s.messagesReceived} new message${s.messagesReceived === 1 ? '' : 's'}`);
   if (s.branchesPushed.length) bits.push(`pushed ${s.branchesPushed.join(', ')}`);
@@ -112,7 +114,7 @@ export async function remote(p: Parsed): Promise<number> {
     case undefined: {
       const rows = listRemotes(db).map((r) => {
         const project = getProjectById(db, r.project_id);
-        return { project: project?.name ?? `#${r.project_id}`, url: r.url, role: r.role, last_sync: r.last_sync, error: r.last_error, waiting: pendingOutTickets(db, r.project_id).length + pendingOutReplies(db, r.project_id).length + pendingMessages(db, r.project_id).length };
+        return { project: project?.name ?? `#${r.project_id}`, url: r.url, role: r.role, last_sync: r.last_sync, error: r.last_error, waiting: pendingOutTickets(db, r.project_id).length + pendingOutReplies(db, r.project_id).length + pendingOutActions(db, r.project_id).length + pendingMessages(db, r.project_id).length };
       });
       if (flagBool(p, 'json')) {
         console.log(JSON.stringify({ remotes: rows, unread: unreadCount(db) }, null, 2));

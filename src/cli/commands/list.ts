@@ -8,7 +8,7 @@ import { formatTags } from '../../core/tags.ts';
 import { resolveProject } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
 import { dim, safeText, yellow } from '../../core/ansi.ts';
-import { formatAgo, formatCost, statusColor, statusIcon, table } from '../../core/format.ts';
+import { formatAgo, formatCost, parseStatus, statusColor, statusIcon, statusLabel, table } from '../../core/format.ts';
 import { helpIf, isTTY } from './_shared.ts';
 
 const HELP = `salu list [project] [--plain] [--status S[,S]] [--all] [--projects] [--json]
@@ -63,8 +63,9 @@ export async function list(p: Parsed): Promise<number> {
   const project = projectName ? resolveProject(db, projectName) : null;
   const statusFlag = flagStr(p, 'status');
   const statuses = statusFlag
-    ? statusFlag.split(',').map((s) => {
-        if (!TICKET_STATUSES.includes(s as TicketStatus)) throw new CliError(`status must be one of ${TICKET_STATUSES.join(', ')}`);
+    ? statusFlag.split(',').map((raw) => {
+        const s = parseStatus(raw);
+        if (!TICKET_STATUSES.includes(s as TicketStatus)) throw new CliError(`status must be one of ${TICKET_STATUSES.map(statusLabel).join(', ')}`);
         return s as TicketStatus;
       })
     : undefined;
@@ -107,7 +108,7 @@ export async function list(p: Parsed): Promise<number> {
       ],
       tickets.map((t) => ({
         id: String(t.id),
-        status: statusColor(t.status)(`${statusIcon(t.status)} ${t.status}`),
+        status: statusColor(t.status)(`${statusIcon(t.status)} ${statusLabel(t.status)}`),
         pri: t.priority === 0 ? 'now' : String(t.priority),
         name: safeText(t.name),
         project: t.project,

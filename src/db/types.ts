@@ -43,6 +43,7 @@ export interface Ticket {
   summary?: string | null; // the worker's short final report (set when the ticket is done)
   branch?: string | null; // the salu/<ticket> git branch the work was committed on, when there is one
   depends_on: string | null; // reserved
+  parent_id?: number | null; // the ticket whose worker started this one as a sub-thread
   created_at: number;
   updated_at: number;
   started_at: number | null;

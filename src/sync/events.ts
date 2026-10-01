@@ -1,9 +1,9 @@
 import type { Database } from 'bun:sqlite';
 import type { OrchestratorEvent } from '../orchestrator/types.ts';
-import { getProjectById, listTurns } from '../db/queries.ts';
+import { getProjectById, getTicketById, listTurns } from '../db/queries.ts';
 import { boxName } from './sync.ts';
-import { REPLY_MAX } from './format.ts';
-import { enqueueMessage, getRemote, remoteTicketForLocal } from './store.ts';
+import { REPLY_MAX, newId } from './format.ts';
+import { addRemoteTicket, enqueueMessage, type NewMessage, getRemote, remoteTicketForLocal } from './store.ts';
 
 const clip = (s: string | null | undefined, n: number) => (s && s.length > n ? s.slice(0, n - 1) + '…' : (s ?? ''));
 
@@ -57,4 +57,53 @@ export function recordRemoteEvent(db: Database, e: OrchestratorEvent): void {
   } catch {
     /* messages are best effort: never stop the loop */
   }
+}
+
+/**
+ * For anything on the box that knows something about one ticket (the worker's status checklist, a decision it
+ * wants answered, outputs it made, a state change): queue a message for the clients of that ticket's project.
+ * `ticket` and the sender are filled in. A no-op unless the ticket's project is a box.
+ */
+export function postThreadMessage(db: Database, ticketId: number, m: Omit<NewMessage, 'ticket'>): boolean {
+  const t = getTicketById(db, ticketId);
+  if (!t) return false;
+  const remote = getRemote(db, t.project_id);
+  const project = getProjectById(db, t.project_id);
+  if (!remote || remote.role !== 'box' || !project) return false;
+  announceSpawned(db, t.id); // a new sub-thread must be known to clients before they hear about its progress
+  const ref = remoteTicketForLocal(db, t.id, 'in')?.uuid;
+  enqueueMessage(db, project.id, project.name, boxName(), { ...m, ticket: { ...(ref ? { ref } : {}), name: t.name, id: t.id } });
+  return true;
+}
+
+/**
+ * Box: a sub-thread a worker started gets a reference of its own (so messages about it can be matched by
+ * clients) and one `ticket.spawned` message naming its parent. Does nothing for a ticket that has no parent,
+ * is already announced, or whose project is not a box.
+ */
+export function announceSpawned(db: Database, ticketId: number): void {
+  const t = getTicketById(db, ticketId);
+  if (!t || remoteTicketForLocal(db, t.id, 'in')) return;
+  const remote = getRemote(db, t.project_id);
+  const project = getProjectById(db, t.project_id);
+  const parent = db.query<{ id: number; name: string }, [number]>('SELECT p.id, p.name FROM tickets t JOIN tickets p ON p.id = t.parent_id WHERE t.id = ?').get(t.id);
+  if (!remote || remote.role !== 'box' || !project || !parent) return;
+  const ref = newId();
+  addRemoteTicket(db, { uuid: ref, project_id: project.id, ticket_id: t.id, direction: 'in', queue: true, sent: true });
+  const parentRef = remoteTicketForLocal(db, parent.id, 'in')?.uuid;
+  enqueueMessage(db, project.id, project.name, boxName(), {
+    type: 'ticket.spawned',
+    level: 'info',
+    title: `"${parent.name}" started "${t.name}"`,
+    body: t.query.slice(0, 2000),
+    state: t.status,
+    ticket: { ref, name: t.name, id: t.id },
+    parent: { ...(parentRef ? { ref: parentRef } : {}), name: parent.name, id: parent.id },
+  });
+}
+
+/** Box: announce every sub-thread of a project that has not been yet (a sync sweep; posting does it too). */
+export function announceAllSpawned(db: Database, projectId: number): void {
+  const rows = db.query<{ id: number }, [number]>("SELECT id FROM tickets WHERE project_id = ? AND parent_id IS NOT NULL AND id NOT IN (SELECT ticket_id FROM remote_tickets WHERE ticket_id IS NOT NULL AND direction = 'in') ORDER BY id").all(projectId);
+  for (const r of rows) announceSpawned(db, r.id);
 }

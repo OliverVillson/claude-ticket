@@ -17,7 +17,9 @@ Usage   (salu ?  |  salu help  |  salu --help  shows this list; quote the ? in z
   salu list [project] [--plain] [--status S] [--projects] [--json]
   salu queue "name"... | --all [project]     queue saved tickets to run (add only saves; nothing runs by itself)
   salu unqueue "name"                        take a queued ticket back to the backlog
-  salu show "name"                              a finished ticket's branch and summary
+  salu show "name"                              a resolved ticket's branch and summary
+  salu resolve "name"...                     you are finished with a ticket: mark it resolved (nothing is deleted)
+  salu reopen "name" ["message"]             bring a resolved ticket back (a message is a reply)
   salu reply "name" ["message"] [--now]        keep chatting on a ticket after its reply (no message: show the conversation)
   salu allow "name" [--tool 'Bash(git clone *)']   unblock a ticket that needs a permission, and queue it again
   salu run [project|"name"...] [--concurrency N] [--detach] [--plain]
@@ -25,6 +27,9 @@ Usage   (salu ?  |  salu help  |  salu --help  shows this list; quote the ? in z
   salu push [project] [--branch B] [--to url] [--dry-run]   send what agents made in the kernel to the project's git remote
   salu export <folder> [project] [--git] [--force]           copy what agents made in the kernel to a folder
   salu remote add|list|remove|sync            run a project on an always-on box through its git remote (salu remote --help)
+  salu memory [list|show|add|edit|rm] ...    what the project's agents remember (kept in the repo, .salu/memory)
+  salu files [list|get|add|rm] ...            files every ticket of a project can share (.salu/files)
+  salu sync [project] [--no-git] [--no-push]  merge memory and shared files with the agents' sandbox copy and git
   salu notif [--all] [--json]                messages from your project orchestrators (done, blocked, failed); hover or Enter marks one read
   salu notif read <id>... | --all            mark messages read from the shell
   salu pause | salu resume | salu stop
@@ -83,6 +88,10 @@ export async function dispatch(argv: string[]): Promise<number> {
       return (await import('./commands/queue.ts')).queue(sub);
     case 'unqueue':
       return (await import('./commands/queue.ts')).unqueue(sub);
+    case 'resolve':
+      return (await import('./commands/resolve.ts')).resolve(sub);
+    case 'reopen':
+      return (await import('./commands/resolve.ts')).reopen(sub);
     case 'show':
       return (await import('./commands/show.ts')).show(sub);
     case 'reply':
@@ -97,6 +106,12 @@ export async function dispatch(argv: string[]): Promise<number> {
       return (await import('./commands/push.ts')).push(sub);
     case 'export':
       return (await import('./commands/push.ts')).exportKernel(sub);
+    case 'memory':
+      return (await import('./commands/memory.ts')).memory(sub);
+    case 'files':
+      return (await import('./commands/memory.ts')).files(sub);
+    case 'sync':
+      return (await import('./commands/sync.ts')).sync(sub);
     case 'remote':
       return (await import('./commands/remote.ts')).remote(sub);
     case 'pause':

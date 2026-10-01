@@ -32,7 +32,7 @@ export const STATUS_STYLE: Record<TicketStatus, StatusStyle> = {
   todo: { glyph: GLYPHS.todo, tone: 'plain', dim: true, label: 'queued' },
   blocked: { glyph: GLYPHS.blocked, tone: 'yellow', label: 'blocked' },
   failed: { glyph: GLYPHS.failed, tone: 'red', label: 'failed' },
-  done: { glyph: GLYPHS.done, tone: 'green', label: 'done' },
+  done: { glyph: GLYPHS.done, tone: 'green', label: 'resolved' },
 };
 
 /** Order statuses appear in summaries (mirrors the list sort order). */
@@ -56,7 +56,7 @@ export function paintStatus(st: Style, status: TicketStatus, text: string): stri
 export function paintPriority(st: Style, p: number, text: string): string {
   if (p <= 0) return paint(st, 'accent', text, { bold: true });
   if (p === 1) return paint(st, 'accent', text);
-  if (p === 2) return paint(st, 'yellow', text);
+  if (p === 2) return paint(st, 'green', text);
   if (p === 3) return text;
   return st.dim(text);
 }

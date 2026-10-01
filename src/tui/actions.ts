@@ -1,9 +1,10 @@
 import type { Database } from 'bun:sqlite';
 import type { Project, TicketView } from '../db/types.ts';
-import { createTicket, deleteTicket, replyToTicket, queueTicket, unqueueTicket, getProjectByName, updateTicket, wakeOrchestrator } from '../db/queries.ts';
+import { createTicket, deleteTicket, replyToTicket, resolveTicketById, queueTicket, unqueueTicket, getProjectByName, updateTicket, wakeOrchestrator } from '../db/queries.ts';
 import { clearPause, enterManualPause } from '../usage/index.ts';
 import { parseTags, validatePriority } from '../core/tags.ts';
 import { CliError } from '../core/errors.ts';
+import { answerAndNotify, answerOpenWithText } from '../threads/decide.ts';
 import { allowTicket } from '../core/allow.ts';
 
 /** What the add/edit form collects. `tags` is the same string `salu add` takes. */
@@ -35,8 +36,12 @@ export interface TuiActions {
   toggleQueue(ticket: TicketView): 'queued' | 'unqueued';
   /** Allow what a blocked ticket was refused and queue it again. Returns the rules added. */
   allow(ticket: TicketView): string[];
+  /** Mark a ticket resolved: you are finished with it (a reply brings it back). */
+  resolve(ticket: TicketView): TicketView;
   /** Send a follow-up on a ticket that has a reply (or answer a blocked one); it goes back in the queue. */
   reply(ticket: TicketView, message: string): TicketView;
+  /** Pick option `index` (0-based) of an open decision; any pick but the recommended one tells the worker. */
+  answerDecision(ticket: TicketView, decisionId: number, index: number): TicketView | null;
   /** Pause dispatch, or resume it when `currentlyPaused`. */
   togglePause(currentlyPaused: boolean): void;
 }
@@ -116,8 +121,16 @@ export function defaultActions(db: Database): TuiActions {
       if (ticket.status === 'running') return;
       queueTicket(db, ticket.id, { now: true });
     },
+    resolve(ticket) {
+      return resolveTicketById(db, ticket.id);
+    },
     reply(ticket, message) {
-      return replyToTicket(db, ticket.id, message);
+      const t = replyToTicket(db, ticket.id, message);
+      answerOpenWithText(db, ticket.id, message); // typed words answer open decisions, like `salu reply`
+      return t;
+    },
+    answerDecision(ticket, decisionId, index) {
+      return answerAndNotify(db, ticket.id, decisionId, index).ticket;
     },
     togglePause(currentlyPaused) {
       if (currentlyPaused) clearPause(db);

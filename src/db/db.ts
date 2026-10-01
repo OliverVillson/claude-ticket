@@ -1,7 +1,8 @@
 import { Database } from 'bun:sqlite';
 import { dbPath, ensureHome } from '../core/paths.ts';
+import { ensureThreadTables } from '../threads/store.ts';
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -103,6 +104,22 @@ function ensureSyncTables(db: Database) {
         at INTEGER NOT NULL,
         sent INTEGER NOT NULL DEFAULT 0
       );
+      CREATE TABLE IF NOT EXISTS remote_actions (
+        id TEXT PRIMARY KEY,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        direction TEXT NOT NULL,
+        ref TEXT,
+        name TEXT,
+        action TEXT NOT NULL,
+        at INTEGER NOT NULL,
+        sent INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS remote_decisions (
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        remote_id TEXT NOT NULL,
+        local_id INTEGER NOT NULL REFERENCES decisions(id) ON DELETE CASCADE,
+        PRIMARY KEY (project_id, remote_id)
+      );
       CREATE TABLE IF NOT EXISTS remote_messages (
         id TEXT NOT NULL,
         project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -114,6 +131,8 @@ function ensureSyncTables(db: Database) {
         PRIMARY KEY (project_id, id)
       );
     `);
+  // A reply can answer one of the worker's decisions (JSON {id, option?}); added after the table first shipped.
+  if (!db.query<{ name: string }, []>('PRAGMA table_info(remote_replies)').all().some((c) => c.name === 'decision')) db.exec('ALTER TABLE remote_replies ADD COLUMN decision TEXT;');
 }
 
 function migrate(db: Database) {
@@ -156,7 +175,9 @@ function migrate(db: Database) {
     db.exec('CREATE INDEX IF NOT EXISTS turns_ticket ON turns(ticket_id, id);');
   }
   ensureSyncTables(db);
-  if (version < SCHEMA_VERSION)  if (version < SCHEMA_VERSION) db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
+  // v9: checklist, decisions, outputs and sub-thread links. Idempotent, so it also covers a v9 database from the core's migration.
+  ensureThreadTables(db);
+  if (version < SCHEMA_VERSION) db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
 }
 
 export function closeDb() {
