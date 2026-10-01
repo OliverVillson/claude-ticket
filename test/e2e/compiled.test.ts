@@ -36,7 +36,7 @@ async function salu(args: string[], e: Record<string, string>) {
 const tickets = async (e: Record<string, string>) => JSON.parse((await salu(['list', '--json'], e)).out) as any[];
 
 maybe('compiled salu binary', () => {
-  test('without Claude Code: doctor and run explain how to install it, and the ticket stays untouched', async () => {
+  test('without Claude Code: doctor and run explain how to install it, and the queued ticket stays untouched', async () => {
     const e = env(false);
     expect((await salu(['add', 'hello', 'say hello'], e)).code).toBe(0);
     const d = await salu(['doctor'], e);
@@ -47,7 +47,7 @@ maybe('compiled salu binary', () => {
     expect(r.err).toContain('could not find Claude Code');
     expect(r.err).not.toContain('Native CLI binary');
     const t = (await tickets(e))[0];
-    expect(t.status).toBe('backlog');
+    expect(t.status).toBe('todo');
     expect(t.attempts).toBe(0);
   });
 
