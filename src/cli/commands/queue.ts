@@ -12,7 +12,7 @@ const HELP = `salu queue "name"... [--project P] [--now]
 salu queue --all [project]
 salu unqueue "name"... [--project P]
 
-Adding a ticket only saves it (status backlog). Queue it to make it eligible to run: a running
+A ticket added with --save is only saved (status backlog). Queue it to make it eligible to run: a running
 orchestrator picks it up at once, otherwise \`salu run\` does. --now also moves it to the front.
 \`salu queue\` re-queues a done, failed or blocked ticket with a fresh attempt count.
 \`salu queue --all\` queues every saved ticket (in one project and its subprojects, if given).

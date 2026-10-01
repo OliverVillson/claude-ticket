@@ -6,6 +6,7 @@ import { countTickets, getTicketById, listTickets } from '../../db/queries.ts';
 import { readStatus, type OrchestratorStatus, type WorkerInfo } from '../../orchestrator/status.ts';
 import type { OrchestratorEvent } from '../../orchestrator/types.ts';
 import type { TuiActions } from '../actions.ts';
+import { safeText } from '../../core/ansi.ts';
 import { displayWidth, fit, fmtCost, fmtDuration, modelEffort, oneLine, priorityText, shortModel, truncate } from '../format.ts';
 import { viewportRows } from '../layout.ts';
 import { messageText, type Message } from '../messages.ts';
@@ -41,21 +42,21 @@ export function describeEvent(e: OrchestratorEvent): { text: string; tone: 'ok' 
     case 'start':
       return { text: `● orchestrator started · pid ${e.pid} · concurrency ${e.concurrency}${e.recovered ? ` · ${e.recovered} requeued` : ''}`, tone: 'ok' };
     case 'dispatch':
-      return { text: `▶ ${e.ticket.name} ${e.resumed ? 'resuming session' : 'started'} · ${e.ticket.project} · run ${e.runId}`, tone: 'accent' };
+      return { text: `▶ ${safeText(e.ticket.name)} ${e.resumed ? 'resuming session' : 'started'} · ${e.ticket.project} · run ${e.runId}`, tone: 'accent' };
     case 'finish': {
       const meta = `${e.durationMs != null ? `${fmtDuration(e.durationMs)} · ` : ''}${e.turns} turn${e.turns === 1 ? '' : 's'}${e.costUsd ? ` · ${fmtCost(e.costUsd)}` : ''}`;
       const msg = e.error ? ` · ${oneLine(e.error)}` : '';
       switch (e.outcome) {
         case 'done':
-          return { text: `✓ ${e.ticket.name} done · ${meta}`, tone: 'ok' };
+          return { text: `✓ ${safeText(e.ticket.name)} done · ${meta}`, tone: 'ok' };
         case 'blocked':
-          return { text: `? ${e.ticket.name} blocked: ${oneLine(e.error ?? '')}`, tone: 'warn' };
+          return { text: `? ${safeText(e.ticket.name)} blocked: ${oneLine(e.error ?? '')}`, tone: 'warn' };
         case 'failed':
-          return { text: `✗ ${e.ticket.name} ${e.status === 'failed' ? 'failed' : 'failed, will retry'} · ${meta}${msg}`, tone: 'err' };
+          return { text: `✗ ${safeText(e.ticket.name)} ${e.status === 'failed' ? 'failed' : 'failed, will retry'} · ${meta}${msg}`, tone: 'err' };
         case 'rate_limited':
-          return { text: `‖ ${e.ticket.name} hit the usage limit, parked with its session · ${meta}`, tone: 'warn' };
+          return { text: `‖ ${safeText(e.ticket.name)} hit the usage limit, parked with its session · ${meta}`, tone: 'warn' };
         case 'killed':
-          return { text: `■ ${e.ticket.name} interrupted · ${e.status === 'paused' ? 'resumes next run' : 'back in the queue'}`, tone: 'dim' };
+          return { text: `■ ${safeText(e.ticket.name)} interrupted · ${e.status === 'paused' ? 'resumes next run' : 'back in the queue'}`, tone: 'dim' };
       }
       return null;
     }
@@ -171,7 +172,7 @@ export function RunView(p: RunViewProps) {
   const nameOf = (w: WorkerInfo): string => {
     let n = names.current.get(w.ticketId);
     if (!n) {
-      n = getTicketById(db, w.ticketId)?.name ?? `#${w.ticketId}`;
+      n = safeText(getTicketById(db, w.ticketId)?.name) || `#${w.ticketId}`;
       names.current.set(w.ticketId, n);
     }
     return n;
@@ -198,7 +199,7 @@ export function RunView(p: RunViewProps) {
     lines.push(st.dim(stopping ? 'stopping…' : status.alive ? (queued.length ? 'starting workers…' : 'no tickets waiting · salu add "name" "query" "tags"') : 'orchestrator is not running'));
   }
   if (queued.length) {
-    const next = queued.map((t) => `${t.name} ${priorityText(t.priority)}${modelEffort(t) ? ' ' + modelEffort(t) : ''}`).join(' · ');
+    const next = queued.map((t) => `${safeText(t.name)} ${priorityText(t.priority)}${modelEffort(t) ? ' ' + modelEffort(t) : ''}`).join(' · ');
     lines.push(st.dim(`○ next: ${next}`));
   }
   const room = Math.max(0, rowsAvail - lines.length - 1);

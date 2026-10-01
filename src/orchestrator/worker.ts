@@ -5,6 +5,7 @@
  * every message to the run's JSONL log, keeps a live summary for the status view, and classifies
  * how the session ended. Nothing here touches the database; the scheduler does that.
  */
+import { safeText } from '../core/ansi.ts';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
@@ -16,7 +17,7 @@ import { detectLimit, parseLimitText, probeWindow } from '../usage/index.ts';
 import type { LimitHit } from '../usage/types.ts';
 import { CLAUDE_MISSING, EnvironmentError, claudeExecutableOption, environmentProblem, runningCompiled } from '../core/claude-bin.ts';
 import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../core/tags.ts';
-import { kernelOptions, prepareKernel, sandboxOn, scrubSecrets } from '../core/kernel.ts';
+import { auditKernel, kernelOptions, prepareKernel, sandboxOn, scrubSecrets } from '../core/kernel.ts';
 import { DEFAULT_TOOLS, denialsFrom, toolsToSdk } from '../core/tools.ts';
 import { TRAILER_RE, buildFollowUpFreshPrompt, buildFollowUpPrompt, buildPrompt, buildResumePrompt, parseTrailer, systemAppend } from './prompt.ts';
 import type { WorkerInput, WorkerLive, WorkerResult, WorkerRunner } from './types.ts';
@@ -237,6 +238,9 @@ export const sdkRunner: WorkerRunner = {
       throw e;
     }
     while (stderr.length) yield { type: 'stderr', text: stderr.shift(), ts: Date.now() };
+    // Tricks that beat a check-then-use guard leave links behind: say so in the log.
+    const findings = kernel ? auditKernel(kernel) : [];
+    if (findings.length) yield { type: 'stderr', text: `salu kernel audit: ${findings.slice(0, 5).join('; ')}${findings.length > 5 ? ` (and ${findings.length - 5} more)` : ''}`, ts: Date.now() };
   },
   async probe(model) {
     const r = await probeWindow({ model: model ?? undefined, cwd: process.env.TMPDIR || '/tmp' });
@@ -264,6 +268,16 @@ export interface RunWorkerParams extends WorkerInput {
   onLive?: (live: WorkerLive) => void;
   /** Called with every `rate_limit_info` the session streams (status, utilization, reset time). */
   onRateLimit?: (info: any) => void;
+}
+
+/** The worker's final message without its TICKET: trailer, trimmed and capped: what a finished ticket shows as its summary. */
+export function summaryFrom(text: string): string | null {
+  const body = safeText(text)
+    .split('\n')
+    .filter((l) => !/^\s*TICKET:\s*(done|blocked|failed)\b/i.test(l))
+    .join('\n')
+    .trim();
+  return body ? body.slice(0, 4000) : null;
 }
 
 /**
@@ -367,7 +381,7 @@ export async function runWorker(p: RunWorkerParams): Promise<WorkerResult> {
   if (trailer?.kind === 'failed') return { ...base, outcome: 'failed', message: trailer.message || 'the worker gave up', subtype: result?.subtype ?? null };
 
   if (result && result.subtype === 'success' && !result.is_error) {
-    return { ...base, outcome: 'done', message: trailer ? trailer.message || null : firstLine(text, 200) || null, subtype: 'success' };
+    return { ...base, outcome: 'done', message: trailer ? trailer.message || null : firstLine(text, 200) || null, summary: summaryFrom(text), subtype: 'success' };
   }
   if (!result) return { ...base, outcome: 'failed', message: crash ?? 'the worker ended without a result', subtype: 'error' };
 

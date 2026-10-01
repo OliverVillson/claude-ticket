@@ -284,8 +284,8 @@ describe('untrusted remote', () => {
   test('control characters are stripped from everything parsed', () => {
     const osc = '\x1b]52;c;ZXZpbA==\x07';
     const m = parseMessageFile(JSON.stringify({ v: 1, id: newId(), type: 'note', title: `hi${osc}`, body: `a${osc}\nb\tc`, ticket: { name: `n${osc}`, id: 1 } }))!;
-    expect(m.title).toBe('hi]52;c;ZXZpbA==');
-    expect(m.body).toBe('a]52;c;ZXZpbA==\nb\tc');
+    expect(m.title).toBe('hi');
+    expect(m.body).toBe('a\nb\tc');
     expect(m.ticket!.name).not.toContain('\x1b');
     const t = parseTicketFile(JSON.stringify({ v: 1, id: newId(), name: `x${osc}`, query: `q\x9b31m`, tags: { [`k${osc}`]: `v${osc}` }, labels: [`l${osc}`] }))!;
     expect([t.name, t.query, ...Object.keys(t.tags), ...Object.values(t.tags), ...t.labels].join('')).not.toMatch(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/);

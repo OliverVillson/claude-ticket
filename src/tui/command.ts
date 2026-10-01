@@ -11,6 +11,8 @@ export interface CommandResult {
   quit?: boolean;
   /** open the add form (`add` with nothing after it) */
   openForm?: boolean;
+  /** open the notification window (`notif` with nothing after it) */
+  openNotif?: boolean;
 }
 
 /** Split a command line the way a shell would: whitespace separates words, quotes group, `\` escapes. */
@@ -69,6 +71,7 @@ export async function runCommand(line: string): Promise<CommandResult> {
   const verb = argv[0]!;
   if (['quit', 'exit', 'q'].includes(verb) && argv.length === 1) return { ok: true, lines: [], quit: true };
   if (verb === 'add' && argv.length === 1) return { ok: true, lines: [], openForm: true };
+  if ((verb === 'notif' || verb === 'notifs') && argv.length === 1) return { ok: true, lines: [], openNotif: true };
   const refused = refuse(argv);
   if (refused) return { ok: false, lines: [refused] };
   if (verb === 'run' && !argv.includes('--detach')) argv.push('--detach');

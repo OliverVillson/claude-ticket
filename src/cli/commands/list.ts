@@ -7,7 +7,7 @@ import { TICKET_STATUSES, ticketLabels, ticketTags, type TicketStatus } from '..
 import { formatTags } from '../../core/tags.ts';
 import { resolveProject } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
-import { dim, yellow } from '../../core/ansi.ts';
+import { dim, safeText, yellow } from '../../core/ansi.ts';
 import { formatAgo, formatCost, statusColor, statusIcon, table } from '../../core/format.ts';
 import { helpIf, isTTY } from './_shared.ts';
 
@@ -109,7 +109,7 @@ export async function list(p: Parsed): Promise<number> {
         id: String(t.id),
         status: statusColor(t.status)(`${statusIcon(t.status)} ${t.status}`),
         pri: t.priority === 0 ? 'now' : String(t.priority),
-        name: t.name,
+        name: safeText(t.name),
         project: t.project,
         tags: dim(formatTags(ticketTags(t), ticketLabels(t))),
         when: dim(formatAgo(t.updated_at, now)),
@@ -119,7 +119,7 @@ export async function list(p: Parsed): Promise<number> {
   );
   for (const t of tickets) {
     const rules = t.status === 'blocked' ? [...new Set(ticketDenials(t).map((d) => d.rule))] : [];
-    if (rules.length) console.log(`${yellow('!')} ${t.name} is blocked: needs permission ${rules.join(', ')}  ${dim(`→ salu allow "${t.name}"`)}`);
+    if (rules.length) console.log(`${yellow('!')} ${safeText(t.name)} is blocked: needs permission ${rules.join(', ')}  ${dim(`→ salu allow "${safeText(t.name)}"`)}`);
   }
   return 0;
 }

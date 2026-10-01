@@ -94,7 +94,7 @@ CLI: `salu add project "sub" --in parent` or `salu add project "parent/sub"`; `s
 
 ## Follow-ups (multi-prompt tickets)
 
-`turns` table (schema v6): `id, ticket_id, role 'user'|'assistant', body, delivered 0|1, created_at`. The ticket's first prompt stays in `tickets.query`; everything after it is a turn. The scheduler stores the worker's final message (trailer line removed) as an `assistant` turn when a run ends `done` or `blocked`.
+`turns` table (schema v8): `id, ticket_id, role 'user'|'assistant', body, delivered 0|1, created_at`. The ticket's first prompt stays in `tickets.query`; everything after it is a turn. The scheduler stores the worker's final message (trailer line removed) as an `assistant` turn when a run ends `done` or `blocked`.
 
 `src/db/queries.ts`
 - `replyToTicket(db, ticketId, message, { now? }): TicketView` adds an undelivered `user` turn. A done, blocked or failed ticket is queued again; a running ticket keeps running and is queued again when it ends; a backlog ticket is refused.

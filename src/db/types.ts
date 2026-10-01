@@ -40,6 +40,8 @@ export interface Ticket {
   cost_usd: number;
   error: string | null;
   denied?: string | null; // JSON array of { tool, input, rule }: tool uses the last run was refused
+  summary?: string | null; // the worker's short final report (set when the ticket is done)
+  branch?: string | null; // the salu/<ticket> git branch the work was committed on, when there is one
   depends_on: string | null; // reserved
   created_at: number;
   updated_at: number;

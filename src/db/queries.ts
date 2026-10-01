@@ -265,7 +265,7 @@ export function queueTicket(db: Database, id: number, o: { now?: boolean } = {})
   if (!t) throw new CliError(`no ticket with id ${id}`);
   if (t.status === 'running') throw new CliError(`"${t.name}" is already running`);
   if (t.status === 'todo' && !o.now) return t;
-  const patch: Parameters<typeof updateTicket>[2] = { status: 'todo', attempts: 0, error: null, denied: null, finished_at: null };
+  const patch: Parameters<typeof updateTicket>[2] = { status: 'todo', attempts: 0, error: null, denied: null, summary: null, branch: null, finished_at: null };
   if (o.now) patch.priority = 0;
   const out = updateTicket(db, id, patch);
   wakeOrchestrator();
@@ -344,6 +344,8 @@ export type TicketPatch = Partial<
     | 'cost_usd'
     | 'error'
     | 'denied'
+    | 'summary'
+    | 'branch'
     | 'started_at'
     | 'finished_at'
     | 'project_id'

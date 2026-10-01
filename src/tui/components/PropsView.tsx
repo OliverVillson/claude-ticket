@@ -1,3 +1,4 @@
+import { safeText } from '../../core/ansi.ts';
 import React, { useMemo, useState } from 'react';
 import { Text, useInput } from 'ink';
 import type { TicketDetail } from '../store.ts';
@@ -67,16 +68,16 @@ export function PropsView(p: PropsViewProps) {
   const [note, setNote] = useState<string | null>(null);
   const [custom, setCustom] = useState(false); // `custom` with empty lists writes no tag: remember the pick
   const denials = statusHasOutput(t.status) ? ticketDenials(t) : [];
-  const needs = [...new Set(denials.map((d) => d.rule))];
-  const parts = splitTags(formatTags(ticketTags(t), ticketLabels(t)));
+  const needs = [...new Set(denials.map((d) => safeText(d.rule)))];
+  const parts = splitTags(safeText(formatTags(ticketTags(t), ticketLabels(t))));
   if (custom && parts.toolset === '') parts.toolset = 'custom';
 
   const proj: Choice[] = p.projects.map((n) => ({ value: n, label: n }));
   const statuses: Choice[] = TICKET_STATUSES.map((s) => ({ value: s, label: s }));
   const rows: EditRow[] = [
-    { key: 'name', label: 'name', kind: 'text', raw: t.name, value: t.name },
-    { key: 'query', label: 'query', kind: 'text', raw: t.query, value: t.query.replace(/\s+/g, ' ') },
-    { key: 'project', label: 'project', kind: 'pick', choices: proj, raw: t.project, value: t.project },
+    { key: 'name', label: 'name', kind: 'text', raw: safeText(t.name), value: safeText(t.name) },
+    { key: 'query', label: 'query', kind: 'text', raw: safeText(t.query), value: safeText(t.query).replace(/\s+/g, ' ') },
+    { key: 'project', label: 'project', kind: 'pick', choices: proj, raw: safeText(t.project), value: safeText(t.project) },
     { key: 'status', label: 'status', kind: 'pick', choices: statuses, raw: t.status, value: t.status },
     ...groupRows('me', parts),
     ...groupRows('tools', parts),
@@ -163,7 +164,7 @@ export function PropsView(p: PropsViewProps) {
     if (note) return st.red(note);
     return hintsText(needs.length && !editing ? [['a', 'allow'], ...hints] : hints, p.columns - 2);
   };
-  const crumbs = [t.project, t.name.length > 40 ? t.name.slice(0, 39) + '…' : t.name, section === 'output' ? 'output' : 'properties'];
+  const crumbs = [safeText(t.project), safeText(t.name).length > 40 ? safeText(t.name).slice(0, 39) + '…' : safeText(t.name), section === 'output' ? 'output' : 'properties'];
   const scrollInfo = outRows.length > height ? st.dim(`${at + 1}-${Math.min(outRows.length, at + height)}/${outRows.length}  #${t.id}`) : st.dim(`#${t.id}`);
   if (section === 'output') {
     const hints = runs.length > 1 ? OUTPUT_HINTS : OUTPUT_HINTS.filter(([k]) => k !== '[ ]');

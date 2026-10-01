@@ -1,6 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import type { Project, Run, TicketStatus, TicketView, Turn } from '../db/types.ts';
 import { countTickets, latestRun, listProjects, listTickets, listTurns } from '../db/queries.ts';
+import { countUnread } from '../notif/index.ts';
 import { readStatus, type OrchestratorStatus } from '../orchestrator/status.ts';
 
 export interface Scope {
@@ -16,6 +17,8 @@ export interface Snapshot {
   counts: Record<TicketStatus, number>;
   status: OrchestratorStatus;
   loadedAt: number;
+  /** unread orchestrator messages (`salu notif`) */
+  unread: number;
 }
 
 /** One consistent read of everything the list view shows. Cheap: four small queries. */
@@ -28,6 +31,7 @@ export function loadSnapshot(db: Database, scope: Scope = {}): Snapshot {
     counts: countTickets(db, projectId),
     status: readStatus(db, now),
     loadedAt: now,
+    unread: countUnread(db),
   };
 }
 
@@ -42,7 +46,7 @@ export function snapshotKey(s: Snapshot): string {
   for (const p of s.projects) out += `${p.id}:${p.name}:${p.is_default}:${(p as { parent_id?: number | null }).parent_id ?? ""};`;
   const o = s.status;
   const p = o.paused;
-  out += `|${o.alive ? 1 : 0}:${o.pid}:${p ? `${p.until}:${p.kind}:${p.manual ? 1 : 0}:${p.reason}:${p.models.join(',')}` : ''}`;
+  out += `|u${s.unread}|${o.alive ? 1 : 0}:${o.pid}:${p ? `${p.until}:${p.kind}:${p.manual ? 1 : 0}:${p.reason}:${p.models.join(',')}` : ''}`;
   for (const w of o.workers) out += `;${w.ticketId}:${w.turns}:${w.lastTool}`;
   return out;
 }

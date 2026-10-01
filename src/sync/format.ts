@@ -94,13 +94,13 @@ export interface MessageFile {
   until?: number; // paused: epoch ms it resumes
 }
 
+import { stripControl } from '../core/ansi.ts';
+
 /**
  * Everything from the remote is untrusted text that ends up on a terminal: drop control characters
  * (ESC, BEL, C1 and so on; newline and tab stay) so it cannot carry escape sequences such as OSC 52.
  */
-// eslint-disable-next-line no-control-regex
-const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
-export const stripControl = (s: string): string => s.replace(CONTROL, '');
+export { stripControl };
 const str = (v: unknown, max: number): string | null => (typeof v === 'string' && v.length <= max ? stripControl(v) : null);
 
 /**

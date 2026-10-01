@@ -4,7 +4,7 @@ import { openDb } from '../../db/db.ts';
 import { getProjectById, listTurns, markFollowUpsDelivered, replyToTicket } from '../../db/queries.ts';
 import { resolveTicket } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
-import { bold, dim, green } from '../../core/ansi.ts';
+import { bold, dim, green, stripControl } from '../../core/ansi.ts';
 import { readStatus } from '../../orchestrator/status.ts';
 import { publishReply, syncProject } from '../../sync/sync.ts';
 import { getRemote } from '../../sync/store.ts';
@@ -21,10 +21,10 @@ front of the queue. Use it to answer a blocked ticket's question, too.`;
 
 /** The conversation as plain lines: the ticket's first prompt, then each follow-up and reply. */
 export function conversationLines(t: TicketView, turns: Turn[]): string[] {
-  const out = [`${bold('you')} ${dim('· first prompt')}`, ...t.query.trim().split('\n').map((l) => '  ' + l)];
+  const out = [`${bold('you')} ${dim('· first prompt')}`, ...stripControl(t.query).trim().split('\n').map((l) => '  ' + l)];
   for (const x of turns) {
     out.push('', `${x.role === 'user' ? bold('you') : green('worker')} ${dim(`· ${new Date(x.created_at).toLocaleString()}${x.role === 'user' && !x.delivered ? ' · waiting for the worker' : ''}`)}`);
-    out.push(...x.body.trim().split('\n').map((l) => '  ' + l));
+    out.push(...stripControl(x.body).trim().split('\n').map((l) => '  ' + l));
   }
   return out;
 }
@@ -57,7 +57,7 @@ export async function reply(p: Parsed): Promise<number> {
   }
   const st = readStatus(db);
   const where = q.status === 'running' ? 'it is running; your message is the next turn' : q.status === 'todo' ? 'queued' : q.status;
-  console.log(`${green('✓')} sent to #${q.id} ${q.name} ${dim(`(${where})`)}`);
+  console.log(`${green('✓')} sent to #${q.id} ${stripControl(q.name)} ${dim(`(${where})`)}`);
   console.log(st.alive ? dim(`(orchestrator running, pid ${st.pid})`) : dim('(start it with `salu run`)'));
   return 0;
 }
