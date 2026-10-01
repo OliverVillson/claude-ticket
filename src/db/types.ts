@@ -40,6 +40,8 @@ export interface Ticket {
   cost_usd: number;
   error: string | null;
   denied?: string | null; // JSON array of { tool, input, rule }: tool uses the last run was refused
+  summary?: string | null; // the worker's short final report (set when the ticket is done)
+  branch?: string | null; // the salu/<ticket> git branch the work was committed on, when there is one
   depends_on: string | null; // reserved
   created_at: number;
   updated_at: number;
@@ -56,6 +58,19 @@ export interface Run {
   turns: number | null;
   cost_usd: number | null;
   log_path: string | null;
+}
+
+/**
+ * One message on a ticket after the first prompt. `user` turns are follow-ups (delivered = 0 until a
+ * worker has been given them), `assistant` turns are the worker's final reply of a run.
+ */
+export interface Turn {
+  id: number;
+  ticket_id: number;
+  role: 'user' | 'assistant';
+  body: string;
+  delivered: number; // 0 | 1
+  created_at: number;
 }
 
 /** A ticket joined with its project name, as most views want it. */

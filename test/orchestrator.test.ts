@@ -186,8 +186,11 @@ describe('login failures', () => {
         return 'ok' as const;
       },
     };
-    const orch = new Orchestrator({ db, concurrency: 1, exitWhenEmpty: true, heartbeatMs: 100, runner: expired as any });
+    const events: OrchestratorEvent[] = [];
+    const orch = new Orchestrator({ db, concurrency: 1, exitWhenEmpty: true, heartbeatMs: 100, runner: expired as any, onEvent: (e) => events.push(e) });
     await orch.start();
+    // listeners (git sync's messages, the views) learn why it stopped
+    expect(events.filter((e) => e.type === 'environment')).toEqual([{ type: 'environment', message: expect.stringContaining('/login') }]);
     expect([status(a.id), status(b.id)].map((t) => t.status)).toEqual(['todo', 'todo']);
     expect([status(a.id), status(b.id)].map((t) => t.attempts)).toEqual([0, 0]);
     expect([status(a.id), status(b.id)].some((t) => (t.error ?? '').includes('/login'))).toBe(true);
@@ -473,7 +476,7 @@ describe('saving does not start work', () => {
     expect(status(b.id).status).toBe('backlog');
   });
 
-  test('CLI: add saves, --queue queues, queue/unqueue move, run starts everything saved', async () => {
+  test('CLI: add queues, --save saves, queue/unqueue move, run starts everything saved', async () => {
     const quiet = async (...a: string[]) => {
       const log = console.log;
       const err = console.error;
@@ -486,8 +489,8 @@ describe('saving does not start work', () => {
         console.error = err;
       }
     };
-    expect(await quiet('add', 'one', 'FAKE:done', '--project', 'demo')).toBe(0);
-    expect(await quiet('add', 'two', 'FAKE:done', '--project', 'demo', '--queue')).toBe(0);
+    expect(await quiet('add', 'one', 'FAKE:done', '--project', 'demo', '--save')).toBe(0);
+    expect(await quiet('add', 'two', 'FAKE:done', '--project', 'demo')).toBe(0);
     const get = (n: string) => listTickets(db, {}).find((t) => t.name === n)!;
     expect([get('one').status, get('two').status]).toEqual(['backlog', 'todo']);
     expect(await quiet('queue', 'one')).toBe(0);
@@ -574,5 +577,75 @@ describe('permission-blocked tickets', () => {
     const r = allowTicket(db, t.id, ['Bash(make *)']);
     expect(r.ticket.status).toBe('todo');
     expect(JSON.parse(status(t.id).tags).tools).toBe('standard;also:Bash(make *)');
+  });
+});
+
+describe('what a finished ticket leaves behind', () => {
+  const git = (...a: string[]) => Bun.spawnSync(['git', ...a], { cwd: projPath, stdout: 'pipe', stderr: 'pipe' });
+
+  test('a done ticket keeps the worker\'s summary (no trailer) and its salu/<ticket> branch', async () => {
+    git('init', '-q');
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init');
+    git('branch', 'salu/fix-login');
+    const t = ticket('Fix login', 'FAKE:done Fixed the redirect loop.');
+    const other = ticket('No branch here', 'FAKE:done');
+    await make().orch.start();
+    expect(status(t.id).status).toBe('done');
+    expect(status(t.id).summary).toBe('Fixed the redirect loop.');
+    expect(status(t.id).branch).toBe('salu/fix-login');
+    expect(status(other.id).branch).toBeNull();
+  });
+
+  test('salu show prints the branch and summary; queueing again clears them', async () => {
+    git('init', '-q');
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init');
+    git('branch', 'salu/ship-it');
+    const t = ticket('Ship it', 'FAKE:done All shipped.');
+    await make().orch.start();
+    const lines: string[] = [];
+    const log = console.log;
+    console.log = (...a: unknown[]) => void lines.push(a.join(' '));
+    try {
+      expect(await dispatch(['show', 'Ship it'])).toBe(0);
+    } finally {
+      console.log = log;
+    }
+    const out = lines.join('\n');
+    expect(out).toContain('branch   salu/ship-it');
+    expect(out).toContain('All shipped.');
+    queueTicket(db, t.id);
+    expect(status(t.id).summary).toBeNull();
+    expect(status(t.id).branch).toBeNull();
+  });
+
+  test('summaryFrom drops the trailer and caps the text', () => {
+    const { summaryFrom } = require('../src/orchestrator/worker.ts');
+    expect(summaryFrom('Did it.\nChecked tests.\n\nTICKET: done')).toBe('Did it.\nChecked tests.');
+    expect(summaryFrom('TICKET: done')).toBeNull();
+    expect(summaryFrom('x'.repeat(9000))!.length).toBe(4000);
+  });
+
+  test('terminal escapes from a worker summary or ticket fields never reach the screen', () => {
+    const { safeText } = require('../src/core/ansi.ts');
+    const { summaryFrom } = require('../src/orchestrator/worker.ts');
+    const evil = 'ok\u001b]52;c;ZXZpbA==\u0007 \u001b[2Jdone\u009b31m\r\tx\ny';
+    expect(safeText(evil)).toBe('ok done\tx\ny');
+    expect(safeText(evil)).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/);
+    expect(summaryFrom(`${evil}\nTICKET: done`)).not.toContain('\u001b');
+  });
+
+  test('salu show strips escapes stored in a ticket', async () => {
+    const t = ticket('plain', 'FAKE:done');
+    updateTicket(db, t.id, { status: 'done', summary: 'hi\u001b]52;c;eA==\u0007 there', error: 'e\u001b[31m' });
+    const lines: string[] = [];
+    const log = console.log;
+    console.log = (...a: unknown[]) => void lines.push(a.join(' '));
+    try {
+      await dispatch(['show', 'plain']);
+    } finally {
+      console.log = log;
+    }
+    expect(lines.join('\n')).not.toContain('\u001b]');
+    expect(lines.join('\n')).not.toContain('\u0007');
   });
 });
