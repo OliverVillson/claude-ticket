@@ -185,7 +185,13 @@ Paste the bench output, `salu runner list` and `sensors` (after a ticket has bee
 Then send a ticket from the Mac that shows it: `salu add "kernel check" "Run uname -a and whoami, install the npm package left-pad in a temp folder, and write what you saw to KERNEL.md; commit it."`
 Its `KERNEL.md` should say you are root in a gVisor container, and the install should work.
 
-**7. Phone pings (optional):** `sudo -u salu env SALU_HOME=/var/lib/salu/web salu remote ntfy`, then subscribe to
+**7. Run the box test list and paste the summary** (needs PR #75, which is stacked on #74; until it is merged, use its branch):
+```sh
+cd ~/salu && scripts/box-tests.sh --tickets --sudo       # runs the checks, then real tickets; saves ~/salu-box-tests-<time>.txt
+cat ~/salu-box-tests-*.txt                               # paste this back to Claude
+```
+
+**8. Phone pings (optional):** `sudo -u salu env SALU_HOME=/var/lib/salu/web salu remote ntfy`, then subscribe to
 the topic in the free ntfy app. The iPhone app itself still waits for your first Xcode build.
 
 ## If you get stuck
