@@ -11,8 +11,9 @@ import { applyAuthPolicy } from '../../core/env.ts';
 
 const HELP = `salu run [project|"name"...] [--concurrency N] [--detach] [--plain] [--no-queue]
 
-Queues every saved ticket (backlog), or only the tickets you name, or those in the project you name,
-then starts the orchestrator. Adding a ticket never starts anything by itself. The orchestrator: claims tickets by priority then age, runs each as its own Claude
+Queues every saved ticket (backlog, from salu add --save), or only the tickets you name, or those in the
+project you name, then starts the orchestrator. Tickets added without --save are already queued and
+start as soon as an orchestrator runs. The orchestrator: claims tickets by priority then age, runs each as its own Claude
 Code session (up to the concurrency cap, default 2), pauses on a rate limit and resumes
 when the window resets. Foreground by default with a live view; --plain logs lines
 instead; --detach runs it in the background (salu stop ends it). --no-queue starts the orchestrator

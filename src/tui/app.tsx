@@ -89,7 +89,7 @@ export const TREE_HINTS: Array<[string, string]> = [
 ];
 
 function formValuesFor(t: TicketView | null | undefined): FormValues {
-  if (!t) return { name: '', query: '', tags: '', priority: '3' };
+  if (!t) return { name: '', query: '', tags: '', priority: '3', queue: true };
   return { name: t.name, query: t.query, tags: formatTags(ticketTags(t), ticketLabels(t)), priority: priorityText(t.priority).replace(/^p/, '') };
 }
 

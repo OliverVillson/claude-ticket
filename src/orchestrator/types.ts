@@ -39,6 +39,8 @@ export interface WorkerResult {
   subtype: string | null;
   /** True when a retry should resume the same session (ran out of turns or budget). */
   resumable: boolean;
+  /** The worker's final report without the TICKET: trailer (done tickets). */
+  summary?: string | null;
   /** Tool uses the session was refused (no approval surface), each with the rule that would allow it. */
   denials?: Denial[];
 }
