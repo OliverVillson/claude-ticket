@@ -98,7 +98,7 @@ export async function runContainerCheck(o: { bin?: string | null } = {}): Promis
     const control = probe('http://example.com/');
     let diagnostics: string | undefined;
     if (control === 0) {
-      const d = inside(['sh', '-c', 'echo "proxy env: $HTTP_PROXY"; ls -l /run/salu 2>&1; (ps -eo pid,args 2>&1 | grep -c "[s]ocat TCP-LISTEN") | sed "s/^/forwarders running: /"; curl -sv --max-time 5 http://example.com/ -o /dev/null 2>&1 | tail -4; echo | socat - UNIX-CONNECT:/run/salu/egress.sock 2>&1 | head -2']);
+      const d = inside(['sh', '-c', 'echo "proxy env: $HTTP_PROXY"; echo "interfaces: $(tail -n +3 /proc/net/dev 2>&1 | cut -d: -f1 | tr -d ' ' | tr '\\n' ' ')"; echo "init log: $(cat /tmp/salu-init.log 2>&1 | tail -3)"; ls -l /run/salu 2>&1; (ps -eo pid,args 2>&1 | grep -c "[s]ocat TCP-LISTEN") | sed "s/^/forwarders running: /"; curl -sv --max-time 5 http://example.com/ -o /dev/null 2>&1 | tail -4; echo | socat - UNIX-CONNECT:/run/salu/egress.sock 2>&1 | head -2']);
       diagnostics = `Inside the container: ${(d.stdout + d.stderr).trim().replace(/\n+/g, ' | ')}`;
     }
     const direct = inside(['curl', '-s', '-o', '/dev/null', '--noproxy', '*', '--max-time', '6', 'http://1.1.1.1/']);
