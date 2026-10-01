@@ -138,6 +138,16 @@ Not covered: the OS sandbox fences shell commands; the file tools are fenced by 
 Anything an agent can read inside the kernel can be sent to any site it can reach. Linux needs
 `sudo apt-get install bubblewrap socat`. `SALU_SANDBOX=off` switches it off everywhere.
 
+## The token-aware scheduler
+
+`salu sched` shows what the queue will cost and whether it fits your plan. Three layers, each usable alone:
+
+- **Estimates.** Every finished run records its cost; salu keeps a median per model and effort (a built-in guess until five runs exist) and learns how many percent of the 5-hour window a dollar of work uses, from runs that had the orchestrator to themselves.
+- **Window-aware dispatch.** Before a ticket starts, its estimate is compared with what is left of the 5-hour window (5% margin) and the week (15% reserve, which `--now` tickets may use). A ticket that does not fit is passed over for a smaller one, at most 3 times, then waited for; when nothing fits the queue is held until the reset. Running tickets are never stopped. With an API key there is no meter: `SALU_BUDGET_USD_PER_DAY` counts dollars the same way.
+- **Model routing.** Tickets labelled docs, chore, typo, lint, format or rename go to Sonnet, and when the Opus window is 85% used (and Sonnet has room) so does any new ticket. Tickets that name a model, ask for effort high or more, have `route=off`, or live in a project with its own default model are never touched. The model and reason are written onto the ticket (`model=sonnet routed=light-task`).
+
+Modes: `salu sched advise` (default) only reports what it would do; `salu sched on` does it; `salu sched off` runs the queue in order as before. The 5-hour numbers have not been checked against a real subscription window yet.
+
 ## Interactive list (demo: `bun run src/tui/demo.ts`)
 
 | Key | Action |

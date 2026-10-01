@@ -18,6 +18,7 @@ import { clearAllWorkerInfo, clearWorkerInfo, HEARTBEAT_MS, readStatus, setPause
 import { runWorker as defaultRunWorker, selectRunner, type RunWorkerParams } from './worker.ts';
 import type { EventListener, OrchestratorEvent, WorkerLive, WorkerResult, WorkerRunner } from './types.ts';
 import { recordRateLimitEvent } from '../usage/index.ts';
+import { TokenAware, type RunWatch } from '../sched/pass.ts';
 
 export const DEFAULT_CONCURRENCY = 2;
 /** A ticket is marked `failed` once this many attempts have failed. */
@@ -59,6 +60,7 @@ interface Active {
   live: WorkerLive;
   lastLiveWrite: number;
   promise: Promise<void>;
+  watch?: RunWatch;
 }
 
 /** What to show on a blocked ticket: the permission it needs first (if the worker was refused something), then the worker's own words. */
@@ -73,6 +75,7 @@ export class Orchestrator {
   private readonly opts: SchedulerOptions;
   private readonly hooks: UsageHooks;
   private readonly runWorkerFn: RunWorkerFn;
+  private readonly tokens: TokenAware;
   private runner: WorkerRunner | null;
   private readonly listeners = new Set<EventListener>();
   private readonly active = new Map<number, Active>();
@@ -95,6 +98,7 @@ export class Orchestrator {
     this.db = opts.db;
     this.hooks = resolveHooks(opts.hooks);
     this.runWorkerFn = opts.runWorker ?? defaultRunWorker;
+    this.tokens = new TokenAware(opts.db, (level, message) => this.log(level, message));
     this.runner = opts.runner ?? null;
     this.heartbeatMs = opts.heartbeatMs ?? HEARTBEAT_MS;
     this.maxAttempts = opts.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
@@ -246,7 +250,10 @@ export class Orchestrator {
       this.emit({ type: 'resume' });
     }
 
+    this.tokens.begin(now);
     this.dispatch(excludeModels);
+    const heldUntil = this.tokens.end();
+    if (heldUntil != null && heldUntil > now) sleepMs = Math.max(50, Math.min(sleepMs, heldUntil - now + 5));
 
     const idle = this.active.size === 0 && !pause && this.queuedCount() === 0;
     if (idle && !this.wasIdle) this.emit({ type: 'idle' });
@@ -267,8 +274,10 @@ export class Orchestrator {
       const t = claimNextTicket(db, {
         projectIds: this.opts.projectIds || eligible.length < projects.length ? eligible : undefined,
         excludeModels: excludeModels ?? undefined,
+        choose: this.tokens.choose,
       });
       if (!t) return;
+      this.tokens.started(t);
       this.launch(t);
     }
   }
@@ -286,6 +295,7 @@ export class Orchestrator {
     const startedAt = Date.now();
     const live: WorkerLive = { turns: 0, lastTool: null, lastText: null, model: null, sessionId: t.session_id };
     const entry: Active = { ticket: t, run, abort, startedAt, live, lastLiveWrite: 0, promise: Promise.resolve() };
+    entry.watch = this.tokens.watch(t, [...this.active.values()].map((a) => a.watch).filter((w): w is RunWatch => !!w));
     this.active.set(t.id, entry);
     this.writeLive(entry, true);
     this.emit({ type: 'dispatch', ticket: t, runId: run.id, resumed });
@@ -329,6 +339,7 @@ export class Orchestrator {
     clearWorkerInfo(db, t.id);
     const now = Date.now();
     finishRun(db, entry.run.id, { outcome: result.outcome, turns: result.turns, cost_usd: result.costUsd });
+    if (entry.watch) this.tokens.learn(entry.watch, result.costUsd);
 
     const fresh = getTicketById(db, t.id);
     let status: TicketStatus | null = null;

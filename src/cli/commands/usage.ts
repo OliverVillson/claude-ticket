@@ -4,6 +4,7 @@ import { openDb } from '../../db/db.ts';
 import { dim, green, red, yellow } from '../../core/ansi.ts';
 import { formatUsageLines, getUsageSnapshot } from '../../usage/index.ts';
 import type { UsageSnapshot } from '../../usage/index.ts';
+import { forecast } from '../../sched/forecast.ts';
 import { helpIf } from './_shared.ts';
 
 const HELP = `salu usage [--json] [--refresh]
@@ -35,5 +36,10 @@ export async function usage(p: Parsed): Promise<number> {
     return 0;
   }
   console.log(lines.map((l, i) => (i === 0 && snap.plan ? dim(l) : colorUsageLine(l, snap))).join('\n'));
+  const f = forecast(db, snap);
+  if (f.queued.length) {
+    const waits = f.queued.filter((q) => !q.fits).length;
+    console.log(dim(`queue: ${f.queued.length} ticket${f.queued.length === 1 ? '' : 's'}, about $${f.totalUsd.toFixed(2)}${f.totalPct != null ? ` (~${Math.round(f.totalPct)}% of a window)` : ''}${waits ? `, ${waits} would wait for a reset` : ''} · salu sched`));
+  }
   return 0;
 }
