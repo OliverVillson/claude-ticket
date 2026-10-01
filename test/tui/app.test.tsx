@@ -236,6 +236,23 @@ describe('ticket actions from the list', () => {
     expect(after.priority).toBe(0);
   });
 
+  test('x resolves a blocked ticket, shown as resolved, and r brings it back', async () => {
+    const { db } = seedDb(6);
+    const blocked = listTickets(db).find((t) => t.status === 'blocked')!;
+    const { term } = mountApp({ db });
+    await term.waitFor((s) => s.includes('1/6'));
+    await term.press('/');
+    await term.press(blocked.name);
+    await term.press(KEY.enter);
+    await term.press('x');
+    await sleep(80);
+    expect(getTicketById(db, blocked.id)!.status).toBe('done');
+    await term.waitFor((s) => s.includes('resolved'), 'resolved shown');
+    await term.press('r');
+    await sleep(80);
+    expect(getTicketById(db, blocked.id)!.status).toBe('todo');
+  });
+
   test('r on a running ticket does nothing', async () => {
     const { db } = seedDb(6);
     const running = listTickets(db).find((t) => t.status === 'running')!;

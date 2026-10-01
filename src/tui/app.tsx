@@ -411,6 +411,18 @@ export function App(p: AppProps) {
     refresh(true);
   };
 
+  const doResolve = (t: TicketView) => {
+    if (t.status === 'running') return say(`"${t.name}" is running; wait for it to finish`, 'info');
+    if (t.status === 'done') return say(`"${t.name}" is already resolved · r replies and brings it back`, 'info');
+    try {
+      actions.resolve(t);
+      say(`"${t.name}" resolved · r replies and brings it back`, 'ok');
+    } catch (e: any) {
+      say(String(e?.message ?? e), 'err');
+    }
+    refresh(true);
+  };
+
   const doAllow = (t: TicketView): string | null => {
     try {
       const rules = actions.allow(t);
@@ -628,6 +640,10 @@ export function App(p: AppProps) {
       }
       if (input === 'a' && mode === 'list' && selected && ticketDenials(selected).length) {
         setAllowAsk({ ticket: selected, rules: [...new Set(ticketDenials(selected).map((d) => d.rule))] });
+        return;
+      }
+      if (input === 'x') {
+        if (selected) doResolve(selected);
         return;
       }
       if (input === 'u') {

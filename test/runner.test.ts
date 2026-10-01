@@ -309,6 +309,6 @@ describe('crash recovery (what systemd Restart=always relies on)', () => {
     }
     second.kill('SIGTERM');
     await second.exited;
-    expect(out).toMatch(/done/);
+    expect(out).toMatch(/resolved/);
   }, 30_000);
 });

@@ -9,6 +9,7 @@ import { validateTools } from '../../core/tools.ts';
 import { parseTags, validateEffort, validateModel, validatePriority } from '../../core/tags.ts';
 import { resolveProjectRef, resolveProject, resolveTicket } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
+import { parseStatus } from '../../core/format.ts';
 import { dim, green } from '../../core/ansi.ts';
 import { helpIf, isTTY } from './_shared.ts';
 
@@ -74,7 +75,8 @@ export async function change(p: Parsed): Promise<number> {
   }
   const priority = flagStr(p, 'priority');
   if (priority !== undefined) patch.priority = validatePriority(priority);
-  const status = flagStr(p, 'status');
+  const statusRaw = flagStr(p, 'status');
+  const status = statusRaw === undefined ? undefined : parseStatus(statusRaw);
   if (status !== undefined) {
     if (!TICKET_STATUSES.includes(status as TicketStatus)) throw new CliError(`status must be one of ${TICKET_STATUSES.join(', ')}`);
     patch.status = status as TicketStatus;
