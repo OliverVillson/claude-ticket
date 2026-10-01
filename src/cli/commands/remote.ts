@@ -7,6 +7,10 @@ import { CliError } from '../../core/errors.ts';
 import { dim, green, red } from '../../core/ansi.ts';
 import { insideWorker, originUrl } from '../../core/kernel.ts';
 import { unsignedWarning } from '../../sync/format.ts';
+import { join } from 'node:path';
+import { rmSync } from 'node:fs';
+import { ensureHome } from '../../core/paths.ts';
+import { loadNtfy, newTopic, publishNtfy, saveNtfy } from '../../sync/ntfy.ts';
 import { checkRemote } from '../../sync/git.ts';
 import { getRemote, listRemotes, pendingMessages, pendingOutReplies, pendingOutTickets, removeRemote, setRemote, unreadCount } from '../../sync/store.ts';
 import { boxName, syncAll, syncProject, type SyncSummary } from '../../sync/sync.ts';
@@ -16,6 +20,7 @@ const HELP = `salu remote add <project> [git-url] [--box] [--name N] [--force]
 salu remote list [--json]
 salu remote remove <project>
 salu remote sync [project] [--watch] [--interval seconds]
+salu remote ntfy [--topic NAME | --off | --test] [--server URL]
 
 Run a project on another computer (an always-on Linux box) with git as the only link: no server, no open
 port. Tickets go to the box, results and messages come back, all through the project's own git remote
@@ -24,6 +29,9 @@ port. Tickets go to the box, results and messages come back, all through the pro
 On your computer:  salu remote add web                 tickets you add to "web" are sent to the box
 On the box:        salu remote add web <url> --box     this machine runs them and reports back
                    salu remote sync --watch            keep exchanging (every 30s, --interval to change)
+
+Phone notifications (on the box): \`salu remote ntfy\` makes a private topic name; subscribe to it in the free ntfy
+app. From then on each message the box posts also goes to ntfy as one line (the title only, never the body).
 
 Messages from the box are kept locally (see \`salu notif\`). Sync needs you to be logged in to git on each
 machine. Anyone who can push to the remote can send the box tickets, so use a private repository.`;
@@ -104,6 +112,30 @@ export async function remote(p: Parsed): Promise<number> {
       if (!getRemote(db, project.id)) throw new CliError(`"${project.name}" has no remote`);
       removeRemote(db, project.id);
       console.log(`${green('✓')} ${project.name} ${dim('no longer syncs (the inbox branch on the remote is left alone)')}`);
+      return 0;
+    }
+    case 'ntfy': {
+      if (flagBool(p, 'off')) {
+        rmSync(join(ensureHome(), 'ntfy.json'), { force: true });
+        console.log(`${green('✓')} phone notifications are off ${dim('(SALU_NTFY_TOPIC in the environment still wins)')}`);
+        return 0;
+      }
+      const given = flagStr(p, 'topic');
+      let cfg = loadNtfy();
+      if (given || !cfg) {
+        try {
+          cfg = saveNtfy(given ?? newTopic(), flagStr(p, 'server'));
+        } catch (e) {
+          throw new CliError(e instanceof Error ? e.message : String(e));
+        }
+      }
+      console.log(`${green('✓')} phone notifications: ${cfg.server}/${cfg.topic}`);
+      console.log(dim('  On your phone: install ntfy, tap +, subscribe to the topic above. Keep it secret: anyone with it can read the titles.'));
+      if (flagBool(p, 'test')) {
+        const err = publishNtfy({ title: 'It works: salu can reach your phone', level: 'success', project: 'test', type: 'note' }, cfg);
+        if (err) throw new CliError(`could not publish: ${err}`);
+        console.log(`${green('✓')} sent a test notification`);
+      }
       return 0;
     }
     case 'sync': {

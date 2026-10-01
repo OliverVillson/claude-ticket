@@ -1,3 +1,4 @@
+import { loadNtfy, publishNtfy } from './ntfy.ts';
 import type { Database } from 'bun:sqlite';
 import { hostname } from 'node:os';
 import type { Project, TicketView } from '../db/types.ts';
@@ -130,6 +131,19 @@ export interface SyncSummary {
   branchesPushed: string[];
 }
 
+/** Tell the phone (ntfy, when set up with `salu remote ntfy`) about messages that just went out. */
+function notifyPhone(sent: { body: string }[]): void {
+  const cfg = loadNtfy();
+  if (!cfg) return;
+  for (const m of sent) {
+    try {
+      publishNtfy(JSON.parse(m.body), cfg);
+    } catch {
+      /* best effort */
+    }
+  }
+}
+
 /** One round trip with the project's remote: send what is waiting, read what arrived, act on it. */
 export function syncProject(db: Database, project: Project, remote: Remote = getRemote(db, project.id)!): SyncSummary {
   if (!remote) throw new CliError(`project "${project.name}" has no remote (salu remote add "${project.name}" <git-url>)`);
@@ -150,6 +164,7 @@ export function syncProject(db: Database, project: Project, remote: Remote = get
     exchange(dir, remote.url, files);
     markTicketsSent(db, outTickets.map((t) => t.uuid));
     markMessagesPosted(db, outMessages.map((m) => m.id));
+    notifyPhone(outMessages);
     markRepliesSent(db, outReplies.map((r) => r.id));
     s.repliesSent = outReplies.length;
     s.ticketsSent = outTickets.length;
@@ -183,6 +198,7 @@ export function syncProject(db: Database, project: Project, remote: Remote = get
         for (const m of more) extra[`${MESSAGES_DIR}/${m.id}.json`] = JSON.stringify(signFile(JSON.parse(m.body)), null, 2) + '\n';
         exchange(dir, remote.url, extra);
         markMessagesPosted(db, more.map((m) => m.id));
+        notifyPhone(more);
         s.messagesSent += more.length;
       }
       s.branchesPushed = pushResultBranches(project, remote);
