@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { accessSync, appendFileSync, chmodSync, constants, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { accessSync, appendFileSync, chmodSync, constants, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir, totalmem } from 'node:os';
 import { join } from 'node:path';
 import type { SpawnedProcess, SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
 import { CliError } from './errors.ts';
@@ -411,21 +411,34 @@ function pidAlive(pid: number): boolean {
   }
 }
 
-/** Container tickets running on this box right now, across all orchestrators. */
-export function boxRunning(dir = boxSlotsDir()): number {
-  let n = 0;
+/** Container tickets running on this box right now, across all orchestrators, and how many of them started in the last `youngMs`. */
+export function boxSlots(dir = boxSlotsDir(), youngMs = 60_000, now = Date.now()): { running: number; young: number } {
+  let running = 0;
+  let young = 0;
   let names: string[] = [];
   try {
     names = readdirSync(dir);
   } catch {
-    return 0;
+    return { running, young };
   }
   for (const f of names) {
     const pid = Number(f.split('-')[0]);
-    if (Number.isInteger(pid) && pidAlive(pid)) n++;
-    else rmSync(join(dir, f), { force: true });
+    if (!Number.isInteger(pid) || !pidAlive(pid)) {
+      rmSync(join(dir, f), { force: true });
+      continue;
+    }
+    running++;
+    try {
+      if (now - statSync(join(dir, f)).mtimeMs < youngMs) young++;
+    } catch {
+      /* gone meanwhile */
+    }
   }
-  return n;
+  return { running, young };
+}
+
+export function boxRunning(dir = boxSlotsDir()): number {
+  return boxSlots(dir).running;
 }
 
 /** Take a slot for a ticket (the caller checked `boxRunning` against the cap first). */
@@ -442,10 +455,64 @@ export function releaseBoxSlot(ticketId: number | string, dir = boxSlotsDir()): 
   rmSync(join(dir, `${process.pid}-${ticketId}`), { force: true });
 }
 
-/** The box-wide cap: SALU_BOX_CONCURRENCY, else what the machine's memory carries (see memoryConcurrency). */
+/**
+ * The most tickets the box runs at once: SALU_BOX_CONCURRENCY, else one per 1.5 GiB beyond the 3 GiB kept for
+ * the system, the egress filter and Podman (16 GB gives 8), at most 8. The containers' 4 GB limits are ceilings,
+ * not what a ticket usually uses, so memory is checked live before each start (`boxAdmit`) instead of reserved.
+ */
 export function boxConcurrency(totalBytes: number, env: NodeJS.ProcessEnv = process.env): number {
   const n = Number(env.SALU_BOX_CONCURRENCY);
-  return Number.isInteger(n) && n > 0 ? n : memoryConcurrency(totalBytes, env);
+  if (Number.isInteger(n) && n > 0) return n;
+  return Math.max(1, Math.min(8, Math.floor((totalBytes - 3 * GIB) / (1.5 * GIB))));
+}
+
+/** MemAvailable in bytes from /proc/meminfo, or null. */
+export function memAvailable(text?: string): number | null {
+  try {
+    const m = /^MemAvailable:\s+(\d+) kB/m.exec(text ?? readFileSync('/proc/meminfo', 'utf8'));
+    return m ? Number(m[1]) * 1024 : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The 10-second "some" memory stall percentage from /proc/pressure/memory (PSI), or null when the kernel has none. */
+export function memoryPressure(text?: string): number | null {
+  try {
+    const m = /^some .*avg10=([\d.]+)/m.exec(text ?? readFileSync('/proc/pressure/memory', 'utf8'));
+    return m ? Number(m[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+export type Admission = { ok: boolean; reason: string | null; running: number; limit: number };
+
+/**
+ * May another container ticket start right now? One always may. Otherwise: under the box ceiling, no memory
+ * pressure (PSI some avg10 below SALU_BOX_PSI, default 10), and the free memory left after counting what a new
+ * ticket (and each one started in the last minute, which is still growing) is expected to take stays above a
+ * margin. Typical footprint SALU_BOX_TICKET_MEMORY (default 1g), margin SALU_BOX_MEMORY_MARGIN (default 3g).
+ */
+export function boxAdmit(o: { dir?: string; total?: number; available?: number | null; pressure?: number | null; env?: NodeJS.ProcessEnv; now?: number } = {}): Admission {
+  const env = o.env ?? process.env;
+  const total = o.total ?? totalmem();
+  const limit = boxConcurrency(total, env);
+  const { running, young } = boxSlots(o.dir ?? boxSlotsDir(env), 60_000, o.now);
+  const no = (reason: string): Admission => ({ ok: false, reason, running, limit });
+  if (running >= limit) return no(`${running} of ${limit} tickets already running on this box`);
+  if (running === 0) return { ok: true, reason: null, running, limit };
+  const psiMax = Number(env.SALU_BOX_PSI ?? 10);
+  const pressure = o.pressure === undefined ? memoryPressure() : o.pressure;
+  if (pressure != null && pressure >= psiMax) return no(`memory pressure ${pressure.toFixed(1)}% (limit ${psiMax}%)`);
+  const typical = parseMemory(env.SALU_BOX_TICKET_MEMORY ?? '1g') ?? GIB;
+  const margin = parseMemory(env.SALU_BOX_MEMORY_MARGIN ?? '3g') ?? 3 * GIB;
+  const avail = o.available === undefined ? memAvailable() : o.available;
+  if (avail != null) {
+    const left = avail - (young + 1) * typical;
+    if (left < margin) return no(`only ${(avail / GIB).toFixed(1)} GiB of memory free with ${young} ticket${young === 1 ? '' : 's'} still starting (keeping ${(margin / GIB).toFixed(1)} GiB spare)`);
+  }
+  return { ok: true, reason: null, running, limit };
 }
 
 // ---- gVisor platform ---------------------------------------------------------------------------------------

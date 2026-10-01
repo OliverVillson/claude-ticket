@@ -5,7 +5,7 @@ import { openDb } from '../../db/db.ts';
 import { resolveProject } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
 import { dim, green, red } from '../../core/ansi.ts';
-import { idleMinutes, startStats, startsLog, buildImage, containerName, engine, ensureContainer, GVISOR_PLATFORMS, gvisorPlatform, imageExists, kernelStatus, KERNEL_IMAGE, kvmUsable, resetContainerReadyCache, runtime, saveToken, setGvisorPlatform, tokenFile, type GvisorPlatform } from '../../core/container.ts';
+import { boxAdmit, idleMinutes, startStats, startsLog, buildImage, containerName, engine, ensureContainer, GVISOR_PLATFORMS, gvisorPlatform, imageExists, kernelStatus, KERNEL_IMAGE, kvmUsable, resetContainerReadyCache, runtime, saveToken, setGvisorPlatform, tokenFile, type GvisorPlatform } from '../../core/container.ts';
 import { kernelPath, prepareKernel, requireHuman } from '../../core/kernel.ts';
 import { helpIf } from './_shared.ts';
 
@@ -74,6 +74,10 @@ export async function kernel(p: Parsed): Promise<number> {
       const idle = idleMinutes();
       console.log(`  ${dim(`containers unload ${idle === null ? 'never' : idle === 0 ? 'as soon as their last ticket ends' : `after ${idle} idle minutes`} (SALU_KERNEL_IDLE_MINUTES) and start again with the next ticket`)}`);
       if (st) console.log(`  ${dim(`start time over ${st.count} starts: median ${(st.medianMs / 1000).toFixed(1)} s, worst ${(st.maxMs / 1000).toFixed(1)} s (${startsLog()})`)}`);
+      if (s.mode === 'container') {
+        const a = boxAdmit();
+        console.log(`  ${dim(`${a.running} of at most ${a.limit} tickets running on this box; ${a.ok ? 'the next one can start now' : `the next one waits: ${a.reason}`}`)}`);
+      }
       for (const pr of s.problems) console.log(`  ${dim(pr)}`);
       return s.mode !== 'container' ? 1 : 0;
     }

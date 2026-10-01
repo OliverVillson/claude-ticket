@@ -1,10 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, utimesSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createServer, connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { boxConcurrency, boxRunning, releaseBoxSlot, takeBoxSlot, ensureContainer, holdContainer, idleMinutes, recordStart, startStats, GVISOR_PLATFORMS, gvisorPlatform, memoryConcurrency, parseMemory, setGvisorPlatform, DOCKERFILE, checkDisk, claudeAuthEnv, requireKernelAuth, containerName, containerReady, containerSpawner, createArgs, engine, execArgs, runtime, saveToken } from '../src/core/container.ts';
+import { boxAdmit, boxConcurrency, boxRunning, memAvailable, memoryPressure, releaseBoxSlot, takeBoxSlot, ensureContainer, holdContainer, idleMinutes, recordStart, startStats, GVISOR_PLATFORMS, gvisorPlatform, memoryConcurrency, parseMemory, setGvisorPlatform, DOCKERFILE, checkDisk, claudeAuthEnv, requireKernelAuth, containerName, containerReady, containerSpawner, createArgs, engine, execArgs, runtime, saveToken } from '../src/core/container.ts';
 import { judgeContainer } from '../src/core/container-check.ts';
 import { createEgressServer, domainAllowed, isBlockedAddress, WEB_PORTS } from '../src/core/egress.ts';
 import { workerSdkOptions } from '../src/orchestrator/worker.ts';
@@ -298,8 +298,35 @@ describe('concurrency and gVisor platform', () => {
     expect(readdirSync(dir)).not.toContain(`${dead}-9`); // stale slot cleaned up
     releaseBoxSlot(1, dir);
     expect(boxRunning(dir)).toBe(1);
-    expect(boxConcurrency(16 * GiB, {})).toBe(3);
+    expect(boxConcurrency(16 * GiB, {})).toBe(8);
+    expect(boxConcurrency(8 * GiB, {})).toBe(3);
     expect(boxConcurrency(16 * GiB, { SALU_BOX_CONCURRENCY: '5' })).toBe(5); // overridable
+  });
+
+  test('a new ticket is admitted by the memory the box has free, not by the containers\' caps', () => {
+    const dir = mkdtempSync(join(root, 'admit-'));
+    const ask = (o: Record<string, any> = {}) => boxAdmit({ dir, total: 16 * GiB, env: {}, pressure: 0, available: 10 * GiB, ...o });
+    expect(ask().ok).toBe(true); // empty box: always
+    expect(ask({ available: 0.1 * GiB }).ok).toBe(true); // the first ticket is never held back
+    const old = Date.now() - 10 * 60_000;
+    for (let i = 1; i <= 4; i++) {
+      writeFileSync(join(dir, `${process.ppid}-${i}`), '');
+      utimesSync(join(dir, `${process.ppid}-${i}`), old / 1000, old / 1000);
+    }
+    expect(ask().ok).toBe(true); // 4 running, plenty free: more than the old limit of 3
+    const low = ask({ available: 3.5 * GiB });
+    expect(low.ok).toBe(false);
+    expect(low.reason).toContain('free');
+    expect(ask({ pressure: 25 }).reason).toContain('pressure');
+    expect(ask({ pressure: null, available: null }).ok).toBe(true); // no PSI/meminfo: only the ceiling applies
+    expect(ask({ env: { SALU_BOX_CONCURRENCY: '4' } }).reason).toContain('4 of 4');
+    // tickets that just started are still growing: they reserve memory
+    for (let i = 5; i <= 7; i++) writeFileSync(join(dir, `${process.ppid}-${i}`), '');
+    expect(ask({ available: 6.5 * GiB }).ok).toBe(false);
+    expect(ask({ available: 12 * GiB }).ok).toBe(true);
+    expect(ask({ available: 12 * GiB, env: { SALU_BOX_CONCURRENCY: '7' } }).ok).toBe(false); // 7 running, ceiling 7
+    expect(memAvailable('MemTotal: 1 kB\nMemAvailable:    2048 kB\n')).toBe(2048 * 1024);
+    expect(memoryPressure('some avg10=12.50 avg60=1.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=0 avg300=0 total=0')).toBe(12.5);
   });
 
   test('the gVisor platform comes from the environment, then the file; bad values are ignored; default is unset', () => {

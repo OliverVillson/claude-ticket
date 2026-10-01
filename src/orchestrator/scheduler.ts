@@ -6,7 +6,7 @@
  * whether dispatch is held, then claim tickets into free slots and start one worker per ticket.
  */
 import { totalmem } from 'node:os';
-import { boxConcurrency, boxRunning, containerReady, releaseBoxSlot, takeBoxSlot } from '../core/container.ts';
+import { boxAdmit, boxConcurrency, containerReady, releaseBoxSlot, takeBoxSlot } from '../core/container.ts';
 import type { Denial } from '../core/tools.ts';
 import type { Database } from 'bun:sqlite';
 import { statSync, watch, type FSWatcher } from 'node:fs';
@@ -153,10 +153,16 @@ export class Orchestrator {
     return containerReady() ? boxConcurrency(totalmem()) : DEFAULT_CONCURRENCY;
   }
 
-  /** True when the machine's memory is already spoken for by container tickets across all orchestrators. */
+  /** True when container tickets across all orchestrators leave no room for another (see `boxAdmit`). */
   private boxFull(): boolean {
-    return this.explicitConcurrency == null && containerReady() && boxRunning() >= boxConcurrency(totalmem());
+    if (this.explicitConcurrency != null || !containerReady()) return false;
+    const a = boxAdmit();
+    if (a.ok) return false;
+    if (a.reason !== this.lastBoxWait) this.log('info', `waiting to start the next ticket: ${a.reason}`);
+    this.lastBoxWait = a.reason;
+    return true;
   }
+  private lastBoxWait: string | null = null;
 
   get isStopping(): boolean {
     return this.stopping;
