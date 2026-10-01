@@ -10,6 +10,8 @@
  *                                           the real SDK sends whole seconds, which the usage module also accepts)
  *   FAKE:sleep <ms> then <one of the above> wait first (abortable)
  *   FAKE:crash                              throw mid-stream
+ *   FAKE:tools [{"tool":"status","args":{...}}, ...] then <one of the above>
+ *                                           call the worker's `salu` tools (status, ask_decision, attach, start_thread) first
  *
  * Anything else counts as `FAKE:done`. The probe honours `SALU_FAKE_LIMIT_UNTIL=<epoch ms>` or
  * a file `fake-limit-until` in SALU_HOME holding that number: closed until then, open after.
@@ -17,6 +19,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ticketHome } from '../core/paths.ts';
+import { openDb } from '../db/db.ts';
+import { callTool } from '../threads/tool.ts';
 import type { LimitHit } from '../usage/types.ts';
 import type { WorkerInput, WorkerRunner } from './types.ts';
 
@@ -67,6 +71,22 @@ export const fakeRunner: WorkerRunner = {
     let script = input.followUp?.length ? input.followUp[input.followUp.length - 1]!.trim() : t.query.trim();
     if (input.followUp?.length && !/^FAKE:/i.test(script)) script = `FAKE:done Follow-up done: ${script}`;
     yield { type: 'ticket_start', ts: Date.now(), ticket_id: t.id, name: t.name, project: t.project, resume: !!input.resume, runner: 'fake', options: { model: 'fake', cwd: t.project_path } };
+    const tools = /^FAKE:tools\s+(\[.*?\])\s+then\s+(.*)$/is.exec(script);
+    if (tools) {
+      script = tools[2]!.trim();
+      yield { ...base, type: 'system', subtype: 'init', model: 'fake', cwd: t.project_path, tools: ['Bash', 'Read', 'Edit'], claude_code_version: 'fake', apiKeySource: 'none', permissionMode: 'acceptEdits', mcp_servers: [], slash_commands: [], output_style: 'default', skills: [], plugins: [] };
+      let calls: Array<{ tool: string; args: unknown }> = [];
+      try {
+        calls = JSON.parse(tools[1]!);
+      } catch {
+        /* a bad script just makes no calls */
+      }
+      for (const [i, c] of calls.entries()) {
+        const r = callTool({ db: openDb(), ticket: t }, c.tool, c.args);
+        yield { ...base, type: 'assistant', parent_tool_use_id: null, message: { role: 'assistant', content: [{ type: 'tool_use', id: `st${i}`, name: `mcp__salu__${c.tool}`, input: c.args }] } };
+        yield { ...base, type: 'user', parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `st${i}`, content: r.text, is_error: !!r.error }] } };
+      }
+    }
     const sleep = /^FAKE:sleep\s+(\d+)\s+then\s+(.*)$/is.exec(script);
     if (sleep) {
       script = sleep[2]!.trim();
