@@ -186,8 +186,11 @@ describe('login failures', () => {
         return 'ok' as const;
       },
     };
-    const orch = new Orchestrator({ db, concurrency: 1, exitWhenEmpty: true, heartbeatMs: 100, runner: expired as any });
+    const events: OrchestratorEvent[] = [];
+    const orch = new Orchestrator({ db, concurrency: 1, exitWhenEmpty: true, heartbeatMs: 100, runner: expired as any, onEvent: (e) => events.push(e) });
     await orch.start();
+    // listeners (git sync's messages, the views) learn why it stopped
+    expect(events.filter((e) => e.type === 'environment')).toEqual([{ type: 'environment', message: expect.stringContaining('/login') }]);
     expect([status(a.id), status(b.id)].map((t) => t.status)).toEqual(['todo', 'todo']);
     expect([status(a.id), status(b.id)].map((t) => t.attempts)).toEqual([0, 0]);
     expect([status(a.id), status(b.id)].some((t) => (t.error ?? '').includes('/login'))).toBe(true);

@@ -15,6 +15,8 @@ export type OrchestratorEvent =
   | { type: 'resume' }
   | { type: 'probe'; ok: boolean; detail?: string }
   | { type: 'idle' }
+  /** The machine, not a ticket, cannot go on (logged out, expired or rejected credentials): the orchestrator is about to stop. */
+  | { type: 'environment'; message: string }
   | { type: 'log'; level: 'info' | 'warn' | 'error'; message: string }
   | { type: 'stop' };
 

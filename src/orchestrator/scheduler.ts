@@ -386,6 +386,7 @@ export class Orchestrator {
 
     if (this.envProblem && !this.stopping) {
       this.log('error', `${this.envProblem} The ticket went back to todo; run \`salu run\` again once this is fixed.`);
+      this.emit({ type: 'environment', message: this.envProblem });
       this.stop('environment problem');
     }
     if (result.outcome === 'rate_limited' && result.limit && !this.stopping) {
