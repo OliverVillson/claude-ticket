@@ -57,21 +57,32 @@ struct SettingsView: View {
                 .listRowBackground(Salu.surface)
 
                 Section {
-                    SecureField("", text: $keyDraft, prompt: Text("from salu remote add --box").foregroundStyle(Salu.chrome))
+                    SecureField("", text: $keyDraft, prompt: Text("salu remote key, on the box").foregroundStyle(Salu.chrome))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .submitLabel(.done)
                         .onSubmit(saveKey)
-                    Button("Paste key") {
+                    Button(store.signingKey.isEmpty ? "Paste key" : "Replace with pasted key") {
                         if let s = UIPasteboard.general.string {
                             keyDraft = s.trimmed
                             saveKey()
                         }
                     }
+                    if !store.signingKey.isEmpty {
+                        if Store.keyTooShort(store.signingKey) {
+                            Text("✗ too short: copy the whole line `salu remote key` prints")
+                                .font(Salu.mono(.footnote))
+                                .foregroundStyle(Salu.error)
+                        } else {
+                            LabeledContent("key set") {
+                                Text("…" + store.signingKey.trimmed.suffix(4)).foregroundStyle(Salu.chrome)
+                            }
+                        }
+                    }
                 } header: {
                     label("signing key")
                 } footer: {
-                    note("The key `salu remote add --box` showed on the box (SALU_REMOTE_KEY). The phone signs every ticket and reply with it and ignores messages that aren't signed with it; the box does the same. It stays in the iOS Keychain, on this phone only.")
+                    note("Run `salu remote key` on the box and paste what it prints (`salu remote add <project> --box` showed it the first time). The phone signs every ticket and reply with it and ignores messages that aren't signed with it. After `salu remote key --new`, paste the new key here; messages signed with the old one are hidden. It stays in the iOS Keychain, on this phone only.")
                 }
                 .listRowBackground(Salu.surface)
 
