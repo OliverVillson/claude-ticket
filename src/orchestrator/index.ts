@@ -12,6 +12,9 @@ import { closeSync, existsSync, openSync } from 'node:fs';
 import { openDb } from '../db/db.ts';
 import { getProjectById } from '../db/queries.ts';
 import { CliError } from '../core/errors.ts';
+import { execReplace } from '../core/exec.ts';
+import { orchestratorEnvToScrub } from '../core/kernel.ts';
+import { listProjects } from '../db/queries.ts';
 import { dim, green } from '../core/ansi.ts';
 import { orchestratorLogPath, ensureHome } from '../core/paths.ts';
 import { readStatus } from './status.ts';
@@ -68,6 +71,20 @@ export async function startOrchestratorCommand(o: { projectIds?: number[]; concu
     throw new CliError(`an orchestrator is already running (pid ${st.pid}); \`salu stop\` ends it`);
   }
 
+  // A worker's shell must not be able to read this process's environment: start over with only what workers get.
+  const clean = orchestratorEnvToScrub(listProjects(db).some((p) => p.sandbox));
+  if (clean && !o.detach) {
+    // Replace this process, do not wait for a clean child: a waiting parent would keep the old environment readable.
+    const args = ['run', ...(o.plain ? ['--plain'] : []), ...(o.concurrency ? ['--concurrency', String(o.concurrency)] : [])];
+    const env = { ...clean, ...(projectIds ? { SALU_PROJECT_IDS: projectIds.join(',') } : {}) };
+    try {
+      await execReplace(selfCommand(args), env);
+    } catch (e: any) {
+      // No exec here: run in the background instead (its launcher exits, nothing keeps the old environment).
+      console.log(`${dim(`${e?.message ?? e}; starting in the background instead (\`salu log -f\` follows it)`)}`);
+      return detach({ projectIds, concurrency: o.concurrency });
+    }
+  }
   if (o.detach) return detach({ projectIds, concurrency: o.concurrency });
 
   const orch = new Orchestrator({ db, projectIds, concurrency: o.concurrency });
@@ -119,7 +136,7 @@ function detach(o: { projectIds?: number[]; concurrency?: number }): number {
   ensureHome();
   const args = ['run', '--plain'];
   if (o.concurrency) args.push('--concurrency', String(o.concurrency));
-  const env: Record<string, string | undefined> = { ...process.env };
+  const env: Record<string, string | undefined> = orchestratorEnvToScrub(listProjects(db).some((p) => p.sandbox)) ?? { ...process.env };
   if (o.projectIds?.length === 1) {
     const p = getProjectById(db, o.projectIds[0]!);
     if (p) args.push(p.name);

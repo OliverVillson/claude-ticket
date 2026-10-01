@@ -334,7 +334,7 @@ describe('add and edit form', () => {
     expect(JSON.parse(t.tags)).toEqual({ model: 'opus', effort: 'high' });
     expect(JSON.parse(t.labels)).toEqual(['docs']);
     expect(t.priority).toBe(1);
-    expect(t.status).toBe('backlog');
+    expect(t.status).toBe('todo');
   });
 
   test('priority "now" is accepted', async () => {
@@ -510,6 +510,27 @@ describe('ticket detail', () => {
     await term.press(KEY.down);
     await sleep(100);
     expect(term.lastFrame()).not.toEqual(first);
+  });
+
+  test('r on a done ticket opens a reply prompt; Enter sends it and queues the ticket', async () => {
+    const { db } = seedDb(6);
+    const done = listTickets(db).find((t) => t.status === 'done')!;
+    const { addTurn, listTurns } = await import('../../src/db/queries.ts');
+    addTurn(db, done.id, 'assistant', 'I changed the thing.');
+    const { term } = mountApp({ db });
+    await term.waitFor((s) => s.includes('1/6'));
+    await term.press('/');
+    await term.press(done.name);
+    await term.press(KEY.enter);
+    await term.press(KEY.enter);
+    await term.waitFor((s) => s.includes('I changed the thing.'), 'the worker reply in the detail view');
+    await term.press('r');
+    await term.waitFor((s) => s.includes('your message'), 'reply prompt');
+    await term.press('now add tests');
+    await term.press(KEY.enter);
+    await term.waitFor((s) => s.includes('queued it'), 'sent message');
+    expect(getTicketById(db, done.id)!.status).toBe('todo');
+    expect(listTurns(db, done.id).at(-1)).toMatchObject({ role: 'user', body: 'now add tests', delivered: 0 });
   });
 
   test('deleting from the detail view returns to the list', async () => {
@@ -947,6 +968,18 @@ describe('ticket properties (right arrow on a ticket)', () => {
     await term.waitFor((s) => !s.includes('properties') && s.includes('ticket 001'), 'back to list');
   });
 
+  test('escape bytes in a ticket name or query never reach the properties panel', async () => {
+    const { db, ids } = seedDb(12);
+    updateTicket(db, ids[0]!, { name: 'ticket 001\u001b]52;c;ZXZpbA==\u0007', query: 'do\u001b]0;pwned\u0007 it' });
+    const { term } = mountApp({ db });
+    await term.waitFor((s) => s.includes('ticket 001'));
+    await term.press(KEY.right);
+    const f = await term.waitFor((s) => s.includes('properties'), 'props');
+    expect(f).not.toContain('\u001b');
+    expect(f).not.toContain('\u0007');
+    expect(f).toContain('do it');
+  });
+
   test('a text property is edited in place and saved through salu change', async () => {
     const { db, ids } = seedDb(12);
     const { term } = mountApp({ db });
@@ -1224,17 +1257,17 @@ describe('backlog and queue', () => {
     await term.press(KEY.tab);
     await term.press('do it');
     for (let i = 0; i < 3; i++) await term.press(KEY.tab); // tags, priority, then
-    if (queue) await term.press(KEY.right);
+    if (!queue) await term.press(KEY.right); // a new ticket is queued by default; right switches to save only
     await term.press(KEY.enter);
   };
 
-  test('a new ticket is saved to the backlog by default and says how to queue it', async () => {
+  test('a new ticket is queued by default; save only keeps it in the backlog and says how to queue it', async () => {
     const { db } = seedDb(3);
     const { term } = mountApp({ db });
     await term.waitFor((s) => s.includes('1/3'));
     await term.press('a');
-    const f = await term.waitFor((s) => s.includes('save only'), 'queue row');
-    expect(f).toContain('backlog');
+    const f = await term.waitFor((s) => s.includes('save and queue'), 'queue row');
+    expect(f).toContain('runs as soon as');
     await term.press(KEY.esc);
     await addTicket(term, 'Saved only', false);
     const m = await term.waitFor((s) => s.includes('to the backlog'), 'added message');

@@ -60,7 +60,7 @@ salu add "landing page"          # no project yet? salu makes "landing-page-proj
 salu add "fix login" "Fix the login bug in auth.ts and add a test" "model=opus effort=high priority=1 bug"
 salu add "write docs" "Write a README for the API" "docs max-turns=20"
 salu list                                      # interactive list (arrow keys)
-salu queue "fix login"                         # adding only saves a ticket; queue it to let it run
+salu queue "fix login"                         # only needed after `salu add --save`
 salu run                                       # queues everything saved, then the orchestrator with a live view
 salu run --detach                              # or in the background; `salu stop` ends it
 salu status                                    # state, counts, pause reason and resume time
@@ -73,8 +73,10 @@ salu log "fix login" --follow                  # worker transcript
 | --- | --- |
 | `salu add project "sub" --in parent` | Subproject (also `"parent/sub"`); its folder defaults to a folder inside the parent's. A project shows the tickets of all its subprojects, a subproject only its own. `salu change project "x" --in parent\|none` moves it; removing a project removes its subprojects too (it asks first). |
 | `salu add project "name" [path] [--clone git-url]` | Registers a project. With no `path` it uses the current folder if that is a git repo, else creates `./<name>`. `--clone <url>` (with `--path folder`, default `./<repo name>`) has salu clone the repo there first; the folder must be new or empty. Works with `--in parent`. Flags: `--model`, `--effort`, `--concurrency`, `--default`. |
-| `salu add "name" "query" ["tags"] [--queue]` | Saves a ticket (status `backlog`); it never runs by itself. `query` is the prompt the worker gets. Tags are `key=value` pairs and bare labels. `--queue` saves and queues it. |
+| `salu add "name" "query" ["tags"] [--save]` | Adds a ticket and queues it: a running orchestrator picks it up, so you can write an idea and walk away. `query` is the prompt the worker gets. Tags are `key=value` pairs and bare labels. `--save` only saves it (status `backlog`) until you queue it. |
+| `salu show "name" [--json]` | What a ticket ended with: status, the `salu/<ticket>` branch the work was committed on, and the worker's short summary (or the question it is blocked on). |
 | `salu queue "name"... \| --all [project]` | Queues saved tickets (status `todo`, shown as queued): a running orchestrator starts them at once. Also re-queues a done, failed or blocked ticket. `--now` goes to the front. |
+| `salu reply "name" ["message"] [--now]` | Keep chatting on a ticket after its reply: resumes the same worker session (same `salu/` branch) with your message, and answers a blocked ticket's question too. No message prints the conversation. In the TUI: open the ticket, press `r`. |
 | `salu allow "name" [--tool RULE]` | Unblocks a ticket that was refused a permission: adds the denied rule (or `--tool`) to its `tools` and queues it again. |
 | `salu unqueue "name"` | Takes a queued ticket that has not started back to the backlog. |
 | `salu remove "name" [--yes]` | Deletes a ticket; a running one is stopped first. `salu remove project "name"` deletes a project and its tickets. |
@@ -83,6 +85,7 @@ salu log "fix login" --follow                  # worker transcript
 | `salu run [project\|"name"...] [--concurrency N] [--detach] [--plain]` | Queues every saved ticket (or only the named tickets, or those in the named project) and starts the orchestrator. If one is already running it just queues and lets it pick them up. |
 | `salu pause` / `salu resume` / `salu stop` | Pause dispatch after current workers finish; resume early; stop a detached orchestrator. |
 | `salu status [--json]` | One screen of state. |
+| `salu notif [--all] [--json]` | Messages from your project orchestrators: a ticket is done, blocked on a question, failed, or paused for the usage limit. In a terminal it opens the notification window; `--plain` (or a pipe) prints them. `salu notif read <id>... \| --all` marks them read from the shell. |
 | `salu log "name" [--follow] [--raw] [--run N]` | Worker transcript for a ticket. |
 | `salu plan "name" [--yes]` | Asks Claude to split a ticket into sub-tickets and adds them on approval. |
 
@@ -113,6 +116,14 @@ without asking (it can follow a preset: `edit;also:...`).
 
 Any other token (`bug`, `docs`, `team=core`) is stored as a label or custom tag for filtering.
 
+## Running on a box (git sync)
+
+`salu remote add web` (on your computer) and `salu remote add web <url> --box` plus `salu remote sync --watch`
+(on an always-on Linux box) run a project on the box with git as the only link: tickets you add go to the box,
+`salu reply "name" "text"` keeps the conversation going, and results (`salu/<ticket>` branches) and messages come
+back through the project's own git remote, on the branch `salu/inbox`. No server, no open port. Use a private
+repository: anyone who can push to it can send the box tickets. Format and details: INTERFACES.md ("Git sync transport").
+
 ## The kernel (sandbox, opt-in per project)
 
 `salu add project web --sandbox` (or `salu change project web --sandbox` / `--no-sandbox`) runs that
@@ -133,6 +144,21 @@ project's workers in a kernel:
 - Nothing reaches your real project until you run, yourself, from a terminal (a guard rail: the real barrier is that agents cannot write outside the kernel or use your git login):
   - `salu push [project] [--branch B] [--to url] [--dry-run]` pushes the `salu/*` branches to the project's git remote.
   - `salu export <folder> [project] [--git] [--force]` copies the files to a folder.
+
+- When any project is sandboxed, `salu run` replaces itself (execve, same pid) with a copy that has only the
+  environment allow-list workers get, so a worker's shell cannot read the orchestrator's environment
+  (`/proc/<pid>/environ`); `--detach` starts the clean copy directly. Where exec is not possible it starts in the
+  background instead. Unsandboxed workers then lose variables outside the list: `SALU_ENV_PASS=NAME` brings one
+  back, `SALU_ORCH_ENV=keep` turns this off. The API key (when you use one) stays in the worker's own environment:
+  that is how it logs in, so prefer a subscription login for sandboxed projects.
+- After each sandboxed run salu lists links that leave the kernel and files with several hard links (`salu kernel
+  audit:` in the ticket log). **This is a warning about residue, not a barrier:** it runs after the run's output
+  has streamed, it skips `node_modules` and `.git/objects`, and a worker that removes its link leaves nothing to
+  find. What actually stops reads and writes is the OS sandbox and the file-tool check.
+- `salu doctor --sandbox` restarts itself the way `salu run` does, plants canary files in your home folder and runs
+  one small haiku ticket that tries to read, write and hard-link them and to read the old environment. A probe
+  only counts when the session log shows the agent really made the attempt; otherwise it fails as "not tested".
+  It is evidence that these attempts were refused on this machine now, not a proof that nothing can escape.
 
 Not covered: the OS sandbox fences shell commands; the file tools are fenced by the permission rules above.
 Anything an agent can read inside the kernel can be sent to any site it can reach. Linux needs
@@ -173,6 +199,7 @@ your Claude account's settings, and for an API key use one with a spend limit. A
 | r | Queue the selected ticket and run it now, ahead of the queue (a saved ticket never runs until queued) |
 | a | On a ticket blocked by a permission (list, properties or output): allow what it was refused and queue it again, after a confirm line |
 | p | Pause or resume the orchestrator |
+| n | Notifications (also `notif` on the command line): rest the mouse on a message, or press Enter, and it is marked read and goes away |
 | / | Filter by name, label or status |
 | Tab / Shift-Tab | The only keys that move between windows (projects, tickets, command line) |
 | → on a done, failed or blocked ticket | Its output: the result, the error, and the run transcript (↑↓ scroll, `[` `]` earlier runs, `p` properties, `o` back to output) |
@@ -180,6 +207,26 @@ your Claude account's settings, and for an API key use one with a spend limit. A
 | → on tags (new ticket) | Tag groups: Model / effort, Tools (`standard` = Claude Code's regular tools), Other |
 | < / > | Narrow terminals: switch project |
 | q / Esc | Quit, or close the open ticket |
+
+## Notifications (`salu notif`)
+
+An orchestrator tells you when a ticket needs a human: done, blocked (with its question), failed for
+good, or the orchestrator paused for the usage limit, or stopped because of a problem such as an
+expired login. Retries and interruptions stay silent. `salu notif` shows the unread messages, newest
+first; the list header and `salu status` show how many are waiting.
+
+Messages from a box come over the project's git remote (see `salu remote`, the format is in
+INTERFACES.md) and are kept on your computer; the window and `salu notif` fetch new ones (`--no-fetch`
+skips that, `SALU_NO_FETCH=1` turns background fetching off). An orchestrator running on this
+computer posts its messages the same way, so one window shows both.
+
+In the window, **resting the mouse on a message for about half a second marks it read and it goes
+away** (it does not repeat for the next one until the mouse moves). The keyboard does the same: ↑↓
+to a message, Enter marks it read, `a` marks all read, Esc closes. A click marks read at once and the
+wheel scrolls. Mouse reporting is only on while the window is open; `SALU_NO_MOUSE=1` keeps it off and
+the keyboard still does everything. `salu notif --all` keeps read messages in the list, dimmed.
+From the shell: `salu notif --plain` prints them (and leaves them unread), `salu notif read <id>... |
+--all` marks them read, `salu notif add "title" --project P` posts one by hand.
 
 ## How the orchestrator works
 
