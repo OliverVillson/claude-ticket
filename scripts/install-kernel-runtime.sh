@@ -64,7 +64,7 @@ fi
 say "== packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq podman uidmap passt slirp4netns fuse-overlayfs crun curl ca-certificates bzip2 apparmor-utils socat >/dev/null
+apt-get install -y -qq podman uidmap passt slirp4netns fuse-overlayfs crun curl ca-certificates bzip2 apparmor-utils socat iproute2 python3 util-linux >/dev/null
 
 say "== user $USER_NAME"
 id "$USER_NAME" >/dev/null 2>&1 || useradd -m -s /bin/bash "$USER_NAME"
@@ -119,6 +119,24 @@ if [ "$GVISOR" -eq 1 ]; then
 P="\${SALU_GVISOR_PLATFORM:-}"
 [ -z "\$P" ] && [ -r "\${XDG_CONFIG_HOME:-\$HOME/.config}/salu/gvisor-platform" ] && P="\$(cat "\${XDG_CONFIG_HOME:-\$HOME/.config}/salu/gvisor-platform")"
 case "\$P" in kvm|ptrace|systrap) set -- --platform="\$P" "\$@" ;; esac
+# Podman's empty network namespace has a loopback that is DOWN; crun/runc bring it up themselves but gVisor does not
+# and then gives the sandbox no network stack at all (no 127.0.0.1, so the egress forwarder cannot start). Bring it up
+# in the container's namespace before gVisor reads it. Best effort, logged to ~/.local/state/salu/runsc-wrapper.log.
+BUNDLE=""; CREATING=0; PREV=""
+for A in "\$@"; do
+  [ "\$PREV" = "--bundle" ] && BUNDLE="\$A"
+  case "\$A" in --bundle=*) BUNDLE="\${A#--bundle=}" ;; create) CREATING=1 ;; esac
+  PREV="\$A"
+done
+if [ "\$CREATING" = 1 ] && [ -r "\$BUNDLE/config.json" ]; then
+  NETNS="\$(python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(next((n.get("path","") for n in c.get("linux",{}).get("namespaces",[]) if n.get("type")=="network"),""))' "\$BUNDLE/config.json" 2>/dev/null)"
+  LOG="\${XDG_STATE_HOME:-\$HOME/.local/state}/salu/runsc-wrapper.log"; mkdir -p "\$(dirname "\$LOG")" 2>/dev/null
+  if [ -n "\$NETNS" ]; then
+    nsenter --net="\$NETNS" ip link set lo up >>"\$LOG" 2>&1 && echo "\$(date -u +%FT%TZ) lo up in \$NETNS" >>"\$LOG" || echo "\$(date -u +%FT%TZ) could not bring lo up in \$NETNS" >>"\$LOG"
+  else
+    echo "\$(date -u +%FT%TZ) no network namespace path in the spec: nothing to bring up" >>"\$LOG"
+  fi
+fi
 exec /usr/local/bin/runsc --ignore-cgroups --host-uds=open "\$@"
 WRAP
   chmod 0755 "$RUNSC_WRAPPER"
