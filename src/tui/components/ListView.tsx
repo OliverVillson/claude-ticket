@@ -43,6 +43,8 @@ export interface ListViewProps {
   spinner?: number;
   /** two-pane layout: the project tree drawn to the left of the tickets (each line exactly `width` cells) */
   sidebar?: { width: number; lines: string[] };
+  /** tickets with an open decision */
+  asking?: Set<number>;
   /** third pane (wide terminals): the selected thread's conversation, each line at most `inner` cells */
   thread?: { inner: number; title: string; lines: string[] };
   /** the thread pane has the focus */
@@ -159,7 +161,7 @@ export function ListView(p: ListViewProps) {
     for (let i = p.top; i < end; i++) {
       const t = p.tickets[i]!;
       const on = p.ticketFocus !== false && i === p.cursor;
-      const row = renderRow(t, { layout: p.layout, now: p.now, style: st, selected: on, spinner: t.status === 'running' ? p.spinner : undefined });
+      const row = renderRow(t, { layout: p.layout, now: p.now, style: st, selected: on, asking: p.asking?.has(t.id), spinner: t.status === 'running' ? p.spinner : undefined });
       right.push(on ? endCell(row, rightInner, st, true) : row);
     }
     if (overflow) {

@@ -56,7 +56,7 @@ export function paintStatus(st: Style, status: TicketStatus, text: string): stri
 export function paintPriority(st: Style, p: number, text: string): string {
   if (p <= 0) return paint(st, 'accent', text, { bold: true });
   if (p === 1) return paint(st, 'accent', text);
-  if (p === 2) return paint(st, 'yellow', text);
+  if (p === 2) return paint(st, 'green', text);
   if (p === 3) return text;
   return st.dim(text);
 }

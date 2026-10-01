@@ -22,8 +22,7 @@ import { ticketDenials } from '../core/allow.ts';
 import { PropsView } from './components/PropsView.tsx';
 import { DetailView } from './components/DetailView.tsx';
 import { FormView, type FormValues } from './components/FormView.tsx';
-import { layoutThread } from './thread.ts';
-import { partitionResolved } from './thread.ts';
+import { layoutThread, openDecision, partitionResolved } from './thread.ts';
 import { ReplyView } from './components/ReplyView.tsx';
 import { HelpView } from './components/HelpView.tsx';
 import { style as st } from './style.ts';
@@ -76,7 +75,7 @@ export const TWO_PANE_MIN_COLUMNS = 104;
 /** Terminals at least this wide also get the selected thread's conversation as a third pane. */
 export const THREE_PANE_MIN_COLUMNS = 150;
 
-export const TICKET_PANE_HINTS: Array<[string, string]> = [['↑↓', 'move'], ['tab', 'switch pane'], ['x', 'resolve'], ...LIST_HINTS.filter(([k]) => k !== 'tab' && k !== '↑↓')];
+export const TICKET_PANE_HINTS: Array<[string, string]> = [['↑↓', 'move'], ['tab', 'switch pane'], ...LIST_HINTS.filter(([k]) => k !== 'tab' && k !== '↑↓')];
 
 export const THREAD_PANE_HINTS: Array<[string, string]> = [
   ['↑↓', 'scroll'],
@@ -206,7 +205,7 @@ export function App(p: AppProps) {
     for (const t of scoped) c[t.status]++;
     return c;
   }, [scoped]);
-  const visible = useMemo(() => partitionResolved(applyFilter(scoped, filter)), [scoped, filter]);
+  const visible = useMemo(() => partitionResolved(applyFilter(scoped, filter), snapshot.asking), [scoped, filter, snapshot.asking]);
   const safeCursor = clampCursor(cursor, visible.length);
   const selected: TicketView | undefined = visible[safeCursor];
   selectedIdRef.current = selected?.id ?? null;
@@ -268,7 +267,7 @@ export function App(p: AppProps) {
       if (!force && key === keyRef.current) return;
       keyRef.current = key;
       setSnapshot(snap);
-      const vis = partitionResolved(applyFilter(snap.tickets, filterRef.current));
+      const vis = partitionResolved(applyFilter(snap.tickets, filterRef.current), snap.asking);
       const id = selectedIdRef.current;
       const idx = id == null ? -1 : vis.findIndex((t) => t.id === id);
       setCursor((c) => (idx >= 0 ? idx : clampCursor(c, vis.length)));
@@ -685,6 +684,20 @@ export function App(p: AppProps) {
         return;
       }
       if (input === 'o' && (mode === 'detail' || threePane)) return setShowOutputs((v) => !v);
+      // 1-4 answer the open decision of the thread in front of you.
+      if (/^[1-4]$/.test(input) && detail && selected && detail.ticket.id === selected.id && (mode === 'detail' || (threePane && mode === 'list' && pane !== 'tree'))) {
+        const d = openDecision(detail);
+        const n = Number(input);
+        if (!d || n > d.options.length) return;
+        try {
+          const t = actions.answerDecision(selected, d.id, n - 1);
+          say(t ? `picked "${d.options[n - 1]!.label}" · "${selected.name}" is told and queued` : `picked "${d.options[n - 1]!.label}" · the worker already went with it`, 'ok');
+        } catch (e: any) {
+          say(String(e?.message ?? e), 'err');
+        }
+        refresh(true);
+        return;
+      }
       if (input === 'a' && mode === 'list' && selected && ticketDenials(selected).length) {
         setAllowAsk({ ticket: selected, rules: [...new Set(ticketDenials(selected).map((d) => d.rule))] });
         return;
@@ -865,6 +878,7 @@ export function App(p: AppProps) {
   return (
     <ListView
       thread={thread}
+      asking={snapshot.asking}
       threadFocus={pane === 'thread'}
       sidebar={sidebar}
       activity={activity}
@@ -876,7 +890,7 @@ export function App(p: AppProps) {
       ticketFocus={!twoPane || pane === 'tickets'}
       crumbs={scopeCrumbs}
       projectConfirm={projConfirm ? `remove project "${projConfirm.name}" and its tickets?` : allowAsk ? `Allow ${allowAsk.rules.join(', ')} for "${allowAsk.ticket.name}" and queue it again?` : null}
-      hints={cmdEditing ? COMMAND_HINTS : twoPane ? (pane === 'tree' ? TREE_HINTS : pane === 'thread' ? THREAD_PANE_HINTS : TICKET_PANE_HINTS) : LIST_HINTS}
+      hints={cmdEditing ? COMMAND_HINTS : twoPane ? (pane === 'tree' ? TREE_HINTS : pane === 'thread' ? (detail && selected && detail.ticket.id === selected.id && openDecision(detail) ? [['1-4', 'answer'], ...THREAD_PANE_HINTS] : THREAD_PANE_HINTS) : TICKET_PANE_HINTS) : LIST_HINTS}
       columns={columns}
       rows={rowsAvail}
       tickets={visible}

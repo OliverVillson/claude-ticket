@@ -6,7 +6,7 @@ import type { TicketDetail } from '../store.ts';
 import { ago, displayWidth, extraTags, fmtCost, fmtDuration, labelText, modelEffort, priorityText, truncate, wrapText } from '../format.ts';
 import { blinkOn, withWritingCursor } from '../blink.ts';
 import { messageText, type Message } from '../messages.ts';
-import { layoutThread, type ThreadExtras } from '../thread.ts';
+import { layoutThread, openDecision, type ThreadExtras } from '../thread.ts';
 import { style as st } from '../style.ts';
 import { SPINNER_FRAMES, STATUS_STYLE, paint, paintPriority, paintStatus } from '../theme.ts';
 import { Frame, confirmText, hintsText, titleText } from './Frame.tsx';
@@ -108,7 +108,7 @@ export function DetailView(p: DetailViewProps) {
     ? { left: confirmText(`delete "${truncate(p.confirm.name, 40)}"?`) }
     : p.message
       ? { left: messageText(p.message) }
-      : { left: hintsText(DETAIL_HINTS, cols - 2) };
+      : { left: hintsText(openDecision(p.detail) ? [['1-4', 'answer'], ...DETAIL_HINTS] : DETAIL_HINTS, cols - 2) };
   return (
     <Frame columns={cols} header={{ left: titleText(crumbs), right: st.dim(idText) }} footer={footer}>
       {lines.map((l, i) => (

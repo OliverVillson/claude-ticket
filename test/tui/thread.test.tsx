@@ -10,6 +10,8 @@ import { renderRow } from '../../src/tui/rows.ts';
 import { computeLayout } from '../../src/tui/layout.ts';
 import { displayWidth } from '../../src/tui/format.ts';
 import { style as st } from '../../src/tui/style.ts';
+import { addDecision, addOutput, setChecklist, listDecisions } from '../../src/threads/store.ts';
+import { listTurns } from '../../src/db/queries.ts';
 import { KEY, fakeTerminal, seedDb, stripAnsi } from './harness.ts';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -93,6 +95,13 @@ describe('thread view model', () => {
     expect(plain).toContain('✓ rename-config');
     expect(plain).not.toContain('p3');
     expect(displayWidth(row)).toBeLessThanOrEqual(60);
+    // with an unanswered decision it stays a full row, marked with ?, and keeps its place among the open ones
+    const asking = stripAnsi(renderRow({ ...ticket, status: 'done', name: 'add-rate-limit' }, { layout: computeLayout(60), now: Date.now(), style: st, asking: true }));
+    expect(asking).toMatch(/add-rate-limit\s+\?/);
+    expect(asking).toContain('resolved');
+    expect(displayWidth(asking)).toBeLessThanOrEqual(60);
+    const rows2 = [{ id: 1, status: 'done' }, { id: 2, status: 'done' }, { id: 3, status: 'todo' }];
+    expect(partitionResolved(rows2, new Set([2])).map((r) => r.id)).toEqual([2, 3, 1]);
   });
 });
 
@@ -131,6 +140,32 @@ describe('thread view in the app', () => {
     await term.press('x');
     await term.waitFor((s) => s.includes('resolved · r replies'), 'resolve message');
     expect(getTicketById(db, failed.id)!.status).toBe('done');
+  });
+
+  test('the worker checklist, outputs and sub-threads render; a number key answers the open decision', async () => {
+    const { db, ticket } = seedThread();
+    setChecklist(db, ticket.id, [{ text: 'reproduced', state: 'done' }, { text: 'running tests', state: 'doing' }, { text: 'docs', state: 'todo' }]);
+    addOutput(db, ticket.id, { kind: 'pr', ref: 'https://github.com/o/r/pull/71', title: 'PR #71' });
+    addOutput(db, ticket.id, { kind: 'branch', ref: 'salu/ticket-004' }); // same as the ticket's own branch: shown once
+    const d = addDecision(db, ticket.id, { question: 'Rename the config key?', options: [{ label: 'Keep it', consequence: 'no migration' }, { label: 'Rename', consequence: 'needs a migration' }], recommended: 0 });
+    const term = mountApp({ db }, [100, 30]);
+    await term.waitFor((s) => s.includes('1/6'));
+    await term.press('/');
+    await term.press(ticket.name);
+    await term.press(KEY.enter);
+    await term.press(KEY.enter);
+    const f = await term.waitFor((s) => s.includes('Rename the config key?'), 'decision card');
+    expect(f).toContain('1 Keep it (recommended)');
+    expect(f).toContain('✓ reproduced');
+    expect(f).toContain('running tests');
+    expect(f).toContain('PR #71');
+    expect(f.match(/salu\/ticket-004/g)!.length).toBe(1);
+    expect(f).toContain('1-4 answer');
+    await term.press('2');
+    await term.waitFor((s) => s.includes('picked "Rename"'), 'answer message');
+    expect(listDecisions(db, ticket.id)[0]).toMatchObject({ id: d.id, status: 'answered', chosen: 1 });
+    expect(listTurns(db, ticket.id).at(-1)!.body).toContain('chose "Rename"');
+    expect(getTicketById(db, ticket.id)!.status).toBe('todo');
   });
 
   test('o expands the outputs strip in the thread screen', async () => {

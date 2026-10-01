@@ -2,6 +2,7 @@ import type { Database } from 'bun:sqlite';
 import type { Project, Run, TicketStatus, TicketView, Turn } from '../db/types.ts';
 import { countTickets, latestRun, listProjects, listTickets, listTurns } from '../db/queries.ts';
 import { countUnread } from '../notif/index.ts';
+import { threadSummary, type ThreadSummary } from '../threads/store.ts';
 import { toolCounts } from './log-tail.ts';
 import { readStatus, type OrchestratorStatus } from '../orchestrator/status.ts';
 
@@ -20,6 +21,8 @@ export interface Snapshot {
   loadedAt: number;
   /** unread orchestrator messages (`salu notif`) */
   unread: number;
+  /** tickets with a decision the worker asked and nobody answered yet */
+  asking: Set<number>;
 }
 
 /** One consistent read of everything the list view shows. Cheap: four small queries. */
@@ -33,6 +36,7 @@ export function loadSnapshot(db: Database, scope: Scope = {}): Snapshot {
     status: readStatus(db, now),
     loadedAt: now,
     unread: countUnread(db),
+    asking: askingTickets(db),
   };
 }
 
@@ -47,7 +51,7 @@ export function snapshotKey(s: Snapshot): string {
   for (const p of s.projects) out += `${p.id}:${p.name}:${p.is_default}:${(p as { parent_id?: number | null }).parent_id ?? ""};`;
   const o = s.status;
   const p = o.paused;
-  out += `|u${s.unread}|${o.alive ? 1 : 0}:${o.pid}:${p ? `${p.until}:${p.kind}:${p.manual ? 1 : 0}:${p.reason}:${p.models.join(',')}` : ''}`;
+  out += `|a${[...s.asking].join(',')}|u${s.unread}|${o.alive ? 1 : 0}:${o.pid}:${p ? `${p.until}:${p.kind}:${p.manual ? 1 : 0}:${p.reason}:${p.models.join(',')}` : ''}`;
   for (const w of o.workers) out += `;${w.ticketId}:${w.turns}:${w.lastTool}`;
   return out;
 }
@@ -59,9 +63,30 @@ export interface TicketDetail {
   turns: Turn[];
   /** tools the last run used, most used first (the thread's "did" line) */
   tools: Array<[string, number]>;
+  /** the worker's checklist, decisions, outputs and sub-threads (schema v9) */
+  thread: ThreadSummary;
 }
+
+const NO_THREAD: ThreadSummary = { checklist: [], decisions: [], outputs: [], parent: null, children: [] };
 
 export function loadDetail(db: Database, ticket: TicketView): TicketDetail {
   const run = latestRun(db, ticket.id);
-  return { ticket, run, turns: listTurns(db, ticket.id), tools: toolCounts(run?.log_path) };
+  return { ticket, run, turns: listTurns(db, ticket.id), tools: toolCounts(run?.log_path), thread: safeSummary(db, ticket.id) };
+}
+
+function safeSummary(db: Database, id: number): ThreadSummary {
+  try {
+    return threadSummary(db, id);
+  } catch {
+    return NO_THREAD; // a database from before schema v9
+  }
+}
+
+/** Ids of tickets with an open decision (one indexed query; empty before schema v9). */
+export function askingTickets(db: Database): Set<number> {
+  try {
+    return new Set(db.query<{ ticket_id: number }, []>("SELECT DISTINCT ticket_id FROM decisions WHERE status = 'open'").all().map((r) => r.ticket_id));
+  } catch {
+    return new Set();
+  }
 }

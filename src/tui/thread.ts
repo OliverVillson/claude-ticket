@@ -5,6 +5,7 @@ import { displayWidth, fmtCost, fmtDuration, truncate, wrapText } from './format
 import type { Style } from './style.ts';
 import { paint } from './theme.ts';
 import { safeText, stripControl } from '../core/ansi.ts';
+import { ticketOutputs } from '../core/outputs.ts';
 import { GLYPHS, supportsUnicode } from '../ui/glyphs.ts';
 
 /**
@@ -41,13 +42,35 @@ export interface ChecklistItem {
 export interface ThreadExtras {
   checklist?: ChecklistItem[];
   outputs?: ThreadOutput[];
-  /** an open question with options, shown above the checklist */
-  decision?: { question: string; options: string[] };
+  /** an open question with options, shown above the checklist (answered with the number keys) */
+  decision?: { id: number; question: string; options: string[]; recommended: number };
+  /** sub-threads and the thread this one belongs to */
+  parent?: { name: string; status: string };
+  children?: Array<{ name: string; status: string }>;
+}
+
+/** What the worker's `salu` tool stored for this thread, in the shape the view draws. */
+export function extrasOf(d: TicketDetail): ThreadExtras {
+  const t = d.thread;
+  const open = t.decisions.find((x) => x.status === 'open');
+  return {
+    checklist: t.checklist.map((c) => ({ text: c.text, state: c.state === 'doing' ? 'active' : c.state })),
+    outputs: t.outputs.map((o) => ({ kind: o.kind, ref: o.ref, title: o.title || undefined })),
+    decision: open ? { id: open.id, question: open.question, options: open.options.map((o) => o.label), recommended: open.recommended } : undefined,
+    parent: t.parent ?? undefined,
+    children: t.children,
+  };
+}
+
+/** The open decision of a thread, if the worker asked one. */
+export function openDecision(d: TicketDetail) {
+  return d.thread.decisions.find((x) => x.status === 'open') ?? null;
 }
 
 export interface ThreadInput {
   detail: TicketDetail;
   log: LogLine[];
+  /** overrides what is read from the detail (tests) */
   extras?: ThreadExtras;
   now: number;
   spinner?: number;
@@ -63,10 +86,11 @@ export function isResolved(t: { status: string }): boolean {
 }
 
 /** Resolved threads go to the bottom of the list (stable otherwise). */
-export function partitionResolved<T extends { status: string }>(rows: T[]): T[] {
+export function partitionResolved<T extends { status: string; id?: number }>(rows: T[], asking?: Set<number>): T[] {
   const open: T[] = [];
   const done: T[] = [];
-  for (const r of rows) (isResolved(r) ? done : open).push(r);
+  // A resolved thread with an unanswered decision stays up with the open ones.
+  for (const r of rows) (isResolved(r) && !(r.id != null && asking?.has(r.id)) ? done : open).push(r);
   return done.length ? [...open, ...done] : rows;
 }
 
@@ -146,10 +170,9 @@ export function conversationLines(i: ThreadInput, width: number, st: Style): str
 
 /** Everything the thread produced: its branch plus whatever the worker attached. */
 export function threadOutputs(i: ThreadInput): ThreadOutput[] {
-  const out: ThreadOutput[] = [];
-  const t = i.detail.ticket;
-  if (t.branch) out.push({ kind: 'branch', ref: t.branch });
-  for (const o of i.extras?.outputs ?? []) out.push(o);
+  // The core's list first; attached outputs stored by the worker tool are folded in once, whichever place holds them.
+  const out: ThreadOutput[] = ticketOutputs(i.detail.ticket);
+  for (const o of (i.extras ?? extrasOf(i.detail)).outputs ?? []) if (!out.some((x) => x.kind === o.kind && x.ref === o.ref)) out.push(o);
   return out;
 }
 
@@ -162,22 +185,44 @@ function outputsLines(i: ThreadInput, width: number, st: Style): string[] {
   if (i.showOutputs) return outs.map((o, n) => (n === 0 ? lab : ' '.repeat(LABEL_W + 1)) + st.dim(KIND_WORD[o.kind].padEnd(7)) + st.text(truncate(safeText(o.title ?? o.ref), Math.max(8, width - LABEL_W - 9))));
   const room = Math.max(8, width - LABEL_W - 1);
   const parts = outs.map((o) => {
-    const label = truncate(`${KIND_WORD[o.kind]} ${safeText(o.title ?? o.ref)}`, room);
-    const word = Math.min(KIND_WORD[o.kind].length + 1, label.length);
+    const text = safeText(o.title ?? o.ref);
+    const dup = text.toLowerCase().startsWith(KIND_WORD[o.kind].toLowerCase() + ' ');
+    const label = truncate(dup ? text : `${KIND_WORD[o.kind]} ${text}`, room);
+    const word = dup ? 0 : Math.min(KIND_WORD[o.kind].length + 1, label.length);
     return { text: st.dim(label.slice(0, word)) + st.text(label.slice(word)), w: displayWidth(label) };
   });
   return [lab + joinFit(parts, '   ', room)];
 }
 
+/** `part of <parent>` and `sub-threads  a ✓  b ●`: the thread tree around this one. */
+function familyLines(i: ThreadInput, width: number, st: Style): string[] {
+  const ex = i.extras ?? extrasOf(i.detail);
+  const out: string[] = [];
+  const lab = (w: string) => st.dim(w.padEnd(LABEL_W + 1));
+  const glyph = (status: string) => (status === 'running' ? st.accent(GLYPHS.running) : status === 'done' ? paint(st, 'green', GLYPHS.done) : status === 'failed' ? paint(st, 'red', GLYPHS.failed) : st.dim(GLYPHS.todo));
+  if (ex.parent) out.push(lab('part of') + st.text(truncate(safeText(ex.parent.name), Math.max(8, width - LABEL_W - 1))));
+  if (ex.children?.length) {
+    const room = Math.max(8, width - LABEL_W - 1);
+    const pieces = ex.children.map((c) => {
+      const name = truncate(safeText(c.name), 24);
+      return { text: st.text(name) + ' ' + glyph(c.status), w: displayWidth(name) + 2 };
+    });
+    out.push(lab('threads') + joinFit(pieces, '   ', room));
+  }
+  return out;
+}
+
 /** The checklist slot: the worker's checklist while it works, else its live log, else the last run. */
 function slotLines(i: ThreadInput, width: number, st: Style, budget: number): string[] {
   const t = i.detail.ticket;
-  const cl = i.extras?.checklist;
+  const ex = i.extras ?? extrasOf(i.detail);
+  const cl = ex.checklist;
   const out: string[] = [];
-  if (i.extras?.decision) {
-    const d = i.extras.decision;
+  if (ex.decision) {
+    const d = ex.decision;
     out.push(st.accent('? ') + st.text(truncate(safeText(d.question), width - 2)));
-    out.push(st.dim('  ' + d.options.map((o, n) => `${n + 1} ${safeText(o)}`).join('   ')));
+    const opts = d.options.map((o, n) => ({ text: st.accent(String(n + 1)) + ' ' + st.text(truncate(safeText(o), 28)) + (n === d.recommended ? st.dim(' (recommended)') : ''), w: 2 + Math.min(28, displayWidth(safeText(o))) + (n === d.recommended ? 14 : 0) }));
+    out.push('  ' + joinFit(opts, '   ', width - 2));
   }
   if (cl?.length) {
     const spin = GLYPHS.spinner[(i.spinner ?? 0) % GLYPHS.spinner.length]!;
@@ -192,6 +237,7 @@ function slotLines(i: ThreadInput, width: number, st: Style, budget: number): st
         width,
       ),
     );
+    if (t.status === 'running') for (const l of i.log.slice(-Math.max(0, budget - out.length))) out.push(st.dim(GLYPHS.say + ' ') + st.dim(truncate(l.text, width - 2)));
   } else if (t.status === 'running') {
     const live = i.log.slice(-Math.max(1, budget - out.length));
     out.push(...live.map((l) => (l.kind === 'tool' ? st.accent(GLYPHS.say + ' ') : st.dim(GLYPHS.say + ' ')) + st.text(truncate(l.text, width - 2))));
@@ -219,7 +265,7 @@ export function layoutThread(i: ThreadInput, width: number, height: number, back
   const outs = outputsLines(i, width, st);
   const slotBudget = height >= 12 ? 3 : height >= 8 ? 2 : 1;
   const slot = slotLines(i, width, st, slotBudget);
-  const bottom = [rule(width, st), ...outs, ...slot];
+  const bottom = [rule(width, st), ...outs, ...familyLines(i, width, st), ...slot];
   const room = Math.max(1, height - bottom.length);
   const all = conversationLines(i, width, st);
   const maxBack = Math.max(0, all.length - room);
