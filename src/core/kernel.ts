@@ -41,6 +41,23 @@ export function kernelPath(projectName: string): string {
   return join(kernelRoot(), folderSlug(projectName));
 }
 
+/**
+ * Package-manager caches for workers. Dependency installs want to write to the home folder (~/.bun/install/cache,
+ * ~/.npm, ~/.cache/pip), which the fence refuses and which must stay closed: a cache a worker could write is a
+ * cache your own builds later trust. So workers get a private one, per project, under ~/.salu/cache/<project>,
+ * the only place outside the project they may write, and the tools are pointed at it with environment variables.
+ */
+export function workerCacheDir(projectName: string): string {
+  return join(process.env.SALU_CACHE || join(ticketHome(), 'cache'), folderSlug(projectName));
+}
+
+export function cacheEnv(dir: string): Record<string, string> {
+  return {
+    BUN_INSTALL_CACHE_DIR: join(dir, 'bun'), npm_config_cache: join(dir, 'npm'), PIP_CACHE_DIR: join(dir, 'pip'), UV_CACHE_DIR: join(dir, 'uv'),
+    YARN_CACHE_FOLDER: join(dir, 'yarn'), npm_config_store_dir: join(dir, 'pnpm'), CARGO_HOME: join(dir, 'cargo'), GOCACHE: join(dir, 'go-build'), GOMODCACHE: join(dir, 'go-mod'),
+  };
+}
+
 /** Set on every worker; salu push/export refuse to run when they see it. */
 export function insideWorker(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.SALU_KERNEL_WORKER === '1';
@@ -254,7 +271,7 @@ export interface KernelOptions {
  * home folder is closed to reads. `fence`: `dir` is the real project; writes are confined to it just the same,
  * reads stay open except credential stores (git identity, tool caches and sibling folders keep working).
  */
-export function kernelOptions(dir: string, o: { home?: string; env?: NodeJS.ProcessEnv; mode?: 'kernel' | 'fence' } = {}): KernelOptions {
+export function kernelOptions(dir: string, o: { home?: string; env?: NodeJS.ProcessEnv; mode?: 'kernel' | 'fence'; cache?: string } = {}): KernelOptions {
   const home = o.home ?? homedir();
   const fence = o.mode === 'fence';
   const secrets = fence ? credentialPaths(home) : secretPaths(home);
@@ -264,8 +281,11 @@ export function kernelOptions(dir: string, o: { home?: string; env?: NodeJS.Proc
     failIfUnavailable: true, // a sandbox that cannot start stops the ticket instead of running unprotected
     autoAllowBashIfSandboxed: true,
     allowUnsandboxedCommands: false,
-    filesystem: fence ? { allowWrite: [dir], denyRead: credentialPaths(home) } : { allowWrite: [dir], denyRead: [...new Set([home, kernelRoot()])], allowRead: [dir, ...toolDirs(home)] },
-    network: { allowedDomains: domains, strictAllowlist: domains[0] !== '*' },
+    filesystem: fence
+      ? { allowWrite: [dir, ...(o.cache ? [o.cache] : [])], denyRead: credentialPaths(home) }
+      : { allowWrite: [dir, ...(o.cache ? [o.cache] : [])], denyRead: [...new Set([home, kernelRoot()])], allowRead: [dir, ...toolDirs(home), ...(o.cache ? [o.cache] : [])] },
+    // macOS: a dev server must be able to listen on localhost (Linux gives each command its own network, where it just works).
+    network: { allowedDomains: domains, strictAllowlist: domains[0] !== '*', allowLocalBinding: true },
   };
   return {
     sandbox,
