@@ -16,6 +16,11 @@ struct SaluMessage: Codable, Identifiable, Hashable {
     var ticket: TicketRef?
     var until: Double?  // orchestrator.paused: epoch ms it resumes
     var reply: String?  // ticket.done / ticket.blocked: the worker's whole final message (body is its one-line summary)
+    // Thread extras from the worker's `salu` tool (worker-tool.md). The inbox format for them is not
+    // final, so they decode leniently: a shape the phone doesn't know yet is skipped, not fatal.
+    var checklist: Lenient<[ChecklistItem]>?  // the ticket's whole checklist while it works
+    var decisions: Lenient<[SaluDecision]>?   // the ticket's decisions
+    var outputs: Lenient<[SaluOutput]>?       // branches, PRs, files, links it attached
 
     /// What the worker said, as fully as the box sent it.
     var workerText: String? {
@@ -30,6 +35,42 @@ struct SaluMessage: Codable, Identifiable, Hashable {
 
     var date: Date { Date(timeIntervalSince1970: at / 1000) }
     var untilDate: Date? { until.map { Date(timeIntervalSince1970: $0 / 1000) } }
+}
+
+/// One line of a working ticket's checklist. `state`: todo, doing or done.
+struct ChecklistItem: Codable, Hashable {
+    var text: String
+    var state: String
+}
+
+/// A question the worker asked with options; it carries on with the recommended one meanwhile.
+struct SaluDecision: Codable, Hashable, Identifiable {
+    struct Option: Codable, Hashable {
+        var label: String
+        var consequence: String?
+    }
+    var id: Int
+    var question: String
+    var context: String?
+    var options: [Option]
+    var recommended: Int
+    var status: String?  // open or answered
+    var chosen: Int?
+}
+
+/// Something the worker attached to its thread. `kind`: branch, pr, file or link.
+struct SaluOutput: Codable, Hashable {
+    var kind: String
+    var ref: String
+    var title: String?
+}
+
+/// Decodes to nil instead of failing the whole message when the shape is unexpected.
+struct Lenient<T: Codable & Hashable>: Codable, Hashable {
+    var value: T?
+    init(_ value: T?) { self.value = value }
+    init(from decoder: Decoder) throws { value = try? T(from: decoder) }
+    func encode(to encoder: Encoder) throws { try value.encode(to: encoder) }
 }
 
 /// The box's ticket a message is about. `ref` is the id of the ticket file when it came from a client (this phone).

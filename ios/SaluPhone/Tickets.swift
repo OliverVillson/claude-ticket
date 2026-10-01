@@ -57,13 +57,14 @@ struct SentResolve: Codable, Identifiable, Hashable {
     var date: Date { Date(timeIntervalSince1970: at / 1000) }
 }
 
-/// Something a ticket produced, shown as a card on its thread. Today only the result branch; the
-/// worker's PRs and files join it when the box sends them.
+/// Something a ticket produced, shown as a card on its thread: the result branch, and whatever the
+/// worker attached (branches, PRs, files, links).
 struct TicketOutput: Identifiable, Hashable {
-    enum Kind { case branch }
+    enum Kind: String { case branch, pr, file, link }
     let kind: Kind
     let value: String
-    var id: String { value }
+    var title: String? = nil
+    var id: String { kind.rawValue + ":" + value }
 }
 
 /// One line of a ticket's conversation: what you asked or answered, and what the worker said back.
@@ -99,13 +100,30 @@ struct TicketSummary: Identifiable, Hashable {
     /// Resolve anything the box knows that isn't working right now or already resolved.
     var canResolve: Bool { number != nil && ![.resolved, .running, .sent].contains(state) }
 
-    /// Result branches and the like, newest first, each once.
+    /// What it produced, newest first, each once: attached outputs and result branches.
     var outputs: [TicketOutput] {
         var seen = Set<String>()
-        return messages.compactMap { m in
-            guard let b = m.branch, seen.insert(b).inserted else { return nil }
-            return TicketOutput(kind: .branch, value: b)
+        var out: [TicketOutput] = []
+        func add(_ o: TicketOutput) { if seen.insert(o.id).inserted { out.append(o) } }
+        for m in messages {
+            for o in m.outputs?.value ?? [] {
+                if let kind = TicketOutput.Kind(rawValue: o.kind), !o.ref.isEmpty { add(TicketOutput(kind: kind, value: o.ref, title: o.title)) }
+            }
+            if let b = m.branch { add(TicketOutput(kind: .branch, value: b)) }
         }
+        return out
+    }
+
+    /// The worker's checklist, while it works.
+    var checklist: [ChecklistItem] {
+        guard state == .running else { return [] }
+        return messages.lazy.compactMap { $0.checklist?.value }.first ?? []
+    }
+
+    /// Decisions nobody has answered yet, from the newest message that lists them.
+    var openDecisions: [SaluDecision] {
+        let all = messages.lazy.compactMap { $0.decisions?.value }.first ?? []
+        return all.filter { $0.status != "answered" && $0.options.indices.contains($0.recommended) }
     }
 
     /// What you said and what the worker said, oldest first.

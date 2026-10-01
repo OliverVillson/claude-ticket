@@ -215,6 +215,14 @@ struct TicketDetail: View {
                 Banner(glyph: "✗", text: failure, color: Salu.error)
             }
 
+            let checklist = t.checklist
+            if !checklist.isEmpty {
+                Checklist(items: checklist)
+            }
+            ForEach(t.openDecisions) { d in
+                DecisionCard(ticket: t, decision: d)
+            }
+
             let outputs = t.outputs
             if !outputs.isEmpty {
                 Outputs(items: outputs)
@@ -258,28 +266,52 @@ struct TicketDetail: View {
     }
 }
 
-/// What a ticket produced, as cards on its thread: a result branch to check out (PRs and files later).
+/// What a ticket produced, as cards on its thread: a branch to check out, a PR or link to open, a file path.
 struct Outputs: View {
     let items: [TicketOutput]
+
+    private func icon(_ kind: TicketOutput.Kind) -> String {
+        switch kind {
+        case .branch: return "arrow.triangle.branch"
+        case .pr: return "arrow.triangle.pull"
+        case .file: return "doc.text"
+        case .link: return "link"
+        }
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("outputs").font(Salu.mono(.caption, weight: .semibold)).foregroundStyle(Salu.chrome)
             ForEach(items) { o in
-                switch o.kind {
-                case .branch:
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "arrow.triangle.branch")
-                            Text(o.value).lineLimit(1).truncationMode(.middle)
-                        }
-                        .font(Salu.mono(.footnote, weight: .semibold))
-                        .foregroundStyle(Salu.ok)
-                        ShellCommand(command: "git fetch origin \(o.value) && git checkout \(o.value)")
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Image(systemName: icon(o.kind))
+                        Text(o.title ?? o.value).lineLimit(1).truncationMode(.middle)
                     }
-                    .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(Salu.surface))
-                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Salu.ok.opacity(0.45), lineWidth: 1))
+                    .font(Salu.mono(.footnote, weight: .semibold))
+                    .foregroundStyle(Salu.ok)
+                    switch o.kind {
+                    case .branch:
+                        ShellCommand(command: "git fetch origin \(o.value) && git checkout \(o.value)")
+                    case .pr, .link:
+                        if let url = URL(string: o.value), url.scheme == "https" {
+                            Link(destination: url) {
+                                Text(o.value).font(Salu.mono(.caption)).lineLimit(1).truncationMode(.middle)
+                            }
+                            .tint(Salu.accent)
+                        } else {
+                            Text(o.value).font(Salu.mono(.caption)).foregroundStyle(Salu.dim)
+                        }
+                    case .file:
+                        HStack {
+                            Text(o.value).font(Salu.mono(.caption)).foregroundStyle(Salu.dim).lineLimit(2)
+                            Spacer(minLength: 4)
+                            CopyButton(text: o.value, label: "path")
+                        }
+                    }
                 }
+                .padding(12)
+                .background(RoundedRectangle(cornerRadius: 12).fill(Salu.surface))
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Salu.ok.opacity(0.45), lineWidth: 1))
             }
         }
     }
@@ -328,5 +360,99 @@ struct TimelineStep: View {
             }
         }
         .contentShape(Rectangle())
+    }
+}
+
+/// The worker's checklist while it works: ✓ done, ◐ doing, ○ to do.
+struct Checklist: View {
+    let items: [ChecklistItem]
+    var body: some View {
+        Card(title: "working on", tint: Salu.accent) {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(items.enumerated()), id: \.offset) { item in
+                    let m = mark(item.element.state)
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(m.glyph).fontWeight(.bold).foregroundStyle(m.color)
+                        Text(item.element.text).foregroundStyle(item.element.state == "done" ? Salu.dim : Salu.text)
+                    }
+                }
+            }
+        }
+    }
+
+    private func mark(_ state: String) -> (glyph: String, color: Color) {
+        switch state {
+        case "done": return ("✓", Salu.ok)
+        case "doing": return ("◐", Salu.accent)
+        default: return ("○", Salu.chrome)
+        }
+    }
+}
+
+/// A question the worker asked. It carries on with the recommended option; tap another to change course.
+struct DecisionCard: View {
+    @EnvironmentObject var store: Store
+    let ticket: TicketSummary
+    let decision: SaluDecision
+    @State private var sending: Int?
+    @State private var failure: String?
+
+    var body: some View {
+        let picked = store.pick(ticket, decision)
+        Card(title: "decision", tint: Salu.warn) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(decision.question).font(Salu.mono(.callout, weight: .semibold))
+                if let c = decision.context, !c.isEmpty {
+                    Text(c).font(Salu.mono(.footnote)).foregroundStyle(Salu.dim)
+                }
+                ForEach(Array(decision.options.enumerated()), id: \.offset) { item in
+                    option(item.offset, item.element, picked: picked)
+                }
+                Text(picked == nil
+                     ? "It carries on with the recommended option unless you pick another."
+                     : "Picked. Another option goes to the worker as a reply.")
+                    .font(Salu.mono(.caption2))
+                    .foregroundStyle(Salu.chrome)
+                if let failure {
+                    Text("✗ " + failure).font(Salu.mono(.caption)).foregroundStyle(Salu.error)
+                }
+            }
+        }
+    }
+
+    private func option(_ i: Int, _ o: SaluDecision.Option, picked: Int?) -> some View {
+        let recommended = i == decision.recommended
+        let chosen = picked == i
+        return Button {
+            guard picked == nil, sending == nil else { return }
+            sending = i
+            failure = nil
+            Task {
+                failure = await store.choose(ticket, decision, option: i)
+                sending = nil
+            }
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Text(chosen ? "●" : "○").foregroundStyle(chosen || (picked == nil && recommended) ? Salu.accent : Salu.chrome)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(o.label).font(Salu.mono(.footnote, weight: .bold)).foregroundStyle(Salu.text)
+                        if recommended { Chip(text: "recommended", color: Salu.accent) }
+                        if sending == i { ProgressView().controlSize(.mini) }
+                    }
+                    if let c = o.consequence, !c.isEmpty {
+                        Text(c).font(Salu.mono(.caption)).foregroundStyle(Salu.dim).multilineTextAlignment(.leading)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 10).fill(chosen ? Salu.accent.opacity(0.08) : Salu.bg))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(chosen ? Salu.accent : Salu.stroke, lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(picked != nil && !chosen)
+        .accessibilityLabel(o.label + (recommended ? ", recommended" : ""))
     }
 }

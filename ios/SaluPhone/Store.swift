@@ -26,6 +26,8 @@ final class Store: ObservableObject {
     @Published private(set) var replies: [SentReply] { didSet { defaults.set(try? JSONEncoder().encode(replies), forKey: "sentReplies") } }
     /// Tickets this phone resolved, newest first.
     @Published private(set) var resolves: [SentResolve] { didSet { defaults.set(try? JSONEncoder().encode(resolves), forKey: "sentResolves") } }
+    /// Decision picks made on this phone: "<ticket id>#<decision id>" -> option index.
+    @Published private(set) var picks: [String: Int] { didSet { defaults.set(picks, forKey: "decisionPicks") } }
     /// Unsent reply text per ticket, so closing the sheet loses nothing.
     @Published var replyDrafts: [String: String] { didSet { defaults.set(replyDrafts, forKey: "replyDrafts") } }
 
@@ -86,6 +88,7 @@ final class Store: ObservableObject {
         } else {
             resolves = []
         }
+        picks = defaults.dictionary(forKey: "decisionPicks") as? [String: Int] ?? [:]
         replyDrafts = defaults.dictionary(forKey: "replyDrafts") as? [String: String] ?? [:]
         demo = defaults.bool(forKey: "demo")
         if demo { messages = Demo.messages().sorted { $0.id > $1.id } }
@@ -194,6 +197,19 @@ final class Store: ObservableObject {
         } catch {
             return error.localizedDescription
         }
+    }
+
+    func pick(_ t: TicketSummary, _ d: SaluDecision) -> Int? { picks["\(t.id)#\(d.id)"] }
+
+    /// Answers a worker's decision. The recommended option is what it is already doing, so that is only
+    /// noted here; another option goes to the worker as a reply, like `salu reply --pick`.
+    func choose(_ t: TicketSummary, _ d: SaluDecision, option: Int) async -> String? {
+        guard d.options.indices.contains(option) else { return nil }
+        if option != d.recommended {
+            if let problem = await reply(to: t, body: "Decision: \(d.question) -> \(d.options[option].label)", now: false) { return problem }
+        }
+        picks["\(t.id)#\(d.id)"] = option
+        return nil
     }
 
     /// Resolves the ticket: it collapses out of the way at once and the box is told on its next sync.
