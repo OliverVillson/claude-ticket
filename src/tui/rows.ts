@@ -2,6 +2,7 @@ import type { TicketView } from '../db/types.ts';
 import type { RowLayout } from './layout.ts';
 import { fit, fmtCost, modelEffort, nameCell, priorityText, relTime } from './format.ts';
 import type { Style } from './style.ts';
+import { isResolved } from './thread.ts';
 import { CURSOR_GLYPH, SPINNER_FRAMES, STATUS_STYLE, paint, paintPriority, paintStatus } from './theme.ts';
 
 export interface RowOptions {
@@ -12,6 +13,8 @@ export interface RowOptions {
   selected?: boolean;
   /** show the `❯` gutter at all (the plain table has none) */
   gutter?: boolean;
+  /** the worker asked a decision nobody answered: a `?` after the name, and a resolved row stays full size */
+  asking?: boolean;
   /** spinner frame for running tickets; undefined shows the static glyph */
   spinner?: number;
 }
@@ -25,11 +28,20 @@ export function renderRow(t: TicketView, o: RowOptions): string {
   const { layout, style: st } = o;
   const info = STATUS_STYLE[t.status];
   const glyph = t.status === 'running' && o.spinner != null ? SPINNER_FRAMES[o.spinner % SPINNER_FRAMES.length]! : info.glyph;
-  const nc = nameCell(t, layout.name);
+  if (isResolved(t) && !o.asking) {
+    // A resolved thread collapses to one quiet line: glyph, name, age.
+    const age = relTime(t.updated_at, o.now);
+    const room = Math.max(4, layout.total - (o.gutter !== false ? 4 : 2) - age.length - 2);
+    const name = fit(t.name, Math.min(room, Math.max(4, layout.name)));
+    const head = (o.gutter !== false ? (o.selected ? st.accent(CURSOR_GLYPH) + ' ' : '  ') : '') + st.dim(glyph + ' ');
+    return st.base(head + (o.selected ? paint(st, 'accent', name, { bold: true }) : st.dim(name)) + st.dim('  ' + age));
+  }
+  const nc = nameCell(t, layout.name - (o.asking ? 2 : 0));
   let out = '';
   if (o.gutter !== false) out += o.selected ? st.accent(CURSOR_GLYPH) + ' ' : '  ';
   out += paintStatus(st, t.status, glyph) + ' ';
   out += o.selected ? paint(st, 'accent', nc.name, { bold: true }) : st.text(nc.name);
+  if (o.asking) out += st.accent(' ?');
   if (nc.labels) out += st.dim(nc.labels);
   if (layout.project) out += '  ' + st.dim(fit(t.project, layout.project));
   if (layout.priority) out += '  ' + paintPriority(st, t.priority, fit(priorityText(t.priority), layout.priority));

@@ -98,3 +98,17 @@ describe('resolved tickets', () => {
     expect(getTicketById(db, 1)!.status).toBe('todo');
   });
 });
+
+describe('outputs and revive', () => {
+  test('ticketOutputs lists the branch; reviving keeps branch and summary', async () => {
+    const { ticketOutputs } = await import('../src/core/outputs.ts');
+    const t = mk('done');
+    updateTicket(db, t.id, { branch: 'salu/x', summary: 'did it' });
+    expect(ticketOutputs(getTicketById(db, t.id)!)).toEqual([{ kind: 'branch', ref: 'salu/x' }]);
+    expect(ticketOutputs({ branch: null })).toEqual([]);
+    const q = replyToTicket(db, t.id, 'again');
+    expect(q.status).toBe('todo');
+    expect(q.branch).toBe('salu/x');
+    expect(q.summary).toBe('did it');
+  });
+});
