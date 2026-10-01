@@ -111,7 +111,7 @@ curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up --ssh
 One script does the OS side, on a home laptop and on a rented VPS alike. It is safe to re-run, and `--check`
 only reports. It checks disk (60 GB free), RAM, virtualization (`/dev/kvm`), then lets bubblewrap use user namespaces on Ubuntu 24.04
 (a scoped AppArmor profile; the system-wide restriction stays on), disables sleep and the lid switch on a laptop, turns on a firewall with
-nothing inbound but ssh, turns on automatic security updates, installs the runner (Part F step 1), installs the
+nothing inbound but ssh, turns on automatic security updates, adds compressed swap in RAM (zram, up to half of RAM, so a burst of tickets slows down instead of being killed, and the SSD sees no swap writes), installs the runner (Part F step 1), installs the
 container runtime for the safe kernel (Podman, gVisor, a scoped AppArmor allowance: `scripts/install-kernel-runtime.sh`,
 no KVM needed), and makes tickets on the box *require* the container (they fail with a message instead of running unprotected). If that script is not in your copy yet, the installer says so and skips it.
 

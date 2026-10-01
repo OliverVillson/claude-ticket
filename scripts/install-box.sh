@@ -98,6 +98,18 @@ if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null |
   fi
 fi
 
+# --- 3b. compressed swap in RAM (zram): a cushion for memory bursts when several tickets run at once, with no SSD wear ---
+if apt-get install -y -qq zram-tools >/dev/null 2>&1; then
+  printf 'ALGO=zstd\nPERCENT=50\nPRIORITY=100\n' > /etc/default/zramswap   # up to half of RAM as compressed swap (about 8 GB on a 16 GB box)
+  printf 'vm.swappiness=100\nvm.page-cluster=0\n' > /etc/sysctl.d/61-salu-zram.conf   # zram is fast: prefer it over dropping file cache
+  sysctl -q --system >/dev/null
+  systemctl enable zramswap >/dev/null 2>&1 || true
+  systemctl restart zramswap >/dev/null 2>&1 || true
+  if swapon --show=NAME --noheadings | grep -q zram; then ok "compressed swap (zram, up to half of RAM)"; else bad "zram swap did not start (journalctl -u zramswap)"; fi
+else
+  note "zram-tools not available here: skipped compressed swap"
+fi
+
 # --- 4. a laptop must never sleep, lid open or closed ---
 if [ "$PROFILE" = laptop ]; then
   mkdir -p /etc/systemd/logind.conf.d
