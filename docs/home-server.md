@@ -111,9 +111,9 @@ curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up --ssh
 One script does the OS side, on a home laptop and on a rented VPS alike. It is safe to re-run, and `--check`
 only reports. It checks disk (60 GB free), RAM, virtualization (`/dev/kvm`), then lets bubblewrap use user namespaces on Ubuntu 24.04
 (a scoped AppArmor profile; the system-wide restriction stays on), disables sleep and the lid switch on a laptop, turns on a firewall with
-nothing inbound but ssh, turns on automatic security updates, installs the runner (Part F step 1), and installs the
+nothing inbound but ssh, turns on automatic security updates, installs the runner (Part F step 1), installs the
 container runtime for the safe kernel (Podman, gVisor, a scoped AppArmor allowance: `scripts/install-kernel-runtime.sh`,
-no KVM needed). If that script is not in your copy yet, the installer says so and skips it.
+no KVM needed), and makes tickets on the box *require* the container (they fail with a message instead of running unprotected). If that script is not in your copy yet, the installer says so and skips it.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/OliverVillson/salu/main/scripts/install-box.sh -o install-box.sh
@@ -172,7 +172,8 @@ rootless container; installs work there and nothing reaches your files or logins
 ```sh
 sudo -iu salu salu kernel setup      # builds the image, a few GB, once
 sudo -iu salu salu kernel login      # a separate agent token: run claude setup-token on the Mac again, paste it; revocable
-sudo -iu salu salu kernel status     # want: ready
+sudo -iu salu salu kernel status     # want: tickets run in a container
+sudo -iu salu salu doctor --sandbox  # attacks a throwaway container from inside; every line should be green
 ```
 Then send a ticket from the Mac that shows it: `salu add "kernel check" "Run uname -a and whoami, install the npm package left-pad in a temp folder, and write what you saw to KERNEL.md; commit it."`
 Its `KERNEL.md` should say you are root in a gVisor container, and the install should work.

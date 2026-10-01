@@ -135,9 +135,17 @@ if [ -z "$KERNEL_SH" ]; then
   curl -fsSL https://raw.githubusercontent.com/OliverVillson/salu/main/scripts/install-kernel-runtime.sh -o "$KERNEL_SH" 2>/dev/null || { rm -f "$KERNEL_SH"; KERNEL_SH=""; }
 fi
 if [ -n "$KERNEL_SH" ] && [ -f "$KERNEL_SH" ]; then
-  bash "$KERNEL_SH" --user "${SALU_RUNNER_USER:-salu}"
-  ok "container runtime for the safe kernel"
-  KERNEL_DONE=1
+  if bash "$KERNEL_SH" --user "${SALU_RUNNER_USER:-salu}"; then
+    ok "container runtime for the safe kernel"
+    KERNEL_DONE=1
+    # On a box every ticket must run in the container: a ticket that cannot get one fails instead of running in the weaker fence.
+    mkdir -p /etc/systemd/system/salu@.service.d
+    printf '[Service]\nEnvironment=SALU_KERNEL_REQUIRE=1\n' > /etc/systemd/system/salu@.service.d/10-kernel.conf
+    systemctl daemon-reload
+    ok "tickets on this box require the container kernel (SALU_KERNEL_REQUIRE=1; they fail rather than run in the fence)"
+  else
+    bad "the container runtime did not install or does not run: tickets here would use the weaker fence until it does (fix the message above and run this script again)"
+  fi
 else
   note "safe-kernel container runtime: skipped (install-kernel-runtime.sh is not available yet; set SALU_KERNEL_INSTALLER=<script> to use another copy)"
 fi
@@ -148,5 +156,7 @@ if [ "${KERNEL_DONE:-0}" = 1 ]; then
   echo "Then, as the runner user, build the container kernel and give it its own login token:"
   echo "  sudo -iu ${SALU_RUNNER_USER:-salu} salu kernel setup      # builds the image (a few GB, once)"
   echo "  sudo -iu ${SALU_RUNNER_USER:-salu} salu kernel login      # an agent token from claude setup-token; revocable"
+  echo "  sudo -iu ${SALU_RUNNER_USER:-salu} salu doctor --sandbox  # attacks a throwaway container; every line a green check"
+  echo "Until the image and login exist, tickets on this box fail with a message rather than run unprotected."
 fi
 echo "Check anytime:  sudo bash install-box.sh --check   and   salu runner doctor"
