@@ -64,7 +64,7 @@ fi
 say "== packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq podman uidmap passt slirp4netns fuse-overlayfs crun curl ca-certificates apparmor-utils socat >/dev/null
+apt-get install -y -qq podman uidmap passt slirp4netns fuse-overlayfs crun curl ca-certificates bzip2 apparmor-utils socat >/dev/null
 
 say "== user $USER_NAME"
 id "$USER_NAME" >/dev/null 2>&1 || useradd -m -s /bin/bash "$USER_NAME"
