@@ -21,6 +21,8 @@ import { auditKernel, kernelOptions, prepareKernel, sandboxOn, scrubSecrets } fr
 import { DEFAULT_TOOLS, denialsFrom, toolsToSdk } from '../core/tools.ts';
 import { memoryPrompt } from '../memory/prompt.ts';
 import { refreshKernel } from '../memory/sync.ts';
+import { openDb } from '../db/db.ts';
+import { TOOL_NAMES, TOOL_PROMPT, saluMcpServer } from '../threads/tool.ts';
 import { TRAILER_RE, buildFollowUpFreshPrompt, buildFollowUpPrompt, buildPrompt, buildResumePrompt, parseTrailer, systemAppend } from './prompt.ts';
 import type { WorkerInput, WorkerLive, WorkerResult, WorkerRunner } from './types.ts';
 
@@ -73,12 +75,18 @@ export function effectiveSettings(t: TicketView, project: Project | null): Effec
 }
 
 /** Pure mapping from a ticket to Agent SDK options, so it can be tested without spawning anything. */
+/** The `salu` tool set is on unless the ticket's tools setting is `none`. */
+export function saluToolOn(t: TicketView, project: Project | null): boolean {
+  const o = toolsToSdk(effectiveSettings(t, project).tools, 'default');
+  return !(o.tools && o.tools.length === 0);
+}
+
 export function workerSdkOptions(t: TicketView, project: Project | null, extra: { resume?: string | null; abort?: AbortController; kernel?: string } = {}): Options {
   const s = effectiveSettings(t, project);
   const opts: Options = {
     cwd: extra.kernel ?? t.project_path,
     maxTurns: s.maxTurns,
-    systemPrompt: { type: 'preset', preset: 'claude_code', append: `${systemAppend(t)}\n\n${memoryPrompt(t.project_path)}` },
+    systemPrompt: { type: 'preset', preset: 'claude_code', append: `${systemAppend(t)}\n\n${memoryPrompt(t.project_path)}${saluToolOn(t, project) ? `\n\n${TOOL_PROMPT}` : ''}` },
     // Unattended: anything that would prompt is denied at once with a message telling the worker
     // so; it then works around it or ends with `TICKET: blocked`.
     permissionPrompts: 'none',
@@ -223,6 +231,11 @@ export const sdkRunner: WorkerRunner = {
     const ticket = kernel ? { ...input.ticket, project_path: kernel } : input.ticket;
     const options = workerSdkOptions(ticket, input.project, { resume: input.resume, abort: input.abort, kernel });
     input = { ...input, ticket };
+    if (saluToolOn(ticket, input.project)) {
+      // The thread tools: in-process, so they write to the same database the orchestrator uses.
+      options.mcpServers = { ...options.mcpServers, salu: await saluMcpServer(openDb(), input.ticket) };
+      options.allowedTools = [...(options.allowedTools ?? []), ...TOOL_NAMES];
+    }
     const stderr: string[] = [];
     options.stderr = (data: string) => {
       const text = data.trim();

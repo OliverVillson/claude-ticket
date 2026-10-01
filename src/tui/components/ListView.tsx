@@ -43,6 +43,12 @@ export interface ListViewProps {
   spinner?: number;
   /** two-pane layout: the project tree drawn to the left of the tickets (each line exactly `width` cells) */
   sidebar?: { width: number; lines: string[] };
+  /** tickets with an open decision */
+  asking?: Set<number>;
+  /** third pane (wide terminals): the selected thread's conversation, each line at most `inner` cells */
+  thread?: { inner: number; title: string; lines: string[] };
+  /** the thread pane has the focus */
+  threadFocus?: boolean;
   /** false while the tree has the focus: the ticket cursor is not drawn */
   ticketFocus?: boolean;
   /** breadcrumb path of the selected project (defaults to scopeName) */
@@ -139,7 +145,9 @@ export function ListView(p: ListViewProps) {
     footer = { left: hintsText(p.hints ?? LIST_HINTS, Math.max(10, cols - 2 - displayWidth(position) - 3)), right: st.dim(position) };
   }
 
-  const rightInner = p.sidebar ? Math.max(10, cols - paneWidth(p.sidebar.width) - 4) : Math.max(10, cols - 4);
+  const threadW = p.thread ? paneWidth(p.thread.inner) : 0;
+  const rightInner = p.sidebar ? Math.max(10, cols - paneWidth(p.sidebar.width) - 4 - threadW) : Math.max(10, cols - 4);
+  const treeFocus = p.ticketFocus === false && !p.threadFocus;
   // Ticket-pane lines as strings, so a sidebar can be joined on row by row (one Text per row).
   let right: string[];
   if (p.tickets.length === 0) {
@@ -153,7 +161,7 @@ export function ListView(p: ListViewProps) {
     for (let i = p.top; i < end; i++) {
       const t = p.tickets[i]!;
       const on = p.ticketFocus !== false && i === p.cursor;
-      const row = renderRow(t, { layout: p.layout, now: p.now, style: st, selected: on, spinner: t.status === 'running' ? p.spinner : undefined });
+      const row = renderRow(t, { layout: p.layout, now: p.now, style: st, selected: on, asking: p.asking?.has(t.id), spinner: t.status === 'running' ? p.spinner : undefined });
       right.push(on ? endCell(row, rightInner, st, true) : row);
     }
     if (overflow) {
@@ -170,10 +178,15 @@ export function ListView(p: ListViewProps) {
   let lines: string[];
   if (p.sidebar) {
     const { width, lines: left } = p.sidebar;
-    const l = drawPane({ title: 'projects', lines: left, inner: width, active: !cmdFocus && p.ticketFocus === false, height }, st);
+    const l = drawPane({ title: 'projects', lines: left, inner: width, active: !cmdFocus && treeFocus, height }, st);
     const padRight = right.map((r) => r + ' '.repeat(Math.max(0, rightInner - displayWidth(r))));
-    const r = drawPane({ title: 'tickets', lines: padRight, inner: rightInner, active: !cmdFocus && p.ticketFocus !== false, height }, st);
+    const r = drawPane({ title: 'tickets', lines: padRight, inner: rightInner, active: !cmdFocus && p.ticketFocus !== false && !p.threadFocus, height }, st);
     lines = l.map((x, i) => x + r[i]!);
+    if (p.thread) {
+      const th = p.thread;
+      const t = drawPane({ title: th.title, lines: th.lines.map((x) => x + ' '.repeat(Math.max(0, th.inner - displayWidth(x)))), inner: th.inner, active: !cmdFocus && !!p.threadFocus, height }, st);
+      lines = lines.map((x, i) => x + t[i]!);
+    }
   } else {
     const inner = Math.max(10, cols - 4);
     lines = drawPane({ title: 'tickets', lines: right.map((r) => r + ' '.repeat(Math.max(0, inner - displayWidth(r)))), inner, active: !cmdFocus, height }, st);

@@ -7,6 +7,7 @@
  *
  *   salu-inbox/tickets/<id>.json    client -> box   a new ticket
  *   salu-inbox/replies/<id>.json    client -> box   a follow-up message on a ticket that already has a reply
+ *   salu-inbox/actions/<id>.json    client -> box   resolve or reopen a ticket
  *   salu-inbox/messages/<id>.json   box -> client   something the orchestrator wants you to know
  */
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -18,6 +19,7 @@ import { ticketHome } from '../core/paths.ts';
 export const INBOX_BRANCH = 'salu/inbox';
 export const TICKETS_DIR = 'salu-inbox/tickets';
 export const REPLIES_DIR = 'salu-inbox/replies';
+export const ACTIONS_DIR = 'salu-inbox/actions';
 export const MESSAGES_DIR = 'salu-inbox/messages';
 export const FORMAT_VERSION = 1;
 export const MAX_FILE_BYTES = 64 * 1024;
@@ -57,7 +59,37 @@ export interface ReplyFile {
   name?: string; // else the ticket's name on the box
   body: string;
   now: boolean; // move the ticket to the front of the queue
+  decision?: { id: string; option?: number }; // this reply answers that decision (and picks option n, 0-based)
   at: number;
+}
+
+/** Resolve a ticket (it collapses out of the way) or reopen it. Replying to a resolved ticket reopens it too. */
+export interface ActionFile {
+  v: 1;
+  id: string;
+  project: string;
+  ref?: string;
+  ticketId?: number;
+  name?: string;
+  action: 'resolve' | 'reopen';
+  at: number;
+}
+
+export interface ChecklistItem {
+  text: string;
+  state: 'todo' | 'doing' | 'done';
+}
+export interface Decision {
+  id: string;
+  question: string;
+  context?: string;
+  options: Array<{ label: string; consequence?: string }>;
+  recommended?: number;
+}
+export interface Output {
+  kind: 'branch' | 'pr' | 'file' | 'link';
+  ref: string; // branch name, PR url or number, file path or url
+  title?: string;
 }
 
 export type MessageType =
@@ -68,8 +100,13 @@ export type MessageType =
   | 'ticket.failed'
   | 'orchestrator.paused'
   | 'orchestrator.resumed'
+  | 'ticket.state'
+  | 'ticket.status'
+  | 'ticket.decision'
+  | 'ticket.output'
+  | 'ticket.spawned'
   | 'note';
-export const MESSAGE_TYPES: MessageType[] = ['ticket.accepted', 'ticket.started', 'ticket.done', 'ticket.blocked', 'ticket.failed', 'orchestrator.paused', 'orchestrator.resumed', 'note'];
+export const MESSAGE_TYPES: MessageType[] = ['ticket.accepted', 'ticket.started', 'ticket.done', 'ticket.blocked', 'ticket.failed', 'orchestrator.paused', 'orchestrator.resumed', 'ticket.state', 'ticket.status', 'ticket.decision', 'ticket.output', 'ticket.spawned', 'note'];
 export type MessageLevel = 'info' | 'success' | 'warn' | 'error';
 
 /** Something the orchestrator on the box tells you. `salu notif` shows these. */
@@ -92,6 +129,11 @@ export interface MessageFile {
   question?: string; // blocked: what the ticket needs
   reply?: string; // done/blocked/failed: the worker's whole final reply (clipped to REPLY_MAX), what a follow-up answers
   until?: number; // paused: epoch ms it resumes
+  state?: string; // ticket.state: the ticket's new state, in the words of the core (waiting, resolved, working, ...)
+  checklist?: ChecklistItem[]; // ticket.status: the worker's live checklist, replacing the last one
+  decision?: Decision; // ticket.decision: a question with options; answer it with a reply file carrying `decision`
+  outputs?: Output[]; // ticket.output: what the worker made (branch, PR, files, links)
+  parent?: { ref?: string; name: string; id: number }; // ticket.spawned: `ticket` is a sub-thread a worker started; this is the thread that started it
 }
 
 import { stripControl } from '../core/ansi.ts';
@@ -210,14 +252,43 @@ export function parseReplyFile(text: string): ReplyFile | null {
   if (!o || typeof o !== 'object' || o.v !== FORMAT_VERSION || !isId(o.id) || !signatureOk(o)) return null;
   const body = str(o.body, 20000);
   if (!body?.trim()) return null;
-  // The ticket is named either flat (ref, name) or as { ticket: { ref?, id?, name? } }, the shape messages use.
+  const t = ticketRef(o);
+  if (!t) return null;
+  let decision: ReplyFile['decision'];
+  if (o.decision && typeof o.decision === 'object') {
+    const did = str(o.decision.id, 64);
+    if (did) decision = { id: did, ...(Number.isInteger(o.decision.option) && o.decision.option >= 0 && o.decision.option < 10 ? { option: o.decision.option as number } : {}) };
+  }
+  return { v: 1, id: o.id, project: str(o.project, 200) ?? '', ...t, body, now: o.now === true, ...(decision ? { decision } : {}), at: Number.isFinite(o.at) ? o.at : 0 };
+}
+
+/**
+ * The ticket a client file is about: flat (ref, name) or as { ticket: { ref?, id?, name? } }, the shape
+ * messages use. Null when it names none.
+ */
+function ticketRef(o: any): { ref?: string; ticketId?: number; name?: string } | null {
   const t = o.ticket && typeof o.ticket === 'object' ? o.ticket : {};
   const refRaw = o.ref ?? t.ref;
   const ref = isId(refRaw) ? refRaw : undefined;
   const name = str(o.name ?? t.name, 200)?.trim() || undefined;
   const ticketId = Number.isInteger(t.id) && t.id > 0 ? (t.id as number) : undefined;
   if (!ref && !name && !ticketId) return null;
-  return { v: 1, id: o.id, project: str(o.project, 200) ?? '', ...(ref ? { ref } : {}), ...(ticketId ? { ticketId } : {}), ...(name ? { name } : {}), body, now: o.now === true, at: Number.isFinite(o.at) ? o.at : 0 };
+  return { ...(ref ? { ref } : {}), ...(ticketId ? { ticketId } : {}), ...(name ? { name } : {}) };
+}
+
+export function parseActionFile(text: string): ActionFile | null {
+  if (text.length > MAX_FILE_BYTES) return null;
+  let o: any;
+  try {
+    o = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!o || typeof o !== 'object' || o.v !== FORMAT_VERSION || !isId(o.id) || !signatureOk(o)) return null;
+  if (o.action !== 'resolve' && o.action !== 'reopen') return null;
+  const t = ticketRef(o);
+  if (!t) return null;
+  return { v: 1, id: o.id, project: str(o.project, 200) ?? '', ...t, action: o.action, at: Number.isFinite(o.at) ? o.at : 0 };
 }
 
 export function parseMessageFile(text: string): MessageFile | null {
@@ -254,6 +325,38 @@ export function parseMessageFile(text: string): MessageFile | null {
   const reply = str(o.reply, 20000);
   if (reply) m.reply = reply;
   if (Number.isFinite(o.until)) m.until = o.until;
+  const state = typeof o.state === 'string' && /^[a-z][a-z-]{0,23}$/.test(o.state) ? o.state : null;
+  if (state) m.state = state;
+  if (Array.isArray(o.checklist)) {
+    const items = o.checklist
+      .slice(0, 50)
+      .map((x: any) => ({ text: str(x?.text, 200), state: x?.state }))
+      .filter((x: any): x is ChecklistItem => !!x.text && ['todo', 'doing', 'done'].includes(x.state));
+    if (items.length) m.checklist = items;
+  }
+  if (o.decision && typeof o.decision === 'object') {
+    const id = str(o.decision.id, 64);
+    const question = str(o.decision.question, 1000);
+    const context = str(o.decision.context, 1200) ?? undefined;
+    const options = Array.isArray(o.decision.options)
+      ? o.decision.options.slice(0, 4).map((x: any) => ({ label: str(x?.label, 100), consequence: str(x?.consequence, 500) ?? undefined })).filter((x: any) => !!x.label)
+      : [];
+    if (id && question && options.length >= 2) {
+      const rec = Number.isInteger(o.decision.recommended) && o.decision.recommended >= 0 && o.decision.recommended < options.length ? (o.decision.recommended as number) : undefined;
+      m.decision = { id, question, ...(context ? { context } : {}), options: options.map((x: any) => ({ label: x.label as string, ...(x.consequence ? { consequence: x.consequence as string } : {}) })), ...(rec !== undefined ? { recommended: rec } : {}) };
+    }
+  }
+  if (o.parent && typeof o.parent === 'object' && typeof o.parent.name === 'string' && Number.isInteger(o.parent.id)) {
+    m.parent = { name: stripControl(o.parent.name.slice(0, 200)), id: o.parent.id };
+    if (isId(o.parent.ref)) m.parent.ref = o.parent.ref;
+  }
+  if (Array.isArray(o.outputs)) {
+    const outs = o.outputs
+      .slice(0, 20)
+      .map((x: any) => ({ kind: x?.kind, ref: str(x?.ref, 500), title: str(x?.title, 200) ?? undefined }))
+      .filter((x: any) => ['branch', 'pr', 'file', 'link'].includes(x.kind) && !!x.ref);
+    if (outs.length) m.outputs = outs.map((x: any) => ({ kind: x.kind, ref: x.ref as string, ...(x.title ? { title: x.title as string } : {}) }));
+  }
   return m;
 }
 

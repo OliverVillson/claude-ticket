@@ -67,13 +67,13 @@ describe('usage meter', () => {
     expect(ASCII_GLYPHS.barFull.length).toBe(UNICODE_GLYPHS.barFull.length);
     expect(ASCII_GLYPHS.barEmpty.length).toBe(1);
   });
-  test('colour: only palette codes; amber and red appear only near the limit', () => {
+  test('colour: only palette codes; lime and red appear only near the limit', () => {
     const c = makeStyle(true, 3);
     const strip = (s: string) => s.replace(/\u001b\[[0-9;]*m/g, '');
     const ok = usageText(snap([win('five_hour', 40)]), 60, c, NOW);
-    expect(ok).not.toContain('255;176;0');
+    expect(ok).not.toContain('190;255;60');
     expect(ok).not.toContain('255;85;85');
-    expect(usageText(snap([win('five_hour', 80)]), 60, c, NOW)).toContain('255;176;0');
+    expect(usageText(snap([win('five_hour', 80)]), 60, c, NOW)).toContain('190;255;60');
     expect(usageText(snap([win('five_hour', 97)]), 60, c, NOW)).toContain('255;85;85');
     expect(strip(ok)).toContain('60%');
   });

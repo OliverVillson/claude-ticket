@@ -123,3 +123,18 @@ export function tailLog(path: string | null | undefined, count = 8): LogLine[] {
   for (const line of raw.split('\n')) out.push(...renderLogLine(line));
   return out.slice(-count);
 }
+
+/** Tool names used in the tail of a log, most used first: the "did" line of a thread (`Read ×3 · Edit ×2`). */
+export function toolCounts(path: string | null | undefined): Array<[string, number]> {
+  if (!path) return [];
+  const raw = readTail(path, 256 * 1024);
+  const counts = new Map<string, number>();
+  for (const line of raw.split('\n')) {
+    for (const l of renderLogLine(line)) {
+      if (l.kind !== 'tool') continue;
+      const name = l.text.replace(/\(.*$/s, '');
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+  }
+  return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}

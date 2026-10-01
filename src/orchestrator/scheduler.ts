@@ -20,6 +20,7 @@ import { kernelPath, sandboxOn } from '../core/kernel.ts';
 import { logsDir, ticketHome, wakeFile } from '../core/paths.ts';
 import { clearPause, resolveHooks, type UsageHooks } from './gate.ts';
 import { clearAllWorkerInfo, clearWorkerInfo, HEARTBEAT_MS, readStatus, setPause, writeWorkerInfo, type PauseInfo } from './status.ts';
+import { clearChecklist } from '../threads/store.ts';
 import { runWorker as defaultRunWorker, selectRunner, type RunWorkerParams } from './worker.ts';
 import type { EventListener, OrchestratorEvent, WorkerLive, WorkerResult, WorkerRunner } from './types.ts';
 import { recordRateLimitEvent } from '../usage/index.ts';
@@ -299,6 +300,7 @@ export class Orchestrator {
     const pending = pendingFollowUps(db, t.id);
     const followUp = pending.length ? pending.map((x) => x.body) : undefined;
     if (pending.length) markFollowUpsDelivered(db, t.id);
+    clearChecklist(db, t.id); // a new run is a new task: no stale checklist
     const abort = new AbortController();
     const startedAt = Date.now();
     const live: WorkerLive = { turns: 0, lastTool: null, lastText: null, model: null, sessionId: t.session_id };
