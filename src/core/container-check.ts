@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CREDENTIAL_ENV, createArgs, engine, imageExists, runtime, WORKDIR } from './container.ts';
+import { podmanCwd, CREDENTIAL_ENV, createArgs, engine, imageExists, runtime, WORKDIR } from './container.ts';
 import { startEgress } from './egress.ts';
 import type { Probe } from './sandbox-check.ts';
 
@@ -54,7 +54,7 @@ export function judgeContainer(f: ContainerFacts): Probe[] {
   ];
 }
 
-const sh = (bin: string, args: string[]) => spawnSync(bin, args, { encoding: 'utf8', timeout: 60000 });
+const sh = (bin: string, args: string[]) => spawnSync(bin, args, { encoding: 'utf8', timeout: 60000, cwd: podmanCwd() });
 
 export async function runContainerCheck(o: { bin?: string | null } = {}): Promise<Probe[]> {
   const bin = o.bin ?? engine();
