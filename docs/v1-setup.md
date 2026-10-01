@@ -173,8 +173,13 @@ salu remote add web --key <the key>      # Mac: sets the key and connects (or: s
 Without a key a client `salu remote add` stops and tells you where to get one. On the iPhone, paste the same key
 in the app's Settings (kept in the Keychain on that phone only). The environment variable `SALU_REMOTE_KEY`
 overrides the key file. `SALU_REMOTE_ALLOW_UNSIGNED=1` opts out of signing (a red warning stays); not
-recommended. To rotate: `salu remote key --new` on the box, then set the new key on the Mac and phone and restart
-(`sudo salu runner restart web`); everything must switch together.
+recommended.
+
+**Rotating:** do it on the box only: `salu remote key --new` (or `--set <key>`). It first re-signs the existing
+inbox history with the new key, so the Mac and the phone keep their full history once they switch; if the inbox
+cannot be reached, the key is left unchanged. Then copy the new key to the Mac (`salu remote key --set <key>`)
+and the phone. Anything a client sends before it switches is ignored. On a machine that is not the box, `--new`
+and `--set` only save the key locally, so rotate on the box, then copy the key to the other devices.
 
 ### What tickets from the Mac may set
 
