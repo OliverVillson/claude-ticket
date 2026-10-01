@@ -82,6 +82,7 @@ export interface ChecklistItem {
 export interface Decision {
   id: string;
   question: string;
+  context?: string;
   options: Array<{ label: string; consequence?: string }>;
   recommended?: number;
 }
@@ -103,8 +104,9 @@ export type MessageType =
   | 'ticket.status'
   | 'ticket.decision'
   | 'ticket.output'
+  | 'ticket.spawned'
   | 'note';
-export const MESSAGE_TYPES: MessageType[] = ['ticket.accepted', 'ticket.started', 'ticket.done', 'ticket.blocked', 'ticket.failed', 'orchestrator.paused', 'orchestrator.resumed', 'ticket.state', 'ticket.status', 'ticket.decision', 'ticket.output', 'note'];
+export const MESSAGE_TYPES: MessageType[] = ['ticket.accepted', 'ticket.started', 'ticket.done', 'ticket.blocked', 'ticket.failed', 'orchestrator.paused', 'orchestrator.resumed', 'ticket.state', 'ticket.status', 'ticket.decision', 'ticket.output', 'ticket.spawned', 'note'];
 export type MessageLevel = 'info' | 'success' | 'warn' | 'error';
 
 /** Something the orchestrator on the box tells you. `salu notif` shows these. */
@@ -131,6 +133,7 @@ export interface MessageFile {
   checklist?: ChecklistItem[]; // ticket.status: the worker's live checklist, replacing the last one
   decision?: Decision; // ticket.decision: a question with options; answer it with a reply file carrying `decision`
   outputs?: Output[]; // ticket.output: what the worker made (branch, PR, files, links)
+  parent?: { ref?: string; name: string; id: number }; // ticket.spawned: `ticket` is a sub-thread a worker started; this is the thread that started it
 }
 
 import { stripControl } from '../core/ansi.ts';
@@ -334,13 +337,18 @@ export function parseMessageFile(text: string): MessageFile | null {
   if (o.decision && typeof o.decision === 'object') {
     const id = str(o.decision.id, 64);
     const question = str(o.decision.question, 1000);
+    const context = str(o.decision.context, 1200) ?? undefined;
     const options = Array.isArray(o.decision.options)
       ? o.decision.options.slice(0, 4).map((x: any) => ({ label: str(x?.label, 100), consequence: str(x?.consequence, 500) ?? undefined })).filter((x: any) => !!x.label)
       : [];
     if (id && question && options.length >= 2) {
       const rec = Number.isInteger(o.decision.recommended) && o.decision.recommended >= 0 && o.decision.recommended < options.length ? (o.decision.recommended as number) : undefined;
-      m.decision = { id, question, options: options.map((x: any) => ({ label: x.label as string, ...(x.consequence ? { consequence: x.consequence as string } : {}) })), ...(rec !== undefined ? { recommended: rec } : {}) };
+      m.decision = { id, question, ...(context ? { context } : {}), options: options.map((x: any) => ({ label: x.label as string, ...(x.consequence ? { consequence: x.consequence as string } : {}) })), ...(rec !== undefined ? { recommended: rec } : {}) };
     }
+  }
+  if (o.parent && typeof o.parent === 'object' && typeof o.parent.name === 'string' && Number.isInteger(o.parent.id)) {
+    m.parent = { name: stripControl(o.parent.name.slice(0, 200)), id: o.parent.id };
+    if (isId(o.parent.ref)) m.parent.ref = o.parent.ref;
   }
   if (Array.isArray(o.outputs)) {
     const outs = o.outputs

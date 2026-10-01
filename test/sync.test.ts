@@ -5,8 +5,10 @@ import { tmpdir } from 'node:os';
 import { openDb } from '../src/db/db.ts';
 import { addTurn, listTurns, replyToTicket, claimNextTicket, createProject, createTicket, getTicketById, listTickets, updateTicket } from '../src/db/queries.ts';
 import { addRemoteTicket, enqueueMessage, listNotifications, markRead, setRemote, unreadCount } from '../src/sync/store.ts';
-import { threadOps, publishAction, rotateKey, publishReply, publishTicket, syncProject } from '../src/sync/sync.ts';
+import { publishDecisionPick, threadOps, publishAction, rotateKey, publishReply, publishTicket, syncProject } from '../src/sync/sync.ts';
 import { postThreadMessage, recordRemoteEvent } from '../src/sync/events.ts';
+import { addDecision, addOutput, getChecklist, getDecision, listDecisions, listOutputs, setChecklist } from '../src/threads/store.ts';
+import { decisionMessage, outputMessage, statusMessage } from '../src/threads/post.ts';
 import { parseActionFile, keyFilePath, remoteKey, saveKey, unsignedWarning, signFile, stripControl, parseReplyFile, parseMessageFile, parseTicketFile, newId } from '../src/sync/format.ts';
 import { git } from '../src/sync/git.ts';
 
@@ -305,6 +307,30 @@ describe('threads: resolve, reopen, richer messages', () => {
     expect(files).toMatch(/salu-inbox\/replies\/.*\.json/);
   });
 
+  test('resolve then reply sent together are applied in order: the ticket ends up working again', () => {
+    const { t } = sendTicket('sequence');
+    sync(client);
+    sync(box);
+    const onBox = listTickets(box.db)[0]!;
+    updateTicket(box.db, onBox.id, { status: 'done' });
+    sync(client);
+    const local = getTicketById(client.db, t.id)!;
+    publishAction(client.db, client.project, local, 'resolve');
+    publishReply(client.db, client.project, local, 'one more thing', {});
+    sync(client); // both files land in one push
+    sync(box);
+    const after = getTicketById(box.db, onBox.id)!;
+    expect(after.status).toBe('todo'); // resolved first, then revived by the reply
+    expect(listTurns(box.db, onBox.id).at(-1)).toMatchObject({ role: 'user', body: 'one more thing' });
+    // And the other way round: reply, then resolve, ends resolved.
+    updateTicket(box.db, onBox.id, { status: 'done' });
+    publishReply(client.db, client.project, local, 'later thought', {});
+    publishAction(client.db, client.project, local, 'resolve');
+    sync(client);
+    sync(box);
+    expect(getTicketById(box.db, onBox.id)!.status).toBe('done');
+  });
+
   test('resolving a running ticket on the box is refused with a warning', () => {
     const { t } = sendTicket('busy');
     sync(client);
@@ -399,6 +425,81 @@ describe('threads: resolve, reopen, richer messages', () => {
     } finally {
       delete process.env.SALU_REMOTE_KEY;
     }
+  });
+});
+
+describe('threads on the client: status, decisions, outputs, sub-threads', () => {
+  const sentAndAccepted = (name: string) => {
+    const { t } = sendTicket(name);
+    sync(client);
+    sync(box);
+    return { t, onBox: listTickets(box.db).find((x) => x.name === name)! };
+  };
+
+  test('status, outputs and decisions are mirrored on the client, and a pick travels back', () => {
+    const { t, onBox } = sentAndAccepted('mirror');
+    setChecklist(box.db, onBox.id, [{ text: 'a', state: 'done' }, { text: 'b', state: 'doing' }]);
+    postThreadMessage(box.db, onBox.id, statusMessage(getChecklist(box.db, onBox.id)));
+    const o = addOutput(box.db, onBox.id, { kind: 'branch', ref: 'salu/mirror' });
+    postThreadMessage(box.db, onBox.id, outputMessage(o));
+    const d = addDecision(box.db, onBox.id, { question: 'Keep the API?', options: [{ label: 'Keep', consequence: 'safe' }, { label: 'Drop', consequence: 'cleaner' }], recommended: 0 });
+    postThreadMessage(box.db, onBox.id, decisionMessage(d));
+    sync(box);
+    sync(client);
+    expect(getChecklist(client.db, t.id)).toEqual([{ text: 'a', state: 'done' }, { text: 'b', state: 'doing' }]);
+    expect(listOutputs(client.db, t.id).map((x) => x.ref)).toEqual(['salu/mirror']);
+    const local = listDecisions(client.db, t.id, { open: true });
+    expect(local.length).toBe(1);
+    expect(local[0]!.question).toBe('Keep the API?');
+    sync(client); // the same messages again change nothing
+    expect(listDecisions(client.db, t.id).length).toBe(1);
+
+    // Pick option 2 (not the recommended one): the box tells the worker and records the answer.
+    updateTicket(box.db, onBox.id, { status: 'done' });
+    expect(publishDecisionPick(client.db, client.project, getTicketById(client.db, t.id)!, local[0]!.id, 1, 'Decision on "Keep the API?": I choose "Drop".')).toBe(true);
+    sync(client);
+    sync(box);
+    const after = getDecision(box.db, d.id)!;
+    expect(after.status).toBe('answered');
+    expect(after.chosen).toBe(1);
+    expect(getTicketById(box.db, onBox.id)!.status).toBe('todo'); // the worker has to hear it
+  });
+
+  test('picking the recommended option only records the answer on the box', () => {
+    const { t, onBox } = sentAndAccepted('recommended');
+    const d = addDecision(box.db, onBox.id, { question: 'Which?', options: [{ label: 'A', consequence: 'x' }, { label: 'B', consequence: 'y' }], recommended: 0 });
+    postThreadMessage(box.db, onBox.id, decisionMessage(d));
+    updateTicket(box.db, onBox.id, { status: 'done' });
+    sync(box);
+    sync(client);
+    const local = listDecisions(client.db, t.id, { open: true })[0]!;
+    publishDecisionPick(client.db, client.project, getTicketById(client.db, t.id)!, local.id, 0, 'I choose A.');
+    sync(client);
+    sync(box);
+    expect(getDecision(box.db, d.id)!.status).toBe('answered');
+    expect(getTicketById(box.db, onBox.id)!.status).toBe('done'); // not queued again
+    sync(client);
+    expect(listNotifications(client.db).at(-1)!.title).toContain('Recorded your answer');
+  });
+
+  test('a sub-thread a worker starts shows up on the client, linked to its parent, with its own progress', () => {
+    const { t, onBox } = sentAndAccepted('parent');
+    const child = createTicket(box.db, { project_id: box.project.id, name: 'child-1', query: 'do the small part', status: 'todo' });
+    box.db.run('UPDATE tickets SET parent_id = ? WHERE id = ?', [onBox.id, child.id]);
+    setChecklist(box.db, child.id, [{ text: 'x', state: 'doing' }]);
+    postThreadMessage(box.db, child.id, statusMessage(getChecklist(box.db, child.id))); // announces first
+    sync(box);
+    sync(client);
+    const mirrored = listTickets(client.db).find((x) => x.name === 'child-1')!;
+    expect(mirrored).toBeTruthy();
+    expect(mirrored.query).toBe('do the small part');
+    expect(client.db.query<{ parent_id: number }, [number]>('SELECT parent_id FROM tickets WHERE id = ?').get(mirrored.id)!.parent_id).toBe(t.id);
+    expect(getChecklist(client.db, mirrored.id)).toEqual([{ text: 'x', state: 'doing' }]);
+    expect(claimNextTicket(client.db)).toBeNull(); // never runs on the client
+    // Announced once.
+    sync(box);
+    sync(client);
+    expect(listTickets(client.db).filter((x) => x.name.startsWith('child-1')).length).toBe(1);
   });
 });
 

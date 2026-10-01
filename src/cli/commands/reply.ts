@@ -6,7 +6,7 @@ import { resolveTicket } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
 import { bold, dim, green, stripControl } from '../../core/ansi.ts';
 import { readStatus } from '../../orchestrator/status.ts';
-import { publishReply, syncProject } from '../../sync/sync.ts';
+import { publishDecisionPick, publishReply, syncProject } from '../../sync/sync.ts';
 import { getRemote } from '../../sync/store.ts';
 import { answerAndNotify, answerOpenWithText } from '../../threads/decide.ts';
 import { listDecisions } from '../../threads/store.ts';
@@ -53,6 +53,16 @@ export async function reply(p: Parsed): Promise<number> {
     const n = Number(pickRaw);
     const r = answerAndNotify(db, t.id, d.id, n - 1, { now: flagBool(p, 'now') });
     const label = d.options[n - 1]!.label;
+    const pickProject = getProjectById(db, t.project_id);
+    const pickRemote = pickProject ? getRemote(db, pickProject.id) : null;
+    if (pickProject && pickRemote && publishDecisionPick(db, pickProject, t, d.id, n - 1, `Decision on "${d.question}": I choose "${label}".`, { now: flagBool(p, 'now') })) {
+      markFollowUpsDelivered(db, t.id);
+      try {
+        syncProject(db, pickProject, pickRemote);
+      } catch (e: any) {
+        console.error(dim('could not reach the box now: ' + String(e?.message ?? e) + ' (it will be sent on the next `salu sync`)'));
+      }
+    }
     console.log(`${green('✓')} decision #${d.id}: ${stripControl(label)} ${dim(r.ticket ? '(told the worker, ticket is ' + r.ticket.status + ')' : '(the worker already went with this)')}`);
     return 0;
   }

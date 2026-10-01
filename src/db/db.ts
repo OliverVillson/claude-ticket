@@ -114,6 +114,12 @@ function ensureSyncTables(db: Database) {
         at INTEGER NOT NULL,
         sent INTEGER NOT NULL DEFAULT 0
       );
+      CREATE TABLE IF NOT EXISTS remote_decisions (
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        remote_id TEXT NOT NULL,
+        local_id INTEGER NOT NULL REFERENCES decisions(id) ON DELETE CASCADE,
+        PRIMARY KEY (project_id, remote_id)
+      );
       CREATE TABLE IF NOT EXISTS remote_messages (
         id TEXT NOT NULL,
         project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

@@ -120,6 +120,20 @@ export function recordInReply(db: Database, projectId: number, r: ReplyFile): vo
   db.run("INSERT OR IGNORE INTO remote_replies (id, project_id, direction, ref, name, body, now, at, sent, decision) VALUES (?, ?, 'in', ?, ?, ?, ?, ?, 1, ?)", [r.id, projectId, r.ref ?? null, r.name ?? null, r.body, r.now ? 1 : 0, r.at, r.decision ? JSON.stringify(r.decision) : null]);
 }
 
+// --- decisions (client side: the box's id <-> the local copy) ---------------------------------
+
+export function mapDecision(db: Database, projectId: number, remoteId: string, localId: number): void {
+  db.run('INSERT OR REPLACE INTO remote_decisions (project_id, remote_id, local_id) VALUES (?, ?, ?)', [projectId, remoteId, localId]);
+}
+
+export function localDecisionFor(db: Database, projectId: number, remoteId: string): number | null {
+  return db.query<{ local_id: number }, [number, string]>('SELECT local_id FROM remote_decisions WHERE project_id = ? AND remote_id = ?').get(projectId, remoteId)?.local_id ?? null;
+}
+
+export function remoteDecisionFor(db: Database, localId: number): string | null {
+  return db.query<{ remote_id: string }, [number]>('SELECT remote_id FROM remote_decisions WHERE local_id = ?').get(localId)?.remote_id ?? null;
+}
+
 // --- actions (resolve / reopen) ----------------------------------------------------------
 
 /** Client: queue a resolve or reopen for the box. Returns the action's id. */
