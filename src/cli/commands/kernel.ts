@@ -5,7 +5,7 @@ import { openDb } from '../../db/db.ts';
 import { resolveProject } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
 import { dim, green, red } from '../../core/ansi.ts';
-import { buildImage, containerName, engine, ensureContainer, GVISOR_PLATFORMS, gvisorPlatform, imageExists, kernelStatus, KERNEL_IMAGE, kvmUsable, resetContainerReadyCache, runtime, saveToken, setGvisorPlatform, tokenFile, type GvisorPlatform } from '../../core/container.ts';
+import { idleMinutes, startStats, startsLog, buildImage, containerName, engine, ensureContainer, GVISOR_PLATFORMS, gvisorPlatform, imageExists, kernelStatus, KERNEL_IMAGE, kvmUsable, resetContainerReadyCache, runtime, saveToken, setGvisorPlatform, tokenFile, type GvisorPlatform } from '../../core/container.ts';
 import { kernelPath, prepareKernel, requireHuman } from '../../core/kernel.ts';
 import { helpIf } from './_shared.ts';
 
@@ -70,6 +70,10 @@ export async function kernel(p: Parsed): Promise<number> {
       line(s.image, s.image ? `image ${KERNEL_IMAGE}` : `image ${KERNEL_IMAGE} not built`);
       line(s.token, s.token ? 'agents have a Claude login of their own' : 'agents have no Claude login of their own yet (salu kernel login)');
       line(s.mode === 'container', s.mode === 'container' ? 'tickets run in a container' : s.mode === 'refused' ? 'tickets will FAIL here until the container kernel is ready (SALU_KERNEL_REQUIRE=1 or the container is set up but incomplete)' : 'tickets run in the weaker fence, not in a container');
+      const st = startStats();
+      const idle = idleMinutes();
+      console.log(`  ${dim(`containers unload ${idle === null ? 'never' : idle === 0 ? 'as soon as their last ticket ends' : `after ${idle} idle minutes`} (SALU_KERNEL_IDLE_MINUTES) and start again with the next ticket`)}`);
+      if (st) console.log(`  ${dim(`start time over ${st.count} starts: median ${(st.medianMs / 1000).toFixed(1)} s, worst ${(st.maxMs / 1000).toFixed(1)} s (${startsLog()})`)}`);
       for (const pr of s.problems) console.log(`  ${dim(pr)}`);
       return s.mode !== 'container' ? 1 : 0;
     }

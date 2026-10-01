@@ -17,7 +17,7 @@ import { detectLimit, parseLimitText, probeWindow } from '../usage/index.ts';
 import type { LimitHit } from '../usage/types.ts';
 import { CLAUDE_MISSING, EnvironmentError, claudeExecutableOption, environmentProblem, runningCompiled } from '../core/claude-bin.ts';
 import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../core/tags.ts';
-import { checkDisk, containerReady, containerRequired, containerSpawner, requireKernelAuth, WORKDIR } from '../core/container.ts';
+import { checkDisk, containerReady, containerRequired, containerSpawner, engine, requireKernelAuth, sweepStaleContainers, WORKDIR } from '../core/container.ts';
 import { startEgress } from '../core/egress.ts';
 import { allowedDomains, auditKernel, confinementFor, kernelOptions, prepareKernel, sandboxSupport, scrubSecrets } from '../core/kernel.ts';
 import { DEFAULT_TOOLS, denialsFrom, toolsToSdk } from '../core/tools.ts';
@@ -237,6 +237,8 @@ export function promptFor(input: WorkerInput): string {
 let egressStop: Promise<() => void> | null = null;
 /** The egress filter every container goes through; started once per process, the first time a container ticket runs. */
 function ensureEgressProxy(): Promise<() => void> {
+  const bin = engine();
+  if (bin && !egressStop) sweepStaleContainers(bin); // first container ticket of this process: nothing here uses them yet
   egressStop ??= startEgress({ allowedDomains: allowedDomains(), log: (l) => process.env.SALU_DEBUG && console.error(`salu egress: ${l}`) });
   return egressStop;
 }

@@ -165,6 +165,11 @@ fall back to the fenced mode below, unless `SALU_KERNEL_REQUIRE=1` (then the tic
 turns it off. `salu kernel reset [project]` deletes a project's container (installed packages go, the folder stays);
 `salu kernel shell [project]` opens a shell in it for you.
 
+Idle containers are unloaded: a project's container is stopped when its last ticket ends and nothing new arrives within
+`SALU_KERNEL_IDLE_MINUTES` (default 5; 0 stops it at once; `never` keeps containers running), and started again with the next
+ticket. Files and installed packages stay on disk; background processes an agent left running end. Every start is timed into
+`~/.salu/logs/kernel-starts.jsonl` and `salu kernel` shows the median.
+
 How many tickets run at once: by default what the machine's memory carries ((RAM - 3 GiB) / the container limit, 4 GB each,
 so 16 GB gives 3). `--concurrency`, `SALU_CONCURRENCY` and the saved setting override it, and `SALU_KERNEL_MEMORY=2g` changes the
 per-container limit. gVisor's platform is a setting: `salu kernel platform [systrap|kvm|ptrace|default]` (default systrap; kvm

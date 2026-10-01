@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { accessSync, chmodSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, appendFileSync, chmodSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SpawnedProcess, SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
@@ -145,10 +145,16 @@ export function imageExists(bin: string, image = KERNEL_IMAGE): boolean {
 }
 
 /** Make sure the project's container exists and runs; create it from the image the first time. */
-export function ensureContainer(project: string, dir: string, bin = engine()): string {
+export function ensureContainer(project: string, dir: string, bin = engine(), onStart?: (t: StartTiming) => void): string {
+  const t0 = performance.now();
   if (!bin) throw new CliError('Podman was not found. Install the container runtime: sudo scripts/install-kernel-runtime.sh (Linux) or brew install podman (Mac), then salu kernel setup.');
   const name = containerName(project);
-  const state = podman(bin, ['inspect', '--format', '{{.State.Status}}', name]);
+  let state = podman(bin, ['inspect', '--format', '{{.State.Status}}', name]);
+  for (let i = 0; i < 20 && (state.stdout ?? '').trim() === 'stopping'; i++) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500); // an idle stop is finishing; start only after it
+    state = podman(bin, ['inspect', '--format', '{{.State.Status}}', name]);
+  }
+  const created = state.status !== 0;
   if (state.status !== 0) {
     if (!imageExists(bin)) throw new CliError(`the kernel image ${KERNEL_IMAGE} is not built yet: run \`salu kernel setup\``);
     const rt = runtime();
@@ -162,8 +168,92 @@ export function ensureContainer(project: string, dir: string, bin = engine()): s
   if ((state.stdout ?? '').trim() !== 'running') {
     const s = podman(bin, ['start', name]);
     if (s.status !== 0) throw new CliError(`could not start the kernel container: ${(s.stderr || s.stdout).trim().split('\n').pop()}`);
+    onStart?.(recordStart({ project, ms: Math.round(performance.now() - t0), kind: created ? 'created' : 'started' }));
   }
   return name;
+}
+
+// ---- Unloading idle containers ---------------------------------------------------------------------------
+
+export interface StartTiming {
+  ts: number;
+  project: string;
+  ms: number;
+  kind: 'created' | 'started';
+  platform: string;
+}
+
+/** Where each container start is logged, one JSON line each, so the first runs on a box give real numbers. */
+export function startsLog(): string {
+  return join(ticketHome(), 'logs', 'kernel-starts.jsonl');
+}
+
+export function recordStart(t: Omit<StartTiming, 'ts' | 'platform'>, file = startsLog()): StartTiming {
+  const full: StartTiming = { ts: Date.now(), platform: gvisorPlatform() ?? (runtime().gvisor ? 'systrap' : 'host'), ...t };
+  try {
+    mkdirSync(join(file, '..'), { recursive: true });
+    appendFileSync(file, JSON.stringify(full) + '\n');
+  } catch {
+    /* a log must not break a ticket */
+  }
+  return full;
+}
+
+/** Median and worst of the logged starts, for `salu kernel`. */
+export function startStats(file = startsLog()): { count: number; medianMs: number; maxMs: number } | null {
+  try {
+    const ms = readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => (JSON.parse(l) as StartTiming).ms).sort((a, b) => a - b);
+    return ms.length ? { count: ms.length, medianMs: ms[Math.floor(ms.length / 2)]!, maxMs: ms[ms.length - 1]! } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Minutes a project's container stays loaded after its last ticket ends: SALU_KERNEL_IDLE_MINUTES, default 5.
+ * 0 stops it as soon as the last ticket ends; `never` keeps containers running. Stopped containers keep
+ * their files and installed packages on disk and start again with the next ticket (also ends background
+ * processes an agent left running).
+ */
+export function idleMinutes(env: NodeJS.ProcessEnv = process.env): number | null {
+  const v = (env.SALU_KERNEL_IDLE_MINUTES ?? '').trim().toLowerCase();
+  if (v === 'never') return null;
+  const n = Number(v);
+  return v !== '' && Number.isFinite(n) && n >= 0 ? n : 5;
+}
+
+const inUse = new Map<string, number>();
+const stopTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** Count a running ticket against the project's container; the returned function lets go of it. */
+export function holdContainer(project: string, bin: string, o: { env?: NodeJS.ProcessEnv; stop?: (bin: string, name: string) => void } = {}): () => void {
+  const name = containerName(project);
+  clearTimeout(stopTimers.get(name));
+  stopTimers.delete(name);
+  inUse.set(name, (inUse.get(name) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const left = (inUse.get(name) ?? 1) - 1;
+    if (left > 0) return void inUse.set(name, left);
+    inUse.delete(name);
+    const mins = idleMinutes(o.env);
+    if (mins === null) return;
+    const stop = o.stop ?? ((b, n) => void spawn(b, ['stop', '-t', '5', n], { stdio: 'ignore' }).unref());
+    const run = () => {
+      stopTimers.delete(name);
+      if (!inUse.has(name)) stop(bin, name);
+    };
+    if (mins === 0) run();
+    else stopTimers.set(name, setTimeout(run, mins * 60000).unref());
+  };
+}
+
+/** Stop salu's containers that nothing here is using: leftovers from a crashed or restarted orchestrator. */
+export function sweepStaleContainers(bin: string): void {
+  const r = podman(bin, ['ps', '--filter', 'label=salu.kernel=1', '--format', '{{.Names}}']);
+  for (const n of (r.stdout ?? '').split('\n').map((x) => x.trim()).filter(Boolean)) if (!inUse.has(n) && !n.startsWith('salu-k-doctor')) podman(bin, ['stop', '-t', '5', n]);
 }
 
 /**
@@ -175,7 +265,8 @@ export function containerSpawner(project: string, dir: string, o: { bin?: string
   return (opts) => {
     const bin = o.bin ?? engine();
     const auth = o.auth ?? requireKernelAuth(); // before anything starts: no kernel login, no run
-    const name = ensureContainer(project, dir, bin);
+    const name = ensureContainer(project, dir, bin, (t) => o.onStderr?.(`salu kernel: container ${t.kind} in ${(t.ms / 1000).toFixed(1)} s (${t.platform})`));
+    const release = holdContainer(project, bin!);
     const keep = /^(CLAUDE_|ANTHROPIC_|SALU_TICKET|SALU_KERNEL_WORKER|LANG$|LC_|TERM$)/;
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(opts.env)) if (v !== undefined && keep.test(k) && !CREDENTIAL_ENV.test(k)) env[k] = v;
@@ -188,6 +279,8 @@ export function containerSpawner(project: string, dir: string, o: { bin?: string
     const clean = () => rmSync(tmp, { recursive: true, force: true });
     child.once('spawn', () => setTimeout(clean, 2000)); // the exec client has read the file by then
     child.once('error', clean);
+    child.once('error', release);
+    child.once('exit', release);
     return child as unknown as SpawnedProcess;
   };
 }
@@ -233,6 +326,7 @@ export interface KernelStatus {
 }
 
 export function kernelStatus(): KernelStatus {
+  // (start timings and idle setting are shown by `salu kernel` through startStats and idleMinutes)
   const bin = engine();
   const rt = runtime();
   const auth = claudeAuthEnv();

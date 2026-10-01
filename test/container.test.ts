@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { createServer, connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { GVISOR_PLATFORMS, gvisorPlatform, memoryConcurrency, parseMemory, setGvisorPlatform, DOCKERFILE, checkDisk, claudeAuthEnv, requireKernelAuth, containerName, containerReady, containerSpawner, createArgs, engine, execArgs, runtime, saveToken } from '../src/core/container.ts';
+import { ensureContainer, holdContainer, idleMinutes, recordStart, startStats, GVISOR_PLATFORMS, gvisorPlatform, memoryConcurrency, parseMemory, setGvisorPlatform, DOCKERFILE, checkDisk, claudeAuthEnv, requireKernelAuth, containerName, containerReady, containerSpawner, createArgs, engine, execArgs, runtime, saveToken } from '../src/core/container.ts';
 import { judgeContainer } from '../src/core/container-check.ts';
 import { createEgressServer, domainAllowed, isBlockedAddress, WEB_PORTS } from '../src/core/egress.ts';
 import { workerSdkOptions } from '../src/orchestrator/worker.ts';
@@ -298,4 +298,83 @@ describe('concurrency and gVisor platform', () => {
     expect(GVISOR_PLATFORMS).toEqual(['systrap', 'kvm', 'ptrace']);
   });
 });
+
+describe('unloading idle containers', () => {
+  test('the idle wait is a setting: 5 minutes by default, 0 stops at once, never keeps them', () => {
+    expect(idleMinutes({})).toBe(5);
+    expect(idleMinutes({ SALU_KERNEL_IDLE_MINUTES: '0' })).toBe(0);
+    expect(idleMinutes({ SALU_KERNEL_IDLE_MINUTES: '12' })).toBe(12);
+    expect(idleMinutes({ SALU_KERNEL_IDLE_MINUTES: 'never' })).toBeNull();
+    expect(idleMinutes({ SALU_KERNEL_IDLE_MINUTES: 'junk' })).toBe(5);
+    expect(idleMinutes({ SALU_KERNEL_IDLE_MINUTES: '-1' })).toBe(5);
+  });
+
+  test('a container stops when its last ticket ends, not before; a new ticket cancels the pending stop', async () => {
+    const stopped: string[] = [];
+    const stop = (_b: string, n: string) => void stopped.push(n);
+    const now = { SALU_KERNEL_IDLE_MINUTES: '0' };
+    const a = holdContainer('web', 'podman', { env: now, stop });
+    const b = holdContainer('web', 'podman', { env: now, stop });
+    a();
+    a(); // letting go twice counts once
+    expect(stopped).toEqual([]); // one ticket still running
+    b();
+    expect(stopped).toEqual(['salu-k-web']);
+    // a short wait: stop is scheduled, a new ticket arrives first, then it stops after the last one
+    const quick = { SALU_KERNEL_IDLE_MINUTES: '0.001' }; // 60 ms
+    stopped.length = 0;
+    holdContainer('api', 'podman', { env: quick, stop })();
+    const again = holdContainer('api', 'podman', { env: quick, stop });
+    await new Promise((r) => setTimeout(r, 150));
+    expect(stopped).toEqual([]); // cancelled by the new ticket
+    again();
+    await new Promise((r) => setTimeout(r, 150));
+    expect(stopped).toEqual(['salu-k-api']);
+    // never: nothing is scheduled
+    stopped.length = 0;
+    holdContainer('db', 'podman', { env: { SALU_KERNEL_IDLE_MINUTES: 'never' }, stop })();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(stopped).toEqual([]);
+  });
+
+  test('every start is timed and logged; the stats read them back', () => {
+    const f = join(root, 'starts.jsonl');
+    expect(startStats(f)).toBeNull();
+    recordStart({ project: 'web', ms: 1400, kind: 'started' }, f);
+    recordStart({ project: 'web', ms: 900, kind: 'started' }, f);
+    recordStart({ project: 'api', ms: 9000, kind: 'created' }, f);
+    const st = startStats(f)!;
+    expect(st.count).toBe(3);
+    expect(st.medianMs).toBe(1400);
+    expect(st.maxMs).toBe(9000);
+  });
+
+  test('a stopped container is started again by the next ticket, and the start is reported; a stopping one is waited for', () => {
+    const fake = join(root, 'podman2');
+    const state = join(root, 'state');
+    writeFileSync(state, 'stopping\n');
+    writeFileSync(fake, `#!/bin/sh
+echo "$@" >> ${root}/calls2.log
+case "$1" in
+  inspect) s=$(cat ${state}); echo $s; [ "$s" = stopping ] && echo exited > ${state}; exit 0 ;;
+  start) echo running > ${state}; exit 0 ;;
+esac
+exit 0
+`);
+    chmodSync(fake, 0o755);
+    const seen: any[] = [];
+    expect(ensureContainer('web', join(root, 'k'), fake, (t) => seen.push(t))).toBe('salu-k-web');
+    const calls = readFileSync(join(root, 'calls2.log'), 'utf8');
+    expect(calls).toContain('start salu-k-web');
+    expect(calls.indexOf('inspect')).toBeLessThan(calls.indexOf('start')); // waited for the stop, then started
+    expect(seen.length).toBe(1);
+    expect(seen[0].kind).toBe('started');
+    expect(seen[0].ms).toBeGreaterThanOrEqual(0);
+    // already running: nothing to start, nothing to report
+    seen.length = 0;
+    ensureContainer('web', join(root, 'k'), fake, (t) => seen.push(t));
+    expect(seen).toEqual([]);
+  });
+});
+
 
