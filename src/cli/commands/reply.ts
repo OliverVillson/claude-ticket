@@ -8,16 +8,23 @@ import { bold, dim, green, stripControl } from '../../core/ansi.ts';
 import { readStatus } from '../../orchestrator/status.ts';
 import { publishReply, syncProject } from '../../sync/sync.ts';
 import { getRemote } from '../../sync/store.ts';
+import { answerAndNotify, answerOpenWithText } from '../../threads/decide.ts';
+import { listDecisions } from '../../threads/store.ts';
 import { helpIf } from './_shared.ts';
 import type { Turn, TicketView } from '../../db/types.ts';
 
 const HELP = `salu reply "name" "message" [--project P] [--now]
+salu reply "name" --pick N [--decision ID] [--now]   answer a decision the worker asked (N from 1)
 salu reply "name"                          show the conversation on the ticket
 
 Keep talking to a ticket after it has a reply. The message resumes the same worker session (it keeps
 everything it learned) on the same salu/ branch; a done, blocked or failed ticket goes back in the
 queue. If the ticket is running, the message waits and becomes the next turn. --now moves it to the
-front of the queue. Use it to answer a blocked ticket's question, too.`;
+front of the queue. Use it to answer a blocked ticket's question, too.
+
+A worker can ask a decision (a question with options and a recommended one) and carry on with the
+recommendation. --pick answers the newest open one, or the one named by --decision. Picking the
+recommended option only records it; any other pick tells the worker to change course.`;
 
 /** The conversation as plain lines: the ticket's first prompt, then each follow-up and reply. */
 export function conversationLines(t: TicketView, turns: Turn[]): string[] {
@@ -36,11 +43,25 @@ export async function reply(p: Parsed): Promise<number> {
   if (!ref && !flagStr(p, 'id')) throw new CliError('usage: salu reply "name" "message"');
   const t = resolveTicket(db, ref ?? '', { project: flagStr(p, 'project'), id: flagStr(p, 'id') });
   const message = rest.join(' ').trim();
+  const pickRaw = flagStr(p, 'pick');
+  if (pickRaw !== undefined) {
+    if (message) throw new CliError('use --pick on its own, or a message; not both');
+    const open = listDecisions(db, t.id, { open: true });
+    const wanted = flagStr(p, 'decision');
+    const d = wanted ? open.find((x) => x.id === Number(wanted)) : open[open.length - 1];
+    if (!d) throw new CliError(wanted ? `no open decision #${wanted} on "${t.name}"` : `"${t.name}" has no open decision`);
+    const n = Number(pickRaw);
+    const r = answerAndNotify(db, t.id, d.id, n - 1, { now: flagBool(p, 'now') });
+    const label = d.options[n - 1]!.label;
+    console.log(`${green('✓')} decision #${d.id}: ${stripControl(label)} ${dim(r.ticket ? '(told the worker, ticket is ' + r.ticket.status + ')' : '(the worker already went with this)')}`);
+    return 0;
+  }
   if (!message) {
     for (const l of conversationLines(t, listTurns(db, t.id))) console.log(l);
     return 0;
   }
   const q = replyToTicket(db, t.id, message, { now: flagBool(p, 'now') });
+  answerOpenWithText(db, t.id, message);
   const project = getProjectById(db, q.project_id);
   const remote = project ? getRemote(db, project.id) : null;
   if (project && remote && publishReply(db, project, q, message, { now: flagBool(p, 'now') })) {

@@ -1,7 +1,8 @@
 import { Database } from 'bun:sqlite';
 import { dbPath, ensureHome } from '../core/paths.ts';
+import { ensureThreadTables } from '../threads/store.ts';
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 10;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -156,7 +157,9 @@ function migrate(db: Database) {
     db.exec('CREATE INDEX IF NOT EXISTS turns_ticket ON turns(ticket_id, id);');
   }
   ensureSyncTables(db);
-  if (version < SCHEMA_VERSION)  if (version < SCHEMA_VERSION) db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
+  // v10: checklist, decisions, outputs and sub-thread links. Idempotent, so it also covers a v9 database from the core's migration.
+  ensureThreadTables(db);
+  if (version < SCHEMA_VERSION) db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
 }
 
 export function closeDb() {
