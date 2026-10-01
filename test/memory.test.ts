@@ -16,7 +16,15 @@ let root: string;
 let proj: string;
 let kern: string;
 
+const IDENT = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+const savedIdent: Record<string, string | undefined> = {};
+
 beforeEach(() => {
+  // gitSync commits with whatever identity the machine has; a CI runner has none
+  for (const [k, v] of Object.entries(IDENT)) {
+    savedIdent[k] = process.env[k];
+    process.env[k] = v;
+  }
   root = mkdtempSync(join(tmpdir(), 'salu-memory-'));
   process.env.SALU_HOME = join(root, 'home');
   process.env.SALU_KERNEL = join(root, 'kernel');
@@ -29,6 +37,10 @@ beforeEach(() => {
   kern = prepareKernel('web', proj);
 });
 afterEach(() => {
+  for (const k of Object.keys(IDENT)) {
+    if (savedIdent[k] === undefined) delete process.env[k];
+    else process.env[k] = savedIdent[k];
+  }
   delete process.env.SALU_HOME;
   delete process.env.SALU_KERNEL;
   rmSync(root, { recursive: true, force: true });
