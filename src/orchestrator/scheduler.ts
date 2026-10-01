@@ -5,6 +5,8 @@
  * Each tick: write the heartbeat, reconcile running workers with the database, ask the usage hooks
  * whether dispatch is held, then claim tickets into free slots and start one worker per ticket.
  */
+import { totalmem } from 'node:os';
+import { containerReady, memoryConcurrency } from '../core/container.ts';
 import type { Denial } from '../core/tools.ts';
 import type { Database } from 'bun:sqlite';
 import { statSync, watch, type FSWatcher } from 'node:fs';
@@ -138,7 +140,8 @@ export class Orchestrator {
     if (Number.isInteger(fromState) && fromState > 0) return fromState;
     const fromEnv = Number(process.env.SALU_CONCURRENCY);
     if (Number.isInteger(fromEnv) && fromEnv > 0) return fromEnv;
-    return DEFAULT_CONCURRENCY;
+    // In containers each ticket has a memory limit, so the machine's memory sets the default.
+    return containerReady() ? memoryConcurrency(totalmem()) : DEFAULT_CONCURRENCY;
   }
 
   get isStopping(): boolean {

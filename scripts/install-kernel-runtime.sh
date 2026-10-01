@@ -101,6 +101,10 @@ if [ "$GVISOR" -eq 1 ]; then
   # Rootless gVisor needs no cgroup ownership, and reaching the egress filter's unix socket needs host-uds.
   cat > "$RUNSC_WRAPPER" <<WRAP
 #!/bin/sh
+# Platform: SALU_GVISOR_PLATFORM, else the file written by \`salu kernel platform\`, else gVisor's default (systrap).
+P="\${SALU_GVISOR_PLATFORM:-}"
+[ -z "\$P" ] && [ -r "\${XDG_CONFIG_HOME:-\$HOME/.config}/salu/gvisor-platform" ] && P="\$(cat "\${XDG_CONFIG_HOME:-\$HOME/.config}/salu/gvisor-platform")"
+case "\$P" in kvm|ptrace|systrap) set -- --platform="\$P" "\$@" ;; esac
 exec /usr/local/bin/runsc --ignore-cgroups --host-uds=open "\$@"
 WRAP
   chmod 0755 "$RUNSC_WRAPPER"

@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, chmodSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SpawnedProcess, SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
@@ -274,3 +274,56 @@ export function resetContainerReadyCache(): void {
 
 /** SALU_KERNEL_REQUIRE=1: never fall back to the weaker fence; a ticket that cannot get a container fails. */
 export const containerRequired = (env: NodeJS.ProcessEnv = process.env) => env.SALU_KERNEL_REQUIRE === '1';
+
+// ---- How many tickets at once ----------------------------------------------------------------------------
+
+/** "4g", "512m", "2048" (bytes) -> bytes; null when it is not a size. */
+export function parseMemory(v: string | undefined): number | null {
+  const m = (v ?? '').trim().toLowerCase().match(/^(\d+(?:\.\d+)?)\s*([kmgt]?)b?$/);
+  if (!m) return null;
+  return Math.floor(Number(m[1]) * { '': 1, k: 1024, m: 1024 ** 2, g: 1024 ** 3, t: 1024 ** 4 }[m[2] as '' | 'k' | 'm' | 'g' | 't']);
+}
+
+const GIB = 1024 ** 3;
+
+/**
+ * How many containers this machine's memory can carry: what is left after 3 GiB for the system, the orchestrator
+ * and the egress filter, divided by one container's memory limit (default 4g). 16 GB gives 3. At least 1, at most 8.
+ * Only a default: `--concurrency`, `salu change`, the saved setting and SALU_CONCURRENCY all override it.
+ */
+export function memoryConcurrency(totalBytes: number, env: NodeJS.ProcessEnv = process.env): number {
+  const per = parseMemory(env.SALU_KERNEL_MEMORY ?? '4g') ?? 4 * GIB;
+  return Math.max(1, Math.min(8, Math.floor((totalBytes - 3 * GIB) / per)));
+}
+
+// ---- gVisor platform ---------------------------------------------------------------------------------------
+
+export const GVISOR_PLATFORMS = ['systrap', 'kvm', 'ptrace'] as const;
+export type GvisorPlatform = (typeof GVISOR_PLATFORMS)[number];
+
+/** Where the runtime wrapper looks for the chosen platform (SALU_GVISOR_PLATFORM wins when set). */
+export function platformFile(home = process.env.HOME ?? '', xdg = process.env.XDG_CONFIG_HOME): string {
+  return join(xdg || join(home, '.config'), 'salu', 'gvisor-platform');
+}
+
+/** The platform gVisor will use for containers started from now on. Unset means gVisor's own default (systrap). */
+export function gvisorPlatform(env: NodeJS.ProcessEnv = process.env, file = platformFile()): GvisorPlatform | null {
+  const v = (env.SALU_GVISOR_PLATFORM || (existsSync(file) ? readFileSync(file, 'utf8') : '')).trim();
+  return (GVISOR_PLATFORMS as readonly string[]).includes(v) ? (v as GvisorPlatform) : null;
+}
+
+export function setGvisorPlatform(p: GvisorPlatform | null, file = platformFile()): void {
+  if (p === null) return void rmSync(file, { force: true });
+  mkdirSync(join(file, '..'), { recursive: true });
+  writeFileSync(file, p + '\n');
+}
+
+/** kvm needs /dev/kvm that this user can open (VT-x on in the BIOS, and the user in the kvm group). */
+export function kvmUsable(): boolean {
+  try {
+    accessSync('/dev/kvm', constants.R_OK | constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}

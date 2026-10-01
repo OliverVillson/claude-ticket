@@ -165,6 +165,12 @@ fall back to the fenced mode below, unless `SALU_KERNEL_REQUIRE=1` (then the tic
 turns it off. `salu kernel reset [project]` deletes a project's container (installed packages go, the folder stays);
 `salu kernel shell [project]` opens a shell in it for you.
 
+How many tickets run at once: by default what the machine's memory carries ((RAM - 3 GiB) / the container limit, 4 GB each,
+so 16 GB gives 3). `--concurrency`, `SALU_CONCURRENCY` and the saved setting override it, and `SALU_KERNEL_MEMORY=2g` changes the
+per-container limit. gVisor's platform is a setting: `salu kernel platform [systrap|kvm|ptrace|default]` (default systrap; kvm
+needs VT-x and /dev/kvm, and may be faster for install-and-test work, unmeasured) and `salu kernel bench` times a file-heavy
+workload on each platform that can run here so you can compare on your box.
+
 Not covered yet: Macs (the egress filter needs a different transport there, so Macs use the fenced mode), per-container
 disk quotas (put `~/.salu` on its own filesystem or quota), and keeping the Claude token off the agent's side entirely.
 

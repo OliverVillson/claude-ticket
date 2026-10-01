@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { createServer, connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DOCKERFILE, checkDisk, claudeAuthEnv, requireKernelAuth, containerName, containerReady, containerSpawner, createArgs, engine, execArgs, runtime, saveToken } from '../src/core/container.ts';
+import { GVISOR_PLATFORMS, gvisorPlatform, memoryConcurrency, parseMemory, setGvisorPlatform, DOCKERFILE, checkDisk, claudeAuthEnv, requireKernelAuth, containerName, containerReady, containerSpawner, createArgs, engine, execArgs, runtime, saveToken } from '../src/core/container.ts';
 import { judgeContainer } from '../src/core/container-check.ts';
 import { createEgressServer, domainAllowed, isBlockedAddress, WEB_PORTS } from '../src/core/egress.ts';
 import { workerSdkOptions } from '../src/orchestrator/worker.ts';
@@ -269,3 +269,33 @@ describe('disk, limits and the container proof', () => {
   });
 
 });
+
+describe('concurrency and gVisor platform', () => {
+  const GiB = 1024 ** 3;
+  test('the default number of tickets follows memory: (RAM - 3 GiB) / container limit, 1 to 8', () => {
+    expect(memoryConcurrency(16 * GiB, {})).toBe(3);
+    expect(memoryConcurrency(15.5 * GiB, {})).toBe(3); // a "16 GB" laptop reports a bit less
+    expect(memoryConcurrency(8 * GiB, {})).toBe(1);
+    expect(memoryConcurrency(4 * GiB, {})).toBe(1); // never below one
+    expect(memoryConcurrency(128 * GiB, {})).toBe(8); // capped
+    expect(memoryConcurrency(16 * GiB, { SALU_KERNEL_MEMORY: '2g' })).toBe(6);
+    expect(memoryConcurrency(16 * GiB, { SALU_KERNEL_MEMORY: '1024m' })).toBe(8);
+    expect(memoryConcurrency(16 * GiB, { SALU_KERNEL_MEMORY: 'junk' })).toBe(3);
+    expect(parseMemory('4g')).toBe(4 * GiB);
+    expect(parseMemory('512m')).toBe(512 * 1024 ** 2);
+    expect(parseMemory('nope')).toBeNull();
+  });
+
+  test('the gVisor platform comes from the environment, then the file; bad values are ignored; default is unset', () => {
+    const f = join(root, 'cfg', 'gvisor-platform');
+    expect(gvisorPlatform({}, f)).toBeNull();
+    setGvisorPlatform('kvm', f);
+    expect(gvisorPlatform({}, f)).toBe('kvm');
+    expect(gvisorPlatform({ SALU_GVISOR_PLATFORM: 'ptrace' }, f)).toBe('ptrace');
+    expect(gvisorPlatform({ SALU_GVISOR_PLATFORM: 'kvm; rm -rf /' }, join(root, 'none'))).toBeNull();
+    setGvisorPlatform(null, f);
+    expect(gvisorPlatform({}, f)).toBeNull();
+    expect(GVISOR_PLATFORMS).toEqual(['systrap', 'kvm', 'ptrace']);
+  });
+});
+
