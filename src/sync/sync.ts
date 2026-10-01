@@ -3,7 +3,7 @@ import type { Database } from 'bun:sqlite';
 import { hostname } from 'node:os';
 import type { Project, TicketView } from '../db/types.ts';
 import { addTurn, createTicket, getProjectById, getTicketById, replyToTicket, updateTicket, listTickets } from '../db/queries.ts';
-import { ticketLabels, ticketTags } from '../db/types.ts';
+import { TICKET_STATUSES, ticketLabels, ticketTags, type TicketStatus } from '../db/types.ts';
 import { CliError } from '../core/errors.ts';
 import { kernelPath, isGitRepo } from '../core/kernel.ts';
 import { existsSync } from 'node:fs';
@@ -77,13 +77,13 @@ function findTicket(db: Database, project: Project, r: { ref?: string; ticketId?
   return id === null ? null : getTicketById(db, id);
 }
 
-/** Overrides for the core's resolve/reopen (tests, or a core that names them differently). */
+/** Overrides for the core's resolve (`resolveTicketById`) and reopen (`queueTicket`), for tests. */
 export const threadOps: { resolve?: (db: Database, id: number) => TicketView | void; reopen?: (db: Database, id: number) => TicketView | void } = {};
 
 /**
- * Box: resolve or reopen a ticket for the client. The operations come from the core (resolveTicket /
- * reopenTicket in src/db/queries.ts, the "threads" model); a box running a salu without them says so
- * instead of guessing, and the client's inbox keeps working.
+ * Box: resolve or reopen a ticket for the client, with the core's operations (`salu resolve` and
+ * `salu reopen "name"` without a message: resolveTicketById / queueTicket in src/db/queries.ts). A refusal
+ * (resolving a running ticket, say) comes back as a warning note. Reopening with a message is a reply file.
  */
 function applyAction(db: Database, project: Project, a: ActionFile): void {
   const say = (title: string, level: 'info' | 'warn', t?: TicketView) =>
@@ -95,8 +95,7 @@ function applyAction(db: Database, project: Project, a: ActionFile): void {
     });
   const t = findTicket(db, project, a);
   if (!t) return void say(`Could not find the ticket to ${a.action}${a.name ? ` ("${a.name}")` : ''}`, 'warn');
-  const op = threadOps[a.action] ?? (core as Record<string, unknown>)[a.action === 'resolve' ? 'resolveTicket' : 'reopenTicket'];
-  if (typeof op !== 'function') return void say(`This box's salu cannot ${a.action} tickets yet; update salu on the box`, 'warn', t);
+  const op = threadOps[a.action] ?? (a.action === 'resolve' ? core.resolveTicketById : core.queueTicket);
   try {
     const after = (op as (db: Database, id: number) => TicketView | void)(db, t.id) ?? getTicketById(db, t.id) ?? t;
     say(`${a.action === 'resolve' ? 'Resolved' : 'Reopened'} "${after.name}"`, 'info', after);
@@ -153,6 +152,10 @@ function applyMessage(db: Database, m: MessageFile): void {
   switch (m.type) {
     case 'ticket.started':
       updateTicket(db, rt.ticket_id, { status: 'running', error: null });
+      break;
+    case 'ticket.state':
+      // Resolved (stored as done), reopened (todo) and so on: the stored statuses are the vocabulary.
+      if (m.state && (TICKET_STATUSES as string[]).includes(m.state)) updateTicket(db, rt.ticket_id, { status: m.state as TicketStatus });
       break;
     case 'ticket.done':
       updateTicket(db, rt.ticket_id, { status: 'done', error: null, finished_at: m.at });

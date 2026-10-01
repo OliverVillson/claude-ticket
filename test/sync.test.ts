@@ -265,7 +265,7 @@ describe('required signing key', () => {
 });
 
 describe('threads: resolve, reopen, richer messages', () => {
-  test('a resolve from the client reaches the box; a box without the core operation says so', () => {
+  test('a resolve from the client reaches the box, and the resolved state comes back', () => {
     const { t } = sendTicket('thread');
     sync(client);
     sync(box);
@@ -274,13 +274,50 @@ describe('threads: resolve, reopen, richer messages', () => {
     expect(publishAction(client.db, client.project, local, 'resolve')).toBe(true);
     expect(sync(client).actionsSent).toBe(1);
     expect(sync(box).actionsReceived).toBe(1);
+    expect(listTickets(box.db)[0]!.status).toBe('done'); // resolved is stored as done
+    sync(client);
+    const note = listNotifications(client.db).at(-1)!;
+    expect(note.type).toBe('ticket.state');
+    expect(note.state).toBe('done');
+    expect(getTicketById(client.db, t.id)!.status).toBe('done');
+    // Reopen (no message) queues it again on the box, and the client follows.
+    publishAction(client.db, client.project, getTicketById(client.db, t.id)!, 'reopen');
+    sync(client);
+    sync(box);
+    expect(listTickets(box.db)[0]!.status).toBe('todo');
+    sync(client);
+    expect(getTicketById(client.db, t.id)!.status).toBe('todo');
+    // Applied once only.
+    expect(sync(box).actionsReceived).toBe(0);
+  });
+
+  test('salu resolve and salu reopen "name" "message" on a sent ticket reach the inbox', () => {
+    const run = (...args: string[]) =>
+      Bun.spawnSync(['bun', join(import.meta.dir, '../src/index.ts'), ...args], { cwd: join(root, 'cli-web'), env: { ...process.env, SALU_HOME: join(root, 'cli-home'), SALU_SYNC_DIR: join(root, 'cli-sync'), SALU_REMOTE_ALLOW_UNSIGNED: '1', SALU_NO_TUI: '1' } as Record<string, string>, stdout: 'pipe', stderr: 'pipe' });
+    git(root, ['init', '-q', join(root, 'cli-web')]);
+    expect(run('add', 'project', 'web', '.').exitCode).toBe(0);
+    expect(run('remote', 'add', 'web', bare).exitCode).toBe(0);
+    expect(run('add', 'sent one', 'do it').exitCode).toBe(0);
+    expect(run('resolve', 'sent one').exitCode).toBe(0);
+    expect(run('reopen', 'sent one', 'actually, also this').exitCode).toBe(0);
+    const files = git(bare, ['ls-tree', '-r', '--name-only', 'salu/inbox']).out;
+    expect(files).toMatch(/salu-inbox\/actions\/.*\.json/);
+    expect(files).toMatch(/salu-inbox\/replies\/.*\.json/);
+  });
+
+  test('resolving a running ticket on the box is refused with a warning', () => {
+    const { t } = sendTicket('busy');
+    sync(client);
+    sync(box);
+    claimNextTicket(box.db); // now running
+    publishAction(client.db, client.project, getTicketById(client.db, t.id)!, 'resolve');
+    sync(client);
+    sync(box);
     sync(client);
     const note = listNotifications(client.db).at(-1)!;
     expect(note.type).toBe('note');
     expect(note.level).toBe('warn');
-    expect(note.title).toContain('cannot resolve');
-    // Applied once only.
-    expect(sync(box).actionsReceived).toBe(0);
+    expect(listTickets(box.db)[0]!.status).toBe('running');
   });
 
   test('with the core operation, resolve and reopen apply on the box and the new state comes back', () => {

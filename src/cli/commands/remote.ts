@@ -16,8 +16,7 @@ import { getRemote, listRemotes, pendingMessages, pendingOutActions, pendingOutR
 import { boxName, rotateKey, syncAll, syncProject, type SyncSummary } from '../../sync/sync.ts';
 import { helpIf } from './_shared.ts';
 
-const HELP = `salu sync [project] [--watch] [--interval seconds]    same as salu remote sync
-salu remote add <project> [git-url] [--box] [--key secret] [--name N] [--force]
+const HELP = `salu remote add <project> [git-url] [--box] [--key secret] [--name N] [--force]
 salu remote key [--set secret] [--new]       (on the box, changing the key re-signs the inbox)
 salu remote list [--json]
 salu remote remove <project>
