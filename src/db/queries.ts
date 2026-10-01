@@ -265,11 +265,23 @@ export function queueTicket(db: Database, id: number, o: { now?: boolean } = {})
   if (!t) throw new CliError(`no ticket with id ${id}`);
   if (t.status === 'running') throw new CliError(`"${t.name}" is already running`);
   if (t.status === 'todo' && !o.now) return t;
-  const patch: Parameters<typeof updateTicket>[2] = { status: 'todo', attempts: 0, error: null, denied: null, summary: null, branch: null, finished_at: null };
+  const patch: Parameters<typeof updateTicket>[2] = { status: 'todo', attempts: 0, error: null, denied: null, finished_at: null };
   if (o.now) patch.priority = 0;
   const out = updateTicket(db, id, patch);
   wakeOrchestrator();
   return out;
+}
+
+/**
+ * Mark a ticket resolved (stored as `done`): you are finished with it. Works on any ticket that is not
+ * running; a worker's session stays on it, so a later reply revives the thread where it left off.
+ */
+export function resolveTicketById(db: Database, id: number): TicketView {
+  const t = getTicketById(db, id);
+  if (!t) throw new CliError(`no ticket with id ${id}`);
+  if (t.status === 'running') throw new CliError(`"${t.name}" is running; stop it first (salu stop) or wait for it to finish`);
+  if (t.status === 'done') return t;
+  return updateTicket(db, id, { status: 'done', error: null, finished_at: now() });
 }
 
 /** Take a queued ticket back to the backlog. Anything else (running, paused, finished) is refused. */
