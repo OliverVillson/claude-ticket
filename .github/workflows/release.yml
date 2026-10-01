@@ -46,5 +46,11 @@ jobs:
         run: SALU_E2E_BIN=dist/salu-linux-x64 bun test test/e2e
       - name: Publish release
         run: |
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --generate-notes
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            if [ -f "release-notes/$TAG.md" ]; then
+              gh release create "$TAG" --title "$TAG" --notes-file "release-notes/$TAG.md"
+            else
+              gh release create "$TAG" --title "$TAG" --generate-notes
+            fi
+          fi
           gh release upload "$TAG" dist/salu-* --clobber
