@@ -116,6 +116,7 @@ the branches on the box. Once Oliver says "merge it" for all three and a release
 sudo apt install -y git unzip curl
 curl -fsSL https://bun.sh/install | bash && source ~/.bashrc      # bun, to build salu
 git clone https://github.com/OliverVillson/salu.git ~/salu && cd ~/salu
+git config --global user.name salubox && git config --global user.email salubox@localhost   # git needs an identity to merge
 git checkout -b box origin/claude/project-thread-w24er4           # #75, which already contains #74
 git merge --no-edit origin/claude/project-thread-8y6opi           # #73: the installer and this guide
 bun install && bun run build && ./dist/salu --version             # builds dist/salu (a minute or two)
