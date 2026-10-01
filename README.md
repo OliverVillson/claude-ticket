@@ -85,6 +85,7 @@ salu log "fix login" --follow                  # worker transcript
 | `salu run [project\|"name"...] [--concurrency N] [--detach] [--plain]` | Queues every saved ticket (or only the named tickets, or those in the named project) and starts the orchestrator. If one is already running it just queues and lets it pick them up. |
 | `salu pause` / `salu resume` / `salu stop` | Pause dispatch after current workers finish; resume early; stop a detached orchestrator. |
 | `salu status [--json]` | One screen of state. |
+| `salu sched [off\|advise\|on]` | The token-aware scheduler: queue cost forecast, mode (see below). |
 | `salu notif [--all] [--json]` | Messages from your project orchestrators: a ticket is done, blocked on a question, failed, or paused for the usage limit. In a terminal it opens the notification window; `--plain` (or a pipe) prints them. `salu notif read <id>... \| --all` marks them read from the shell. |
 | `salu log "name" [--follow] [--raw] [--run N]` | Worker transcript for a ticket. |
 | `salu plan "name" [--yes]` | Asks Claude to split a ticket into sub-tickets and adds them on approval. |
@@ -163,6 +164,16 @@ project's workers in a kernel:
 Not covered: the OS sandbox fences shell commands; the file tools are fenced by the permission rules above.
 Anything an agent can read inside the kernel can be sent to any site it can reach. Linux needs
 `sudo apt-get install bubblewrap socat`. `SALU_SANDBOX=off` switches it off everywhere.
+
+## The token-aware scheduler
+
+`salu sched` shows what the queue will cost and whether it fits your plan. Three layers, each usable alone:
+
+- **Estimates.** Every finished run records its cost; salu keeps a median per model and effort (a built-in guess until five runs exist) and learns how many percent of the 5-hour window a dollar of work uses, from runs that had the orchestrator to themselves.
+- **Window-aware dispatch.** Before a ticket starts, its estimate is compared with what is left of the 5-hour window (5% margin) and the week (15% reserve, which `--now` tickets may use). A ticket that does not fit is passed over for a smaller one, at most 3 times, then waited for; when nothing fits the queue is held until the reset. Running tickets are never stopped. With an API key there is no meter: `SALU_BUDGET_USD_PER_DAY` counts dollars the same way.
+- **Model routing.** Tickets labelled docs, chore, typo, lint, format or rename go to Sonnet, and when the Opus window is 85% used (and Sonnet has room) so does any new ticket. Tickets that name a model, ask for effort high or more, have `route=off`, or live in a project with its own default model are never touched. The model and reason are written onto the ticket (`model=sonnet routed=light-task`).
+
+Modes: `salu sched advise` (default) only reports what it would do; `salu sched on` does it; `salu sched off` runs the queue in order as before. The 5-hour numbers have not been checked against a real subscription window yet.
 
 ## The runner (an always-on Linux box)
 

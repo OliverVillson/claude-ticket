@@ -29,6 +29,7 @@ Usage   (salu ?  |  salu help  |  salu --help  shows this list; quote the ? in z
   salu notif read <id>... | --all            mark messages read from the shell
   salu pause | salu resume | salu stop
   salu status [--json]
+  salu sched [off|advise|on]                 what the queue costs, and whether it fits your plan's windows
   salu usage [--json] [--refresh]            how much of your Claude plan's 5-hour and weekly usage is left
   salu log "name" [--follow] [--raw]
   salu plan "name"                           split a ticket into sub-tickets with Claude
@@ -70,6 +71,8 @@ export async function dispatch(argv: string[]): Promise<number> {
     case 'change':
     case 'edit':
       return (await import('./commands/change.ts')).change(sub);
+    case 'sched':
+      return (await import('./commands/sched.ts')).sched(sub);
     case 'usage':
       return (await import('./commands/usage.ts')).usage(sub);
     case 'status':
