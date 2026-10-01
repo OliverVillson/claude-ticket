@@ -140,6 +140,14 @@ not auto-allowed (a ticket that needs one blocks, and `salu allow` grants it); a
 shell stays limited to local git (`salu doctor` says so) while the file-tool fence still applies. `SALU_SANDBOX=off` drops all of
 this and `salu doctor` flags it.
 
+**Running what it builds.** Workers can run the project's tests and builds, write to the temp folder and install
+dependencies. Installs would write to your home folder (`~/.bun/install/cache`, `~/.npm`, `~/.cache/pip`), which stays
+closed (a cache a worker can write is a cache your own builds later trust), so each project gets a private cache at
+`~/.salu/cache/<project>` (`SALU_CACHE` moves it) and bun, npm, pnpm, yarn, pip, uv, cargo and go are pointed at it. It is the
+only place outside the project a worker may write, from shell commands only. The first install per project is cold. A dev
+server may listen on localhost. On Linux each shell command has its own network, so start the server, try it and stop it in
+the same command (`bun dev & sleep 2; curl localhost:3000; kill %1`); a second command cannot reach it. On macOS the port is shared.
+
 ## The kernel (own copy, opt-in per project)
 
 `salu add project web --sandbox` (or `salu change project web --sandbox` / `--no-sandbox`) runs that

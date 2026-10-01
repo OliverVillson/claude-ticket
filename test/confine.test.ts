@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { confinementFor, credentialPaths, fileToolGuard, fileToolHook, kernelOptions } from '../src/core/kernel.ts';
+import { cacheEnv, confinementFor, credentialPaths, workerCacheDir, fileToolGuard, fileToolHook, kernelOptions } from '../src/core/kernel.ts';
 import { CONFINED_ALLOWED_TOOLS, DEFAULT_ALLOWED_TOOLS, SALU_TOOLS, parseTools, toolsToSdk } from '../src/core/tools.ts';
 import { workerSdkOptions } from '../src/orchestrator/worker.ts';
 
@@ -88,7 +88,7 @@ describe('what a fenced worker is started with', () => {
       const o = workerSdkOptions(ticket, null, { fence: { osSandbox: true } });
       expect(o.cwd).toBe(proj); // the real project, not a copy
       expect(o.sandbox?.enabled).toBe(true);
-      expect(o.sandbox?.filesystem?.allowWrite).toEqual([proj]);
+      expect(o.sandbox?.filesystem?.allowWrite).toEqual([proj, workerCacheDir('web')]); // the project, and a private package cache
       expect(o.sandbox?.filesystem?.denyRead).toEqual(credentialPaths());
       expect(o.sandbox?.allowUnsandboxedCommands).toBe(false);
       expect(o.hooks?.PreToolUse?.length).toBe(1);
@@ -142,5 +142,48 @@ describe('tools in confined mode', () => {
     expect(toolsToSdk('standard', 'acceptEdits').allowedTools).toEqual(expect.arrayContaining(SALU_TOOLS));
     expect(o.allowedTools).not.toContain('mcp__github');
     expect(toolsToSdk('also:mcp__github', 'acceptEdits', { confined: true }).allowedTools).toContain('mcp__github');
+  });
+});
+
+describe('running what it builds: caches, temp, dev servers', () => {
+  test('package-manager caches go to a private per-project folder, the only extra place a worker may write', () => {
+    process.env.SALU_CACHE = join(root, 'cache');
+    try {
+      const o = workerSdkOptions(ticket, null, { fence: { osSandbox: true } });
+      const cache = workerCacheDir('web');
+      expect(cache).toBe(join(root, 'cache', 'web'));
+      expect(o.sandbox?.filesystem?.allowWrite).toEqual([proj, cache]);
+      for (const k of ['BUN_INSTALL_CACHE_DIR', 'npm_config_cache', 'PIP_CACHE_DIR', 'UV_CACHE_DIR', 'YARN_CACHE_FOLDER', 'CARGO_HOME', 'GOCACHE']) expect(o.env?.[k]?.startsWith(cache + '/')).toBe(true);
+      for (const v of Object.values(cacheEnv(cache))) expect(v.startsWith(cache + '/')).toBe(true);
+      // the user's own caches stay closed: nothing in the home folder is writable, and the file tools still refuse them
+      expect(o.sandbox?.filesystem?.allowWrite?.filter((p) => p !== proj).some((p) => p.startsWith(home))).toBe(false);
+      expect(fileToolGuard(proj, { home, tmp: join(root, 'tmp'), fence: true })('Write', { file_path: join(home, '.bun', 'install', 'cache', 'x') })).toContain('inside the project folder');
+      expect(fileToolGuard(proj, { home, tmp: join(root, 'tmp'), fence: true })('Write', { file_path: join(cache, 'x') })).toContain('inside the project folder'); // shell only
+      const k = workerSdkOptions(ticket, null, { kernel: '/k/web' });
+      expect(k.sandbox?.filesystem?.allowRead).toContain(cache); // the kernel closes the home folder, the cache is under it
+    } finally {
+      delete process.env.SALU_CACHE;
+    }
+  });
+
+  test('a dev server may listen on localhost, and unconfined or unsandboxed workers get no cache redirect', () => {
+    expect(workerSdkOptions(ticket, null, { fence: { osSandbox: true } }).sandbox?.network?.allowLocalBinding).toBe(true);
+    expect(workerSdkOptions(ticket, null, { fence: { osSandbox: false } }).env?.npm_config_cache).toBeUndefined();
+    expect(workerSdkOptions(ticket, null).env?.npm_config_cache).toBeUndefined();
+  });
+
+  // The same mount layout Claude Code's sandbox builds (read-only root, project and cache writable, private temp), run for real.
+  const bwrap = Bun.which('bwrap');
+  test.skipIf(!bwrap)('under a bubblewrap with that layout: caches, temp and the project are writable, the home folder is not', () => {
+    const cache = join(root, 'wcache', 'web');
+    const tmp = join(root, 'wtmp');
+    mkdirSync(cache, { recursive: true });
+    mkdirSync(tmp, { recursive: true });
+    const sh = (script: string) => Bun.spawnSync([bwrap!, '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--bind', proj, proj, '--bind', cache, cache, '--bind', tmp, tmp, '--setenv', 'TMPDIR', tmp, '--chdir', proj, 'sh', '-c', script], { stdout: 'pipe', stderr: 'pipe', stdin: 'ignore' });
+    const ok = (script: string) => sh(script).exitCode === 0;
+    expect(ok(`echo a > ${proj}/built.txt && echo b > ${cache}/npm-cache && echo c > $TMPDIR/t`)).toBe(true);
+    expect(ok(`echo x > ${home}/.bun-cache-poison`)).toBe(false);
+    expect(ok(`echo x > ${outside}/escape.txt`)).toBe(false);
+    expect(ok(`echo x > ${join(home, '.ssh', 'authorized_keys')}`)).toBe(false);
   });
 });

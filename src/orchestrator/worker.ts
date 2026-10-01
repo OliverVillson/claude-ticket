@@ -17,7 +17,7 @@ import { detectLimit, parseLimitText, probeWindow } from '../usage/index.ts';
 import type { LimitHit } from '../usage/types.ts';
 import { CLAUDE_MISSING, EnvironmentError, claudeExecutableOption, environmentProblem, runningCompiled } from '../core/claude-bin.ts';
 import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../core/tags.ts';
-import { auditKernel, confinementFor, kernelOptions, prepareKernel, sandboxSupport, scrubSecrets } from '../core/kernel.ts';
+import { auditKernel, cacheEnv, confinementFor, kernelOptions, prepareKernel, sandboxSupport, scrubSecrets, workerCacheDir } from '../core/kernel.ts';
 import { DEFAULT_TOOLS, denialsFrom, toolsToSdk } from '../core/tools.ts';
 import { memoryPrompt } from '../memory/prompt.ts';
 import { refreshKernel } from '../memory/sync.ts';
@@ -124,10 +124,11 @@ export function workerSdkOptions(t: TicketView, project: Project | null, extra: 
   if (extra.kernel || extra.fence) {
     // The kernel (own copy) or the fence (real project): writes confined to the folder by the OS sandbox around shell
     // commands and by a hook on the file tools; credentials closed to the file tools; no logins in the environment.
-    const k = kernelOptions(extra.kernel ?? t.project_path, { mode: extra.kernel ? 'kernel' : 'fence' });
+    const cache = workerCacheDir(t.project);
+    const k = kernelOptions(extra.kernel ?? t.project_path, { mode: extra.kernel ? 'kernel' : 'fence', cache });
     if (extra.kernel || extra.fence?.osSandbox) opts.sandbox = k.sandbox;
     opts.disallowedTools = [...(opts.disallowedTools ?? []), ...k.disallowedTools];
-    opts.env = scrubSecrets(opts.env ?? {});
+    opts.env = { ...scrubSecrets(opts.env ?? {}), ...(confined ? cacheEnv(cache) : {}) };
     opts.hooks = { ...opts.hooks, ...k.hooks };
   }
   if (extra.resume) opts.resume = extra.resume;
@@ -237,6 +238,7 @@ export const sdkRunner: WorkerRunner = {
     // Without the OS sandbox (a Linux machine lacking bubblewrap) a fenced worker keeps the file-tool fence and the
     // old narrow shell rules, so it never gets more than it can be held to.
     const fence = mode === 'fence' ? { osSandbox: sandboxSupport().ok } : undefined;
+    if (mode !== 'off' && (kernel || fence?.osSandbox)) mkdirSync(workerCacheDir(input.ticket.project), { recursive: true });
     const options = workerSdkOptions(ticket, input.project, { resume: input.resume, abort: input.abort, kernel, fence });
     input = { ...input, ticket };
     if (saluToolOn(ticket, input.project)) {
