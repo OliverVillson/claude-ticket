@@ -5,7 +5,7 @@ import { createServer, connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { boxAdmit, boxConcurrency, boxRunning, memAvailable, memoryPressure, releaseBoxSlot, takeBoxSlot, ensureContainer, holdContainer, idleMinutes, recordStart, startStats, GVISOR_PLATFORMS, gvisorPlatform, memoryConcurrency, parseMemory, setGvisorPlatform, DOCKERFILE, checkDisk, claudeAuthEnv, requireKernelAuth, containerName, containerReady, containerSpawner, createArgs, engine, execArgs, runtime, saveToken } from '../src/core/container.ts';
-import { judgeContainer } from '../src/core/container-check.ts';
+import { EGRESS_TARGETS, NON_WEB_TARGETS, judgeContainer } from '../src/core/container-check.ts';
 import { createEgressServer, domainAllowed, isBlockedAddress, WEB_PORTS } from '../src/core/egress.ts';
 import { workerSdkOptions } from '../src/orchestrator/worker.ts';
 
@@ -327,6 +327,19 @@ describe('concurrency and gVisor platform', () => {
     expect(ask({ available: 12 * GiB, env: { SALU_BOX_CONCURRENCY: '7' } }).ok).toBe(false); // 7 running, ceiling 7
     expect(memAvailable('MemTotal: 1 kB\nMemAvailable:    2048 kB\n')).toBe(2048 * 1024);
     expect(memoryPressure('some avg10=12.50 avg60=1.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=0 avg300=0 total=0')).toBe(12.5);
+  });
+
+  test('a dead proxy path is reported as such, not as "not refused"', () => {
+    const zero = Object.fromEntries(EGRESS_TARGETS.map((t) => [t, 0]));
+    const ports = Object.fromEntries(NON_WEB_TARGETS.map((t) => [t, 0]));
+    const probes = judgeContainer({ egress: zero, ports, control: 0, diagnostics: 'forwarders running: 0', directExit: 1, envText: '', hostSecrets: [], mountPoints: ['/', '/work'] });
+    expect(probes[0].ok).toBe(false);
+    expect(probes[0].detail).toContain('no web access');
+    expect(probes[0].detail).toContain('forwarders running: 0');
+    expect(probes.some((p) => p.detail.includes('not refused'))).toBe(false);
+    // a working proxy that refuses everything is judged as before
+    const ok = judgeContainer({ egress: Object.fromEntries(EGRESS_TARGETS.map((t) => [t, 403])), ports: Object.fromEntries(NON_WEB_TARGETS.map((t) => [t, 403])), control: 200, directExit: 1, envText: '', hostSecrets: [], mountPoints: ['/', '/work'] });
+    expect(ok.every((p) => p.ok)).toBe(true);
   });
 
   test('the gVisor platform comes from the environment, then the file; bad values are ignored; default is unset', () => {
