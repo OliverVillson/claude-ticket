@@ -175,6 +175,13 @@ sudo -iu salu salu kernel login      # a separate agent token: run claude setup-
 sudo -iu salu salu kernel status     # want: tickets run in a container
 sudo -iu salu salu doctor --sandbox  # attacks a throwaway container from inside; every line should be green
 ```
+Then settle the gVisor mode for this laptop (it has VT-x, so `kvm` may beat the default `systrap`). It times the same file-heavy job each way:
+```sh
+sudo -iu salu salu kernel bench                    # prints a time for systrap, kvm (if /dev/kvm works) and plain Podman
+sudo -iu salu salu kernel platform kvm             # only if kvm was clearly faster; systrap|kvm|ptrace|default
+```
+Paste the bench output, `salu runner list` and `sensors` (after a ticket has been running a minute) back to Claude, and the box gets tuned from those numbers.
+
 Then send a ticket from the Mac that shows it: `salu add "kernel check" "Run uname -a and whoami, install the npm package left-pad in a temp folder, and write what you saw to KERNEL.md; commit it."`
 Its `KERNEL.md` should say you are root in a gVisor container, and the install should work.
 
