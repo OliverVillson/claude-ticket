@@ -16,17 +16,29 @@ import { CliError } from './errors.ts';
 
 export const DEFAULT_TOOLS = 'standard';
 
+export const SALU_TOOLS = ['mcp__salu__status', 'mcp__salu__ask_decision', 'mcp__salu__attach', 'mcp__salu__start_thread'];
+
 /**
  * Unattended workers cannot answer permission prompts, and acceptEdits denies git. The rules ask
  * for a commit on a `salu/<name>` branch, so local git is allowed; pushing and remote or config
  * changes never are.
  */
 export const DEFAULT_ALLOWED_TOOLS = [
+  // salu's own in-process worker tool (status, decisions, outputs, sub-threads): it runs inside salu and only writes salu's database.
+  ...SALU_TOOLS,
   'Bash(git status:*)', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)', 'Bash(git branch:*)',
   'Bash(git checkout:*)', 'Bash(git switch:*)', 'Bash(git add:*)', 'Bash(git commit:*)', 'Bash(git stash:*)',
   // Read-only network git: fetching code into the project is safe (it runs nothing and sends nothing).
   'Bash(git clone:*)', 'Bash(git fetch:*)', 'Bash(git ls-remote:*)',
 ];
+/**
+ * Allowed on top of DEFAULT_ALLOWED_TOOLS while writes are confined (OS sandbox on): the whole Claude Code
+ * toolset. Shell commands run inside the sandbox, so they can only change the project; the web is open by design.
+ * MCP tools are not here on purpose: an MCP server runs outside the sandbox and can write anywhere, so each
+ * one is allowed with `salu allow` (tools=also:mcp__server).
+ */
+export const CONFINED_ALLOWED_TOOLS = ['Bash', 'WebFetch', 'WebSearch', 'Task', 'Agent', 'TodoWrite', 'Skill', 'NotebookEdit'];
+
 export const DEFAULT_DISALLOWED_TOOLS = ['Bash(git push:*)', 'Bash(git remote:*)', 'Bash(git config:*)'];
 
 /** Claude Code's built-in tools, for pick-lists. Names outside this list (mcp__server__tool, newer tools) are still accepted. */
@@ -80,7 +92,7 @@ function splitList(s: string): string[] {
 
 function checkEntry(e: string, where: string): string {
   if (!e) throw new CliError(`tools: empty entry in ${where} (check for a stray comma)`);
-  const m = /^([A-Za-z_][\w*]*)(\((.*)\))?$/.exec(e);
+  const m = /^([A-Za-z_][\w*.-]*)(\((.*)\))?$/.exec(e);
   if (!m) throw new CliError(`tools: "${e}" is not a tool name or a rule like Bash(git *)`);
   const name = m[1]!;
   const known = KNOWN_TOOLS.find((k) => k.toLowerCase() === name.toLowerCase());
@@ -161,7 +173,7 @@ const baseName = (rule: string) => rule.replace(/\(.*$/, '');
  * hold. The auto-allow rules and default git denies only apply when permission is neither `bypass`
  * (nothing is checked) nor `plan` (nothing runs), matching how workers behaved before `tools` existed.
  */
-export function toolsToSdk(value: string | null | undefined, permission: string): SdkToolOptions {
+export function toolsToSdk(value: string | null | undefined, permission: string, o: { confined?: boolean } = {}): SdkToolOptions {
   const spec = parseTools(value || DEFAULT_TOOLS);
   const preset = spec.preset ? TOOL_PRESETS.find((p) => p.name === spec.preset)! : undefined;
   const checked = permission !== 'bypass' && permission !== 'plan';
@@ -169,12 +181,12 @@ export function toolsToSdk(value: string | null | undefined, permission: string)
   let allow: string[] | undefined;
   if (preset) {
     if (preset.tools) out.tools = [...preset.tools];
-    allow = preset.allow ?? DEFAULT_ALLOWED_TOOLS;
+    allow = preset.allow ?? (o.confined && !preset.tools ? [...DEFAULT_ALLOWED_TOOLS, ...CONFINED_ALLOWED_TOOLS] : DEFAULT_ALLOWED_TOOLS);
   } else if (spec.allow) {
     out.tools = uniq(spec.allow.map(baseName));
     allow = spec.allow;
   } else {
-    allow = DEFAULT_ALLOWED_TOOLS;
+    allow = o.confined ? [...DEFAULT_ALLOWED_TOOLS, ...CONFINED_ALLOWED_TOOLS] : DEFAULT_ALLOWED_TOOLS;
   }
   if (spec.also) {
     allow = uniq([...allow, ...spec.also]);

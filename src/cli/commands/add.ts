@@ -41,8 +41,10 @@ it. It needs git, and a private repo needs you to be logged in (gh auth login or
 Example: salu add project web --clone https://github.com/you/web --path ~/code/web
 
 Workers use ${DEFAULT_MODEL} at effort ${DEFAULT_EFFORT} unless the ticket (model=, effort=) or its project says otherwise.
---sandbox runs the project's workers in the kernel: their own copy of the code under ~/.salu/kernel,
-with shell commands fenced in by the OS (see salu push / salu export to get the result out).
+Workers get the full Claude Code toolset (shell, web, subagents, the project's CLAUDE.md, skills and MCP servers), but
+can only change files inside the project folder: the OS sandbox fences their shell commands, a check fences their file tools.
+--sandbox goes further: workers use their own copy of the code under ~/.salu/kernel and never touch the real folder
+(see salu push / salu export to get the result out).
 Tools: tools=standard|readonly|edit|none|allow:Read,Grep,Bash(git *)[;deny:Bash(rm *)] (default standard).`;
 
 export async function add(p: Parsed): Promise<number> {
