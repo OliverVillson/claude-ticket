@@ -5,10 +5,10 @@ enum TicketState: String, Codable, CaseIterable {
     case sent      // written to salu/inbox by this phone, the box has not answered yet
     case queued    // the box accepted it and will run it
     case backlog   // the box accepted it into the backlog (sent with "run now" off)
-    case running
+    case running   // "working"
     case blocked   // needs you: a permission, an answer
     case failed
-    case done
+    case resolved  // finished, or resolved by you; collapses out of the way. A reply revives it.
 }
 
 /// A ticket this phone sent. Kept on the phone so it shows up before the box has seen it.
@@ -45,6 +45,27 @@ struct SentReply: Codable, Identifiable, Hashable {
     var date: Date { Date(timeIntervalSince1970: at / 1000) }
 }
 
+/// A ticket this phone resolved. It shows as resolved at once; anything the box reports afterwards
+/// (a reply reviving it, a new run) wins.
+struct SentResolve: Codable, Identifiable, Hashable {
+    var id: String       // the resolve file's id
+    var repo: String
+    var ticket: String   // TicketSummary.id
+    var at: Double
+    var after: String?   // newest message id the phone had for the ticket when it sent this
+
+    var date: Date { Date(timeIntervalSince1970: at / 1000) }
+}
+
+/// Something a ticket produced, shown as a card on its thread. Today only the result branch; the
+/// worker's PRs and files join it when the box sends them.
+struct TicketOutput: Identifiable, Hashable {
+    enum Kind { case branch }
+    let kind: Kind
+    let value: String
+    var id: String { value }
+}
+
 /// One line of a ticket's conversation: what you asked or answered, and what the worker said back.
 struct Turn: Identifiable, Hashable {
     enum Who { case you, worker }
@@ -70,9 +91,22 @@ struct TicketSummary: Identifiable, Hashable {
     var messages: [SaluMessage] = []  // newest first
     var replies: [SentReply] = []     // oldest first
     var lastSent: Date?        // the phone's latest write for it (the ticket or a reply) still waiting on the box
+    var resolvePending = false // resolved from this phone, the box hasn't confirmed yet
 
     /// The box queues a follow-up on any ticket it knows, except one in the backlog (`salu reply` refuses those).
+    /// On a resolved ticket the reply revives it.
     var canReply: Bool { number != nil && state != .backlog }
+    /// Resolve anything the box knows that isn't working right now or already resolved.
+    var canResolve: Bool { number != nil && ![.resolved, .running, .sent].contains(state) }
+
+    /// Result branches and the like, newest first, each once.
+    var outputs: [TicketOutput] {
+        var seen = Set<String>()
+        return messages.compactMap { m in
+            guard let b = m.branch, seen.insert(b).inserted else { return nil }
+            return TicketOutput(kind: .branch, value: b)
+        }
+    }
 
     /// What you said and what the worker said, oldest first.
     var conversation: [Turn] {
@@ -92,9 +126,9 @@ enum Tickets {
     /// The state a message moves its ticket to; nil for messages that do not change it.
     static func state(after type: String) -> TicketState? {
         switch type {
-        case "ticket.accepted": return .queued
+        case "ticket.accepted", "ticket.reopened": return .queued
         case "ticket.started": return .running
-        case "ticket.done": return .done
+        case "ticket.done", "ticket.resolved": return .resolved
         case "ticket.blocked": return .blocked
         case "ticket.failed": return .failed
         default: return nil
@@ -102,7 +136,7 @@ enum Tickets {
     }
 
     /// Tickets newest activity first. Messages may come in any order.
-    static func build(messages: [SaluMessage], sent: [SentTicket], replies: [SentReply] = []) -> [TicketSummary] {
+    static func build(messages: [SaluMessage], sent: [SentTicket], replies: [SentReply] = [], resolves: [SentResolve] = []) -> [TicketSummary] {
         var byKey: [String: TicketSummary] = [:]
         var alias: [String: String] = [:]  // "box:<project>#<n>" -> ticket file id
         var queueOf: [String: Bool] = [:]
@@ -138,16 +172,38 @@ enum Tickets {
             byKey[key] = s
         }
 
-        // A reply the box hasn't answered yet puts the ticket back to "sent" (a running one keeps running).
-        for r in replies.sorted(by: { $0.at < $1.at }) {
-            guard var s = byKey[r.ticket] else { continue }
-            s.replies.append(r)
-            if !r.answered(by: s.messages) {
-                if s.state != .running { s.state = .sent }
-                s.lastSent = r.date
-                s.updated = max(s.updated, r.date)
+        // What this phone did to tickets the box knows, oldest first: replies and resolves.
+        enum Action { case reply(SentReply), resolve(SentResolve) }
+        let actions: [(at: Double, action: Action)] =
+            replies.map { (at: $0.at, action: Action.reply($0)) } + resolves.map { (at: $0.at, action: Action.resolve($0)) }
+        for (_, action) in actions.sorted(by: { $0.at < $1.at }) {
+            switch action {
+            case .reply(let r):
+                // A reply the box hasn't answered yet puts the ticket back to "sent" (a running one keeps running).
+                guard var s = byKey[r.ticket] else { continue }
+                s.replies.append(r)
+                if !r.answered(by: s.messages) {
+                    if s.state != .running { s.state = .sent }
+                    s.lastSent = r.date
+                    s.updated = max(s.updated, r.date)
+                }
+                byKey[r.ticket] = s
+            case .resolve(let r):
+                // Resolved at once, unless the box has reported something else about the ticket since.
+                guard var s = byKey[r.ticket] else { continue }
+                let since = s.messages.filter { $0.id > (r.after ?? "") }
+                let confirmed = since.contains { $0.type == "ticket.resolved" }
+                let movedOn = since.contains { m in
+                    guard let next = state(after: m.type) else { return false }
+                    return next != .resolved  // a reply's ack or a new run: the ticket is alive again
+                }
+                if !movedOn {
+                    s.state = .resolved
+                    s.resolvePending = !confirmed
+                    s.lastSent = nil
+                }
+                byKey[r.ticket] = s
             }
-            byKey[r.ticket] = s
         }
         return byKey.values.sorted { $0.updated > $1.updated }
     }

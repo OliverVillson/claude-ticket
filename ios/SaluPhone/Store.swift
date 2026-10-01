@@ -24,6 +24,8 @@ final class Store: ObservableObject {
     @Published private(set) var sent: [SentTicket] { didSet { defaults.set(try? JSONEncoder().encode(sent), forKey: "sentTickets") } }
     /// Replies this phone sent, newest first.
     @Published private(set) var replies: [SentReply] { didSet { defaults.set(try? JSONEncoder().encode(replies), forKey: "sentReplies") } }
+    /// Tickets this phone resolved, newest first.
+    @Published private(set) var resolves: [SentResolve] { didSet { defaults.set(try? JSONEncoder().encode(resolves), forKey: "sentResolves") } }
     /// Unsent reply text per ticket, so closing the sheet loses nothing.
     @Published var replyDrafts: [String: String] { didSet { defaults.set(replyDrafts, forKey: "replyDrafts") } }
 
@@ -79,6 +81,11 @@ final class Store: ObservableObject {
         } else {
             replies = []
         }
+        if let data = defaults.data(forKey: "sentResolves"), let list = try? JSONDecoder().decode([SentResolve].self, from: data) {
+            resolves = list
+        } else {
+            resolves = []
+        }
         replyDrafts = defaults.dictionary(forKey: "replyDrafts") as? [String: String] ?? [:]
         demo = defaults.bool(forKey: "demo")
         if demo { messages = Demo.messages().sorted { $0.id > $1.id } }
@@ -101,7 +108,8 @@ final class Store: ObservableObject {
     func isRead(_ m: SaluMessage) -> Bool { read.contains(m.id) }
 
     var tickets: [TicketSummary] {
-        Tickets.build(messages: messages, sent: sent.filter { $0.repo == repoKey }, replies: replies.filter { $0.repo == repoKey })
+        Tickets.build(messages: messages, sent: sent.filter { $0.repo == repoKey }, replies: replies.filter { $0.repo == repoKey },
+                      resolves: resolves.filter { $0.repo == repoKey })
     }
     func ticket(_ id: String) -> TicketSummary? { tickets.first { $0.id == id } }
     func ticket(for m: SaluMessage) -> TicketSummary? {
@@ -182,6 +190,32 @@ final class Store: ObservableObject {
             try await c.send(SaluReply(id: id, project: t.project, ref: ref, name: t.name, body: body, now: now, at: ms))
             replies.insert(SentReply(id: id, repo: repoKey, ticket: t.id, body: body, now: now, at: ms, after: t.messages.first?.id), at: 0)
             if replies.count > 500 { replies.removeLast(replies.count - 500) }
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// Resolves the ticket: it collapses out of the way at once and the box is told on its next sync.
+    /// A reply revives it. Returns nil when it went, else what went wrong.
+    func resolve(_ t: TicketSummary) async -> String? {
+        let (id, ms) = newTicketId()
+        let ref = t.id.hasPrefix("box:") ? nil : t.id
+        let record = SentResolve(id: id, repo: repoKey, ticket: t.id, at: ms, after: t.messages.first?.id)
+        if demo {
+            resolves.insert(record, at: 0)
+            let ticket = TicketRef(ref: ref, name: t.name, id: t.number ?? 0)
+            let steps: [(seconds: Double, make: () -> SaluMessage)] = [
+                (2, { Demo.message(at: Date(), "ticket.resolved", "info", "Resolved \(t.name)", ticket: ticket) }),
+            ]
+            pretendBox(steps[...])
+            return nil
+        }
+        guard let c = client else { return SaluError.notConfigured.localizedDescription }
+        do {
+            try await c.send(SaluResolve(id: id, project: t.project, ref: ref, name: t.name, at: ms))
+            resolves.insert(record, at: 0)
+            if resolves.count > 500 { resolves.removeLast(resolves.count - 500) }
             return nil
         } catch {
             return error.localizedDescription

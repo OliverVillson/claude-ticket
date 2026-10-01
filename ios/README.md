@@ -23,9 +23,12 @@ every state and a pretend box that answers what you send. Nothing goes to GitHub
 - **Inbox**: what the box said, newest first, by day. A green bar marks unread (swipe right to toggle); filter all /
   unread / needs you. The header dog runs while a ticket runs and sleeps otherwise (tap it: it barks).
 - **Message**: blocked tickets show what they need and the `salu allow` command to copy; done ones their result branch.
-- **Tickets**: every ticket grouped by needs you / running / waiting / done, built from the messages plus the tickets
-  this phone sent (they show as "sent" until the box answers). A ticket opens its conversation (what you asked, the
-  worker's replies, your follow-ups) and its timeline.
+- **Tickets**: every ticket as a thread, grouped by needs you / working / waiting, built from the messages plus the
+  tickets this phone sent (they show as "sent" until the box answers). Finished tickets are **resolved** and collapse
+  into one line each at the bottom (tap "resolved" to show them). A ticket opens as a thread: its outputs (result
+  branch, with the command to check it out), the conversation (what you asked, the worker's replies, your follow-ups)
+  and, folded away, every step the box reported. **Resolve** (top right) resolves it from the phone, written to
+  `salu-inbox/resolves/<id>.json`; replying to a resolved ticket reopens it.
 - **Keep chatting** (bottom of a ticket, or of its done / blocked / failed message): one field, sent as a `ticket-reply`
   to `salu-inbox/replies/<id>.json`, the phone's `salu reply`. The worker resumes the same session on the same branch.
   "Jump the queue" is `--now`. The ticket shows as "sent" until the box answers; the draft is kept per ticket.

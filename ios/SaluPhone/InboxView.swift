@@ -264,7 +264,7 @@ struct MessageDetail: View {
                     NavigationLink(value: TicketRoute(id: t.id)) {
                         HStack {
                             StateGlyph(state: t.state)
-                            Text("ticket timeline").font(Salu.mono(.callout, weight: .semibold))
+                            Text("open thread").font(Salu.mono(.callout, weight: .semibold))
                             Spacer()
                             Image(systemName: "chevron.right").font(.footnote)
                         }

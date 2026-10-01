@@ -110,6 +110,8 @@ struct ReplySheet: View {
             return "It isn't finished yet, so this becomes its next turn when the current run ends."
         case .blocked:
             return "Your reply answers its question. A refused permission still needs `salu allow` on your computer."
+        case .resolved:
+            return "Replying reopens it: the worker picks up where it left off, on the same salu/ branch."
         default:
             return "The worker picks up where it left off, on the same salu/ branch."
         }
@@ -196,12 +198,13 @@ struct TurnBubble: View {
 /// "keep chatting" at the bottom of a finished ticket or its message.
 struct ReplyButton: View {
     var number: Int?
+    var title = "keep chatting"
     var action: () -> Void
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Text("❯").fontWeight(.heavy)
-                Text("keep chatting")
+                Text(title)
                 Spacer()
                 if let number { Text("#\(number)").fontWeight(.regular) }
                 Image(systemName: "arrowshape.turn.up.left")
@@ -217,6 +220,6 @@ struct ReplyButton: View {
         .buttonStyle(.plain)
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
-        .accessibilityLabel("Reply to this ticket")
+        .accessibilityLabel(title == "keep chatting" ? "Reply to this ticket" : "Reply to reopen this ticket")
     }
 }

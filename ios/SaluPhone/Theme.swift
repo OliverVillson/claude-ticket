@@ -73,10 +73,10 @@ extension TicketState {
         case .sent: return Look(glyph: "▸", color: Salu.dim, label: "sent")
         case .queued: return Look(glyph: "○", color: Salu.dim, label: "queued")
         case .backlog: return Look(glyph: "◌", color: Salu.dim, label: "backlog")
-        case .running: return Look(glyph: "●", color: Salu.accent, label: "running")
+        case .running: return Look(glyph: "●", color: Salu.accent, label: "working")
         case .blocked: return Look(glyph: "?", color: Salu.warn, label: "blocked")
         case .failed: return Look(glyph: "✗", color: Salu.error, label: "failed")
-        case .done: return Look(glyph: "✓", color: Salu.ok, label: "done")
+        case .resolved: return Look(glyph: "✓", color: Salu.ok, label: "resolved")
         }
     }
 }
@@ -86,7 +86,8 @@ extension SaluMessage {
         switch type {
         case "ticket.accepted": return Look(glyph: "○", color: Salu.dim, label: "queued")
         case "ticket.started": return Look(glyph: "●", color: Salu.accent, label: "started")
-        case "ticket.done": return Look(glyph: "✓", color: Salu.ok, label: "done")
+        case "ticket.done", "ticket.resolved": return Look(glyph: "✓", color: Salu.ok, label: "resolved")
+        case "ticket.reopened": return Look(glyph: "○", color: Salu.dim, label: "reopened")
         case "ticket.blocked": return Look(glyph: "?", color: Salu.warn, label: "needs you")
         case "ticket.failed": return Look(glyph: "✗", color: Salu.error, label: "failed")
         case "orchestrator.paused": return Look(glyph: "‖", color: Salu.paused, label: "paused")

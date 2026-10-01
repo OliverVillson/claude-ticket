@@ -20,7 +20,7 @@ struct SaluMessage: Codable, Identifiable, Hashable {
     /// What the worker said, as fully as the box sent it.
     var workerText: String? {
         switch type {
-        case "ticket.done": return reply ?? body
+        case "ticket.done", "ticket.resolved": return reply ?? body
         case "ticket.blocked": return reply ?? question ?? body
         case "ticket.failed": return reply ?? body
         case "note" where ticket != nil && level == "warn": return title  // e.g. a reply the box refused
@@ -64,6 +64,17 @@ struct SaluReply: Codable {
     var name: String?
     var body: String
     var now = false  // jump the queue, like `salu reply --now`
+    var at: Double
+}
+
+/// Resolve a ticket from the phone (`salu resolve`). Written once to salu-inbox/resolves/<id>.json; the
+/// box finds the ticket like a reply (`ref`, else `name`) and answers with `ticket.resolved`.
+struct SaluResolve: Codable {
+    var v = 1
+    var id: String
+    var project: String
+    var ref: String?
+    var name: String?
     var at: Double
 }
 

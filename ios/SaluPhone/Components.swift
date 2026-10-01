@@ -47,7 +47,7 @@ struct StatusHeader: View {
                 Text("‖ paused").foregroundStyle(Salu.paused)
             }
         } else {
-            let order: [TicketState] = [.running, .blocked, .queued, .sent, .failed, .done]
+            let order: [TicketState] = [.running, .blocked, .queued, .sent, .failed, .resolved]
             let parts: [(text: String, color: Color)] = order.compactMap { state -> (text: String, color: Color)? in
                 let n = tickets.filter { $0.state == state }.count
                 return n == 0 ? nil : (text: "\(n) \(state.look.label)", color: state.look.color)

@@ -1,9 +1,11 @@
 import SwiftUI
 
-/// Every ticket the phone knows about, grouped by what it needs: you, the box, or nothing.
+/// Every ticket the phone knows about, as threads grouped by what they need: you, the box, or
+/// nothing. Resolved ones collapse into one line each at the bottom, like resolved project threads.
 struct TicketsView: View {
     @EnvironmentObject var store: Store
     var compose: () -> Void
+    @AppStorage("tickets.showResolved") private var showResolved = false
 
     private struct Bucket: Identifiable {
         let id: String
@@ -12,9 +14,8 @@ struct TicketsView: View {
     }
     private let groups = [
         Bucket(id: "needs you", tint: Salu.warn, states: [.blocked, .failed]),
-        Bucket(id: "running", tint: Salu.accent, states: [.running]),
+        Bucket(id: "working", tint: Salu.accent, states: [.running]),
         Bucket(id: "waiting", tint: Salu.chrome, states: [.sent, .queued, .backlog]),
-        Bucket(id: "done", tint: Salu.ok, states: [.done]),
     ]
 
     var body: some View {
@@ -46,6 +47,33 @@ struct TicketsView: View {
                         }
                     }
                 }
+                let resolved = tickets.filter { $0.state == .resolved }
+                if !resolved.isEmpty {
+                    Section {
+                        if showResolved {
+                            ForEach(resolved) { t in
+                                NavigationLink(value: TicketRoute(id: t.id)) { ResolvedRow(t: t) }
+                                    .saluRow()
+                            }
+                        }
+                    } header: {
+                        Button {
+                            withAnimation(.snappy) { showResolved.toggle() }
+                        } label: {
+                            HStack {
+                                Text("✓ resolved")
+                                Spacer()
+                                Text("\(resolved.count)")
+                                Image(systemName: showResolved ? "chevron.down" : "chevron.right").font(.caption2)
+                            }
+                            .font(Salu.mono(.caption, weight: .semibold))
+                            .foregroundStyle(Salu.ok)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(showResolved ? "Hide resolved tickets" : "Show \(resolved.count) resolved tickets")
+                    }
+                }
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
@@ -70,7 +98,7 @@ struct TicketRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(t.name)
                     .font(Salu.mono(.subheadline, weight: .semibold))
-                    .foregroundStyle(t.state == .done ? Salu.dim : Salu.text)
+                    .foregroundStyle(t.state == .resolved ? Salu.dim : Salu.text)
                     .lineLimit(2)
                 HStack(spacing: 6) {
                     Text(t.state.look.label).foregroundStyle(t.state.look.color)
@@ -89,11 +117,31 @@ struct TicketRow: View {
     }
 }
 
-/// One ticket: what you asked, where it is, and everything the box said about it.
+/// A resolved ticket: one dim line, like a collapsed thread.
+struct ResolvedRow: View {
+    let t: TicketSummary
+    var body: some View {
+        HStack(spacing: 10) {
+            Text("✓").foregroundStyle(Salu.ok)
+            Text(t.name).foregroundStyle(Salu.dim).lineLimit(1)
+            Spacer(minLength: 6)
+            Text(t.updated, format: .relative(presentation: .named)).foregroundStyle(Salu.chrome)
+        }
+        .font(Salu.mono(.footnote))
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// One ticket as a thread: the whole conversation, what it produced, and (folded away) every step the
+/// box reported. Reply to keep going or to revive a resolved one; resolve it when you're finished.
 struct TicketDetail: View {
     @EnvironmentObject var store: Store
     let id: String
     @State private var replying = false
+    @State private var resolving = false
+    @State private var failure: String?
+    @AppStorage("thread.showActivity") private var showActivity = false
 
     var body: some View {
         let t = store.ticket(id)
@@ -106,13 +154,35 @@ struct TicketDetail: View {
         }
         .background(Salu.bg)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                if let t, t.canResolve, store.configured {
+                    Button {
+                        resolve(t)
+                    } label: {
+                        if resolving { ProgressView() } else { Label("Resolve", systemImage: "checkmark.circle") }
+                    }
+                    .disabled(resolving)
+                }
+            }
+        }
         .safeAreaInset(edge: .bottom) {
             if let t, t.canReply, store.configured {
-                ReplyButton(number: t.number) { replying = true }
+                ReplyButton(number: t.number, title: t.state == .resolved ? "reply to reopen" : "keep chatting") { replying = true }
             }
         }
         .sheet(isPresented: $replying) {
             ReplySheet(ticketId: id).environmentObject(store)
+        }
+        .sensoryFeedback(.success, trigger: store.ticket(id)?.state == .resolved) { old, new in !old && new }
+    }
+
+    private func resolve(_ t: TicketSummary) {
+        resolving = true
+        failure = nil
+        Task {
+            failure = await store.resolve(t)
+            resolving = false
         }
     }
 
@@ -136,28 +206,82 @@ struct TicketDetail: View {
             if t.state == .sent, let at = t.lastSent, Date().timeIntervalSince(at) > 10 * 60 {
                 Banner(glyph: "?", text: "The box hasn't picked this up yet. Is `salu remote sync --watch` running on it?", color: Salu.warn)
             }
+            if t.state == .resolved {
+                Banner(glyph: "✓", text: t.resolvePending
+                    ? "Resolved here; the box hears about it on its next sync. Reply to reopen it."
+                    : "Resolved. Reply to reopen it: the worker picks up where it left off.", color: Salu.ok)
+            }
+            if let failure {
+                Banner(glyph: "✗", text: failure, color: Salu.error)
+            }
+
+            let outputs = t.outputs
+            if !outputs.isEmpty {
+                Outputs(items: outputs)
+            }
 
             let turns = t.conversation
             if !turns.isEmpty {
                 Conversation(turns: turns)
             }
 
+            // every step the box reported, folded away: the conversation is the thread
             VStack(alignment: .leading, spacing: 0) {
-                Text("timeline")
+                Button {
+                    withAnimation(.snappy) { showActivity.toggle() }
+                } label: {
+                    HStack {
+                        Text("activity")
+                        Text("\(t.messages.count + (t.sentAt == nil ? 0 : 1))").foregroundStyle(Salu.chrome.opacity(0.7))
+                        Spacer()
+                        Image(systemName: showActivity ? "chevron.down" : "chevron.right").font(.caption2)
+                    }
                     .font(Salu.mono(.caption, weight: .semibold))
                     .foregroundStyle(Salu.chrome)
-                    .padding(.bottom, 10)
-                ForEach(t.messages) { m in
-                    NavigationLink(value: m) { TimelineRow(m: m, last: m.id == t.messages.last?.id && t.sentAt == nil) }
-                        .buttonStyle(.plain)
+                    .contentShape(Rectangle())
                 }
-                if let at = t.sentAt {
-                    TimelineStep(glyph: "▸", color: Salu.dim, title: "sent from this phone", date: at, last: true)
+                .buttonStyle(.plain)
+                .padding(.bottom, showActivity ? 10 : 0)
+                if showActivity {
+                    ForEach(t.messages) { m in
+                        NavigationLink(value: m) { TimelineRow(m: m, last: m.id == t.messages.last?.id && t.sentAt == nil) }
+                            .buttonStyle(.plain)
+                    }
+                    if let at = t.sentAt {
+                        TimelineStep(glyph: "▸", color: Salu.dim, title: "sent from this phone", date: at, last: true)
+                    }
                 }
             }
         }
         .padding(20)
         .navigationTitle(t.number.map { "#\($0)" as String } ?? "ticket")
+    }
+}
+
+/// What a ticket produced, as cards on its thread: a result branch to check out (PRs and files later).
+struct Outputs: View {
+    let items: [TicketOutput]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("outputs").font(Salu.mono(.caption, weight: .semibold)).foregroundStyle(Salu.chrome)
+            ForEach(items) { o in
+                switch o.kind {
+                case .branch:
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.triangle.branch")
+                            Text(o.value).lineLimit(1).truncationMode(.middle)
+                        }
+                        .font(Salu.mono(.footnote, weight: .semibold))
+                        .foregroundStyle(Salu.ok)
+                        ShellCommand(command: "git fetch origin \(o.value) && git checkout \(o.value)")
+                    }
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Salu.surface))
+                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Salu.ok.opacity(0.45), lineWidth: 1))
+                }
+            }
+        }
     }
 }
 
