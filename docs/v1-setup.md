@@ -71,11 +71,14 @@ The box needs one Claude login, shared by every project on it. Decision: **subsc
 with a one-year token made for scripts (`claude setup-token`, documented at
 code.claude.com/docs/en/authentication), not a copied login. An API key is the alternative.
 
-- **Subscription token** (uses your plan's usage window): on the server, `sudo -iu salu`, run
-  `claude setup-token`, open the link in a browser on your Mac and approve; it prints a token. The box passes it
-  to Claude as `CLAUDE_CODE_OAUTH_TOKEN`. Keep it like a password. **If `ANTHROPIC_API_KEY` is set anywhere on the
-  box it wins over the token**, so do not set both. The token lasts a year; when it expires, make a new one and
-  restart (`sudo salu runner restart web`).
+- **Subscription token** (uses your plan's usage window): run `claude setup-token` on any machine with a browser
+  (your Mac is fine; it opens a link, you approve, it prints a token). Save the token to a file only you can read
+  and copy it to the server, e.g. `scp ~/salu.token you@SERVER_IP:`; then pass it in step 6 with `--token-file`.
+  salu stores it only in `/etc/salu/<project>.env` (root-only) as `CLAUDE_CODE_OAUTH_TOKEN`. Keep it like a
+  password and delete the file afterwards. **If `ANTHROPIC_API_KEY` is set anywhere on the box it wins over the
+  token**, so do not set both. Without a token, `salu runner add` still proceeds but warns that a copied login
+  stops working unattended once it expires. The token lasts a year; when it expires, make a new one and run
+  `salu runner add` again (or edit the env file) and `sudo salu runner restart web`.
 - **API key** (pay per use): create a key in the Anthropic Console, put it in a file only you can read, and pass it
   in step 6:
   ```sh
@@ -83,8 +86,7 @@ code.claude.com/docs/en/authentication), not a copied login. An API key is the a
   ```
   salu stores it only in `/etc/salu/<project>.env` (root-readable), never on a command line.
 
-How the token reaches salu (a prompt, a flag or the env file) is being built in the runner follow-up PR: use
-`salu runner add --help` on your build for the exact flag, and treat this step as likely to change.
+The `--token-file` flag comes from the runner follow-up PR; check `salu runner add --help` on your build.
 
 ### What this means for safety (read once)
 
@@ -120,7 +122,8 @@ On GitHub: repo `you/web` > Settings > Deploy keys > Add deploy key > paste it, 
 Use the same project name you will use on the Mac (lowercase letters, digits, `-`, `_`):
 
 ```sh
-sudo salu runner add web --clone git@github.com:you/web.git                     # subscription login
+sudo salu runner add web --clone git@github.com:you/web.git \
+     --token-file ~/salu.token                                                   # subscription token (default)
 sudo salu runner add web --clone git@github.com:you/web.git \
      --auth api-key --api-key-file /home/salu/anthropic.key                      # or API key
 salu runner list                 # web  active  0 queued · 0 running · 0 blocked · 0 done
@@ -145,7 +148,7 @@ sudo -u salu env SALU_HOME=/var/lib/salu/web salu remote list    # role box, "sy
 
 If the login is dead when a service starts, the orchestrator exits (code 78) and stays failed: `salu runner list`
 shows it, and you also get an error notif on the Mac ("The box stopped: ..."). Repair the login (make a new
-token (`claude setup-token`) or fix the API key), then `sudo salu runner restart web`.
+token with `claude setup-token`, or fix the API key), then `sudo salu runner restart web`.
 
 If `remote list` shows an error, it is almost always git access: the deploy key from step 5 is missing or lacks
 write access. `sudo salu runner start|stop|restart|logs <project>` cover both services.
@@ -267,5 +270,5 @@ on its own.
 - Tickets sent but never start: `journalctl -u salu-sync@web` (is sync running? can `salu` push to the repo?).
 - `permission denied (publickey)` in the sync log: the deploy key is missing or lacks write access (step 5).
 - Ticket `blocked: needs permission`: `salu allow "name"` on the box.
-- `login expired` or "The box stopped": make a new token on the box (`sudo -iu salu`, `claude setup-token`) or fix the API key, then `sudo salu runner restart web`.
+- `login expired` or "The box stopped": make a new token (`claude setup-token`) or fix the API key, then `sudo salu runner restart web`.
 - Nothing on the Mac after a sync: `salu remote list` shows the last sync time and any error per project.
