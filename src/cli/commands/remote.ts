@@ -4,18 +4,24 @@ import { openDb } from '../../db/db.ts';
 import { getProjectById } from '../../db/queries.ts';
 import { resolveProject } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
-import { dim, green, red } from '../../core/ansi.ts';
+import { bold, dim, green, red } from '../../core/ansi.ts';
 import { insideWorker, originUrl } from '../../core/kernel.ts';
-import { unsignedWarning } from '../../sync/format.ts';
+import { join } from 'node:path';
+import { rmSync } from 'node:fs';
+import { ensureHome } from '../../core/paths.ts';
+import { loadNtfy, newTopic, publishNtfy, saveNtfy } from '../../sync/ntfy.ts';
+import { generateKey, keyFilePath, remoteKey, requireKey, saveKey, unsignedAllowed, unsignedWarning } from '../../sync/format.ts';
 import { checkRemote } from '../../sync/git.ts';
 import { getRemote, listRemotes, pendingMessages, pendingOutReplies, pendingOutTickets, removeRemote, setRemote, unreadCount } from '../../sync/store.ts';
-import { boxName, syncAll, syncProject, type SyncSummary } from '../../sync/sync.ts';
+import { boxName, rotateKey, syncAll, syncProject, type SyncSummary } from '../../sync/sync.ts';
 import { helpIf } from './_shared.ts';
 
-const HELP = `salu remote add <project> [git-url] [--box] [--name N] [--force]
+const HELP = `salu remote add <project> [git-url] [--box] [--key secret] [--name N] [--force]
+salu remote key [--set secret] [--new]       (on the box, changing the key re-signs the inbox)
 salu remote list [--json]
 salu remote remove <project>
 salu remote sync [project] [--watch] [--interval seconds]
+salu remote ntfy [--topic NAME | --off | --test] [--server URL]
 
 Run a project on another computer (an always-on Linux box) with git as the only link: no server, no open
 port. Tickets go to the box, results and messages come back, all through the project's own git remote
@@ -24,6 +30,15 @@ port. Tickets go to the box, results and messages come back, all through the pro
 On your computer:  salu remote add web                 tickets you add to "web" are sent to the box
 On the box:        salu remote add web <url> --box     this machine runs them and reports back
                    salu remote sync --watch            keep exchanging (every 30s, --interval to change)
+
+Phone notifications (on the box): \`salu remote ntfy\` makes a private topic name; subscribe to it in the free ntfy
+app. From then on each message the box posts also goes to ntfy as one line (the title only, never the body).
+
+Everything on the inbox is signed with one shared secret (HMAC), and sync refuses to run without it, so
+that pushing to the git remote is not enough to send the box tickets. \`salu remote add <project> --box\`
+makes the key and shows it; give it to your computer with \`salu remote add <project> --key <secret>\`
+(or \`salu remote key --set <secret>\`, or SALU_REMOTE_KEY) and to the phone app. It is kept in
+~/.salu/remote.key (readable by you only). SALU_REMOTE_ALLOW_UNSIGNED=1 turns the requirement off (not advised).
 
 Messages from the box are kept locally (see \`salu notif\`). Sync needs you to be logged in to git on each
 machine. Anyone who can push to the remote can send the box tickets, so use a private repository.`;
@@ -68,9 +83,27 @@ export async function remote(p: Parsed): Promise<number> {
         if (problem) throw new CliError(`${problem}\n(--force saves it anyway)`);
       }
       const role = flagBool(p, 'box') ? 'box' : 'client';
+      const given = flagStr(p, 'key');
+      if (p.flags.key !== undefined && !given) throw new CliError('--key needs the secret: salu remote add <project> --key <secret>');
+      if (given) {
+        if (given.length < 16) throw new CliError('that key is too short (use at least 16 characters; `salu remote key --new` makes a good one)');
+        saveKey(given);
+      }
+      let made: string | null = null;
+      if (!remoteKey()) {
+        if (role === 'box') {
+          made = generateKey();
+          saveKey(made);
+        } else if (!unsignedAllowed()) {
+          throw new CliError(`no signing key yet. Get it from the box (run \`salu remote key\` there), then: salu remote add "${project.name}" ${urlArg ?? ''} --key <secret>`.replace('  ', ' '));
+        }
+      }
       setRemote(db, { project_id: project.id, url, role, name: flagStr(p, 'name') ?? (role === 'box' ? boxName() : '') });
       console.log(`${green('✓')} ${project.name} ${dim(`→ ${url}`)} ${dim(role === 'box' ? '(this machine runs its tickets)' : '(tickets you add are sent to the box)')}`);
       if (role === 'box') console.log(dim('  keep it in sync with: salu remote sync --watch'));
+      if (made) {
+        console.log(`\n${bold('Signing key')} ${dim(`(saved in ${keyFilePath()}; show it again with: salu remote key)`)}\n  ${made}\n${dim('  Give it to your computer (salu remote add <project> --key <secret>) and to the phone app. Treat it like a password.')}`);
+      }
       warnUnsigned();
       return 0;
     }
@@ -97,6 +130,33 @@ export async function remote(p: Parsed): Promise<number> {
       if (unread) console.log(dim(`\n${unread} unread message${unread === 1 ? '' : 's'} from the box`));
       return 0;
     }
+    case 'key': {
+      const set = flagStr(p, 'set');
+      if (p.flags.set !== undefined && !set) throw new CliError('usage: salu remote key --set <secret>');
+      if (set && set.length < 16) throw new CliError('that key is too short (use at least 16 characters)');
+      const next = set ?? (flagBool(p, 'new') ? generateKey() : null);
+      if (!next) {
+        const k = remoteKey();
+        if (!k) throw new CliError('no signing key yet. On the box: salu remote add <project> --box (makes one), or salu remote key --new');
+        console.log(k);
+        return 0;
+      }
+      const old = remoteKey();
+      // On a box, everything already in the inbox is re-signed with the new key first, so clients that switch still see the whole history.
+      const results = old === next ? [] : rotateKey(db, old, next);
+      const failed = results.filter((r) => r.error);
+      if (failed.length) {
+        for (const f of failed) console.error(`${red('✗')} ${f.project}: ${f.error}`);
+        throw new CliError(`could not re-sign every inbox, so the key was NOT changed. Try again later with the same key: salu remote key --set ${next}`);
+      }
+      saveKey(next);
+      for (const r of results) console.log(`${green('✓')} ${r.project} ${dim(`re-signed ${r.resigned} file${r.resigned === 1 ? '' : 's'} with the new key`)}`);
+      if (set) console.log(`${green('✓')} signing key saved ${dim(`(${keyFilePath()})`)}`);
+      else console.log(`${green('✓')} new signing key, saved ${dim(`(${keyFilePath()})`)}\n  ${next}`);
+      if (results.length) console.log(dim('  Give the new key to your computer (salu remote key --set <secret>) and the phone app. Until they have it, what they send is ignored.'));
+      else if (!set) console.log(dim('  This is not a box: use the same key as the box (salu remote key --set <secret>), not a new one.'));
+      return 0;
+    }
     case 'remove':
     case 'rm': {
       if (!rest[0]) throw new CliError('usage: salu remote remove <project>');
@@ -106,9 +166,34 @@ export async function remote(p: Parsed): Promise<number> {
       console.log(`${green('✓')} ${project.name} ${dim('no longer syncs (the inbox branch on the remote is left alone)')}`);
       return 0;
     }
+    case 'ntfy': {
+      if (flagBool(p, 'off')) {
+        rmSync(join(ensureHome(), 'ntfy.json'), { force: true });
+        console.log(`${green('✓')} phone notifications are off ${dim('(SALU_NTFY_TOPIC in the environment still wins)')}`);
+        return 0;
+      }
+      const given = flagStr(p, 'topic');
+      let cfg = loadNtfy();
+      if (given || !cfg) {
+        try {
+          cfg = saveNtfy(given ?? newTopic(), flagStr(p, 'server'));
+        } catch (e) {
+          throw new CliError(e instanceof Error ? e.message : String(e));
+        }
+      }
+      console.log(`${green('✓')} phone notifications: ${cfg.server}/${cfg.topic}`);
+      console.log(dim('  On your phone: install ntfy, tap +, subscribe to the topic above. Keep it secret: anyone with it can read the titles.'));
+      if (flagBool(p, 'test')) {
+        const err = publishNtfy({ title: 'It works: salu can reach your phone', level: 'success', project: 'test', type: 'note' }, cfg);
+        if (err) throw new CliError(`could not publish: ${err}`);
+        console.log(`${green('✓')} sent a test notification`);
+      }
+      return 0;
+    }
     case 'sync': {
       const only = rest[0] ? [resolveProject(db, rest[0]).id] : undefined;
       if (!listRemotes(db).length) throw new CliError('no remotes yet. Try: salu remote add <project> [git-url] [--box]');
+      requireKey();
       warnUnsigned();
       const once = (): boolean => {
         let bad = false;

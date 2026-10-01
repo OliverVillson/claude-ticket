@@ -10,7 +10,7 @@ import { checkClaude } from '../../core/claude-bin.ts';
 import { sandboxSupport } from '../../core/kernel.ts';
 import { selfCommand } from '../../orchestrator/index.ts';
 import {
-  SUBSCRIPTION_WARNING, SYNC_UNIT_NAME, UNIT_NAME, boxProblems, renderEnvFile, renderSyncUnit, renderUnit, requireRunnerName, runnerEnvFile, runnerEtc, runnerHome, runnerRoot, runnerWork, serviceName, syncServiceName, unitDir,
+  NO_TOKEN_WARNING, SETUP_TOKEN_WARNING, SYNC_UNIT_NAME, UNIT_NAME, boxProblems, renderEnvFile, renderSyncUnit, renderUnit, requireRunnerName, runnerEnvFile, runnerEtc, runnerHome, runnerRoot, runnerWork, serviceName, syncServiceName, unitDir,
   type AuthMode,
 } from '../../core/runner.ts';
 import { confirm, helpIf } from './_shared.ts';
@@ -23,7 +23,7 @@ const HELP = `salu runner <command>      run salu unattended on an always-on Lin
                                               The units confine the service (read-only system, empty home, only its
                                               own project folder); --no-harden drops that if bubblewrap fails under it
   sudo salu runner add <project> [--clone git-url | --path folder] [--auth subscription|api-key]
-                                              [--api-key-file F] [--no-sandbox] [--concurrency N]
+                                              [--token-file F | --api-key-file F] [--no-sandbox] [--concurrency N]
                                               [--remote git-url | --no-sync]
                                               create the project's own salu home, register the project
                                               (sandbox ON unless --no-sandbox), start it now and on every boot.
@@ -39,8 +39,10 @@ Each project gets its own folder /var/lib/salu/<project> (its database, log and 
 service salu-runner@<project> and its own git sync service salu-sync@<project>; a crashed or rebooted box brings every orchestrator back, and tickets a
 dead run left running go back to the queue and resume their Claude session.
 
-Login, once, as the runner user:  claude   then /login   (subscription)   or   --auth api-key --api-key-file ~/key
-The key is stored in /etc/salu/<project>.env (root-readable, never on a command line). Workers do get it in
+Subscription: run \`claude setup-token\` on any machine with a browser (Pro, Max, Team or Enterprise plan; a one-year
+token Anthropic documents for scripts), then  --token-file <file>  (or CLAUDE_CODE_OAUTH_TOKEN in the environment).
+API key instead:  --auth api-key --api-key-file <file>.
+The token or key is stored in /etc/salu/<project>.env (root-readable, never on a command line). Workers do get it in
 their environment and can reach any URL by default: use a key with a spend limit.`;
 
 const dry = (p: Parsed) => flagBool(p, 'dry-run');
@@ -146,7 +148,13 @@ function add(p: Parsed): number {
     else if (process.env.ANTHROPIC_API_KEY) apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey && !dry(p)) throw new CliError('--auth api-key needs the key: --api-key-file <file> (or ANTHROPIC_API_KEY in the environment)');
   }
-  if (auth === 'subscription') console.error(SUBSCRIPTION_WARNING);
+  let oauthToken: string | undefined;
+  if (auth === 'subscription') {
+    const tf = flagStr(p, 'token-file');
+    oauthToken = tf ? readFileSync(tf, 'utf8').trim() : process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim() || undefined;
+    if (tf && !oauthToken) throw new CliError(`${tf} is empty: put the token \`claude setup-token\` printed in it`);
+    console.error(oauthToken ? SETUP_TOKEN_WARNING : NO_TOKEN_WARNING);
+  }
   const sandbox = !flagBool(p, 'no-sandbox') && p.flags.sandbox !== false;
   if (sandbox) {
     const s = sandboxSupport();
@@ -187,7 +195,7 @@ function add(p: Parsed): number {
       else console.log(dim(`· no git sync: ${rr.out.split('\n')[0]}\n  (give the project's git url with --remote <url> or --clone, or pass --no-sync)`));
     }
   }
-  const text = renderEnvFile({ auth, apiKey: apiKey ?? (dry(p) ? 'dry-run' : undefined), sandbox, sync });
+  const text = renderEnvFile({ auth, apiKey: apiKey ?? (dry(p) ? 'dry-run' : undefined), oauthToken, sandbox, sync });
   if (!dry(p)) {
     mkdirSync(dirname(envPath), { recursive: true });
     writeFileSync(envPath, text, { mode: 0o600 });

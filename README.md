@@ -123,7 +123,7 @@ Any other token (`bug`, `docs`, `team=core`) is stored as a label or custom tag 
 (on an always-on Linux box) run a project on the box with git as the only link: tickets you add go to the box,
 `salu reply "name" "text"` keeps the conversation going, and results (`salu/<ticket>` branches) and messages come
 back through the project's own git remote, on the branch `salu/inbox`. No server, no open port. Use a private
-repository: anyone who can push to it can send the box tickets. Format and details: INTERFACES.md ("Git sync transport").
+repository: anyone who can push to it can send the box tickets unless the inbox is signed (it is: `salu remote add web --box` makes the signing key and shows it; give it to your computer with `--key` and to the phone). Format and details: INTERFACES.md ("Git sync transport").
 
 ## The kernel (sandbox, opt-in per project)
 
@@ -184,14 +184,20 @@ their Claude session. Runner projects have the sandbox on by default.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/OliverVillson/salu/main/scripts/install-runner.sh | sudo bash
-sudo -iu salu            # once: run `claude`, then /login   (skip with --auth api-key below)
-sudo salu runner add web --clone https://github.com/you/web
+claude setup-token       # on any machine with a browser: prints a one-year token (Pro, Max, Team or Enterprise plan); save it to a file
+sudo salu runner add web --clone https://github.com/you/web --token-file ./token
 salu runner list         # service state and ticket counts per project
 salu runner logs web -f
 ```
 
-`--auth subscription` (default, the box's Claude login) or `--auth api-key --api-key-file <file>`: the key
-is stored in `/etc/salu/<project>.env` (root-readable, not on any command line). Workers still receive it in their environment, and sandboxed workers can reach any URL by default, so use a key with a spend limit, or the subscription login. `--auth subscription` prints a warning: Anthropic's terms may not allow a subscription login for unattended or automated use (an API key is the supported route), and a long headless session can lose its login until restarted. A login that breaks mid-run restarts the service; one that is still dead at start leaves the service failed (exit 78, no restart loop; `salu runner list` shows it) until you fix the login and `salu runner restart <project>`. `salu runner --help` lists `setup`, `start|stop|restart`,
+Subscription (the default) uses the setup-token: Anthropic documents `claude setup-token` for "CI pipelines and
+scripts where browser login isn't available", whereas a copied `/login` lives in `~/.claude/.credentials.json`
+and stops working unattended once it expires (so `add` warns when you give no token). Whether always-on use of a
+subscription is within its terms is still being confirmed: check them, or use `--auth api-key --api-key-file <file>`
+(an `ANTHROPIC_API_KEY` wins over the subscription). The token or key is stored in `/etc/salu/<project>.env`
+(root-readable, not on any command line). Workers still receive it in their environment and sandboxed workers can
+reach any URL by default, so a leaked token is possible: revoke it by running `claude setup-token` again or from
+your Claude account's settings, and for an API key use one with a spend limit. A login that breaks mid-run restarts the service; one that is still dead at start leaves the service failed (exit 78, no restart loop; `salu runner list` shows it) until you fix it and `salu runner restart <project>`. `salu runner --help` lists `setup`, `start|stop|restart`,
 `remove [--purge]` and `doctor`. The systemd units confine the service itself (read-only system, an empty home holding only what that service needs, only its own project folder; the orchestrator never sees ssh keys, the sync never sees the Claude login); `salu runner setup --no-harden` drops that if the sandbox's bubblewrap fails under it. Hardened units are syntax-checked with `systemd-analyze verify` but not yet run on a real box. `salu run --no-queue` is what the service runs: start, but never queue the backlog.
 
 ## Interactive list (demo: `bun run src/tui/demo.ts`)
