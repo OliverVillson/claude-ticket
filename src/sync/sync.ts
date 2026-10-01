@@ -6,8 +6,8 @@ import { ticketLabels, ticketTags } from '../db/types.ts';
 import { CliError } from '../core/errors.ts';
 import { kernelPath, isGitRepo } from '../core/kernel.ts';
 import { existsSync } from 'node:fs';
-import { git, gitProblem, inboxDir, exchange, readDir } from './git.ts';
-import { MESSAGES_DIR, remoteForbiddenTags, requireKey, signFile, REPLIES_DIR, TICKETS_DIR, newId, parseMessageFile, parseReplyFile, parseTicketFile, type MessageFile, type ReplyFile, type TicketFile } from './format.ts';
+import { git, gitProblem, inboxDir, exchange, readDir, rewriteInbox } from './git.ts';
+import { MESSAGES_DIR, remoteForbiddenTags, requireKey, signFile, signatureOk, REPLIES_DIR, TICKETS_DIR, newId, parseMessageFile, parseReplyFile, parseTicketFile, type MessageFile, type ReplyFile, type TicketFile } from './format.ts';
 import {
   addOutReply,
   addRemoteTicket,
@@ -235,6 +235,41 @@ export function syncAll(db: Database, only?: number[]): Array<{ project: string;
       out.push({ project: p.name, summary: syncProject(db, p, r) });
     } catch (e: any) {
       out.push({ project: p.name, error: String(e?.message ?? e) });
+    }
+  }
+  return out;
+}
+
+/**
+ * Box: change the signing key and re-sign everything already on each of its inboxes with the new one, so
+ * clients that switch to the new key still see the whole history. A file is re-signed only if it was valid
+ * under the old key (or already under the new one), so a forged file is never made to look genuine; with no
+ * old key at all (unsigned mode) every well-formed file is signed. Returns one summary per box project.
+ * Run it only on the box: it is the one place that holds both keys.
+ */
+export function rotateKey(db: Database, oldKey: string | null, newKey: string): Array<{ project: string; resigned?: number; error?: string }> {
+  const out: Array<{ project: string; resigned?: number; error?: string }> = [];
+  for (const r of listRemotes(db)) {
+    if (r.role !== 'box') continue;
+    const project = getProjectById(db, r.project_id);
+    if (!project) continue;
+    try {
+      const resigned = rewriteInbox(inboxDir(project.name), r.url, (text) => {
+        let o: any;
+        try {
+          o = JSON.parse(text);
+        } catch {
+          return null;
+        }
+        if (!o || typeof o !== 'object' || o.v !== 1) return null;
+        if (signatureOk(o, newKey)) return null; // already done (an earlier, interrupted rotation)
+        if (oldKey && !signatureOk(o, oldKey)) return null; // not ours: leave it, clients ignore it
+        const { sig: _sig, ...bare } = o;
+        return JSON.stringify(signFile(bare, newKey), null, 2) + '\n';
+      });
+      out.push({ project: project.name, resigned });
+    } catch (e: any) {
+      out.push({ project: project.name, error: String(e?.message ?? e) });
     }
   }
   return out;

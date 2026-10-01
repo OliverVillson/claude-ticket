@@ -172,7 +172,7 @@ export function signFile<T extends object>(o: T, key = remoteKey()): T & { sig?:
   return key ? { ...o, sig: createHmac('sha256', key).update(canonical(o)).digest('hex') } : o;
 }
 
-function signatureOk(o: any, key = remoteKey()): boolean {
+export function signatureOk(o: any, key = remoteKey()): boolean {
   if (!key) return true;
   if (typeof o?.sig !== 'string' || !/^[0-9a-f]{64}$/.test(o.sig)) return false;
   const want = createHmac('sha256', key).update(canonical(o)).digest();

@@ -9,11 +9,11 @@ import { insideWorker, originUrl } from '../../core/kernel.ts';
 import { generateKey, keyFilePath, remoteKey, requireKey, saveKey, unsignedAllowed, unsignedWarning } from '../../sync/format.ts';
 import { checkRemote } from '../../sync/git.ts';
 import { getRemote, listRemotes, pendingMessages, pendingOutReplies, pendingOutTickets, removeRemote, setRemote, unreadCount } from '../../sync/store.ts';
-import { boxName, syncAll, syncProject, type SyncSummary } from '../../sync/sync.ts';
+import { boxName, rotateKey, syncAll, syncProject, type SyncSummary } from '../../sync/sync.ts';
 import { helpIf } from './_shared.ts';
 
 const HELP = `salu remote add <project> [git-url] [--box] [--key secret] [--name N] [--force]
-salu remote key [--set secret] [--new]
+salu remote key [--set secret] [--new]       (on the box, changing the key re-signs the inbox)
 salu remote list [--json]
 salu remote remove <project>
 salu remote sync [project] [--watch] [--interval seconds]
@@ -125,21 +125,28 @@ export async function remote(p: Parsed): Promise<number> {
     case 'key': {
       const set = flagStr(p, 'set');
       if (p.flags.set !== undefined && !set) throw new CliError('usage: salu remote key --set <secret>');
-      if (set) {
-        if (set.length < 16) throw new CliError('that key is too short (use at least 16 characters)');
-        saveKey(set);
-        console.log(`${green('✓')} signing key saved ${dim(`(${keyFilePath()})`)}`);
+      if (set && set.length < 16) throw new CliError('that key is too short (use at least 16 characters)');
+      const next = set ?? (flagBool(p, 'new') ? generateKey() : null);
+      if (!next) {
+        const k = remoteKey();
+        if (!k) throw new CliError('no signing key yet. On the box: salu remote add <project> --box (makes one), or salu remote key --new');
+        console.log(k);
         return 0;
       }
-      if (flagBool(p, 'new')) {
-        const k = generateKey();
-        saveKey(k);
-        console.log(`${green('✓')} new signing key, saved ${dim(`(${keyFilePath()})`)}\n  ${k}\n${dim('  The box, your computer and the phone must all use this one now; files signed with the old key are ignored.')}`);
-        return 0;
+      const old = remoteKey();
+      // On a box, everything already in the inbox is re-signed with the new key first, so clients that switch still see the whole history.
+      const results = old === next ? [] : rotateKey(db, old, next);
+      const failed = results.filter((r) => r.error);
+      if (failed.length) {
+        for (const f of failed) console.error(`${red('✗')} ${f.project}: ${f.error}`);
+        throw new CliError(`could not re-sign every inbox, so the key was NOT changed. Try again later with the same key: salu remote key --set ${next}`);
       }
-      const k = remoteKey();
-      if (!k) throw new CliError('no signing key yet. On the box: salu remote add <project> --box (makes one), or salu remote key --new');
-      console.log(k);
+      saveKey(next);
+      for (const r of results) console.log(`${green('✓')} ${r.project} ${dim(`re-signed ${r.resigned} file${r.resigned === 1 ? '' : 's'} with the new key`)}`);
+      if (set) console.log(`${green('✓')} signing key saved ${dim(`(${keyFilePath()})`)}`);
+      else console.log(`${green('✓')} new signing key, saved ${dim(`(${keyFilePath()})`)}\n  ${next}`);
+      if (results.length) console.log(dim('  Give the new key to your computer (salu remote key --set <secret>) and the phone app. Until they have it, what they send is ignored.'));
+      else if (!set) console.log(dim('  This is not a box: use the same key as the box (salu remote key --set <secret>), not a new one.'));
       return 0;
     }
     case 'remove':

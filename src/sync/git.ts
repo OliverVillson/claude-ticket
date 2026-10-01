@@ -3,7 +3,7 @@ import { dirname, join, sep } from 'node:path';
 import { CliError } from '../core/errors.ts';
 import { folderSlug } from '../core/resolve.ts';
 import { ticketHome } from '../core/paths.ts';
-import { INBOX_BRANCH, MAX_FILE_BYTES } from './format.ts';
+import { INBOX_BRANCH, MAX_FILE_BYTES, MESSAGES_DIR, REPLIES_DIR, TICKETS_DIR } from './format.ts';
 
 /** Working copy of the inbox branch for one project: ~/.salu/sync/<project>. */
 export function inboxDir(projectName: string): string {
@@ -144,6 +144,43 @@ function assertInside(dir: string, target: string): void {
 }
 
 const MAX_FILES = 10000;
+
+/**
+ * Rewrite existing inbox files in one commit (used to re-sign them after the key changes). `fn` gets each
+ * file's text and returns the new text, or null to leave it alone. Same safety checks as `exchange`; a
+ * rejected push is fetched and the rewrite redone from the remote's tree. Returns how many files changed.
+ */
+export function rewriteInbox(dir: string, url: string, fn: (text: string) => string | null): number {
+  ensureRepo(dir, url);
+  let last = '';
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const f = git(dir, ['fetch', '-q', 'origin', `+refs/heads/${INBOX_BRANCH}:refs/remotes/origin/${INBOX_BRANCH}`]);
+    if (!f.ok) {
+      if (/couldn't find remote ref/i.test(f.err)) return 0; // nothing to re-sign yet
+      throw new CliError(gitProblem(f.err, url));
+    }
+    const c = git(dir, ['checkout', '-q', '-f', '-B', INBOX_BRANCH, `origin/${INBOX_BRANCH}`]);
+    if (!c.ok) throw new CliError(`git checkout failed: ${c.err.trim()}`);
+    let changed = 0;
+    for (const sub of [TICKETS_DIR, REPLIES_DIR, MESSAGES_DIR]) {
+      for (const { name, text } of readDir(dir, sub, () => true)) {
+        const next = fn(text);
+        if (next === null || next === text) continue;
+        writeFileSync(join(dir, sub, name), next); // readDir verified the folder and that the file is a plain file
+        changed++;
+      }
+    }
+    if (!changed) return 0;
+    git(dir, ['add', '-A', 'salu-inbox']);
+    const cm = git(dir, ['commit', '-q', '-m', `salu: re-signed ${changed} file${changed === 1 ? '' : 's'}`]);
+    if (!cm.ok) throw new CliError(`git commit failed: ${cm.err.trim() || cm.out.trim()}`);
+    const p = git(dir, ['push', '-q', 'origin', `HEAD:refs/heads/${INBOX_BRANCH}`]);
+    if (p.ok) return changed;
+    last = p.err;
+    if (!/rejected|non-fast-forward|fetch first|cannot lock ref|failed to update ref/i.test(p.err)) throw new CliError(gitProblem(p.err, url));
+  }
+  throw new CliError(`could not push to ${url} after several tries: ${gitProblem(last, url)}`);
+}
 
 /** Files in a directory of the working copy (name → text), for the ones `want` accepts. */
 export function readDir(dir: string, sub: string, want: (name: string) => boolean): Array<{ name: string; text: string }> {

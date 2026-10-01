@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { openDb } from '../src/db/db.ts';
 import { addTurn, listTurns, replyToTicket, claimNextTicket, createProject, createTicket, getTicketById, listTickets, updateTicket } from '../src/db/queries.ts';
 import { addRemoteTicket, enqueueMessage, listNotifications, markRead, setRemote, unreadCount } from '../src/sync/store.ts';
-import { publishReply, publishTicket, syncProject } from '../src/sync/sync.ts';
+import { rotateKey, publishReply, publishTicket, syncProject } from '../src/sync/sync.ts';
 import { recordRemoteEvent } from '../src/sync/events.ts';
 import { keyFilePath, remoteKey, saveKey, unsignedWarning, signFile, stripControl, parseReplyFile, parseMessageFile, parseTicketFile, newId } from '../src/sync/format.ts';
 import { git } from '../src/sync/git.ts';
@@ -261,6 +261,60 @@ describe('required signing key', () => {
     expect(c.exitCode).toBe(0);
     expect(run('client', 'remote', 'key').stdout.toString().trim()).toBe(key!);
     expect(run('client', 'remote', 'key', '--set', 'short').exitCode).not.toBe(0);
+  });
+});
+
+describe('key rotation', () => {
+  test('rotating on the box re-signs the history so a client with the new key sees all of it', () => {
+    delete process.env.SALU_REMOTE_ALLOW_UNSIGNED;
+    process.env.SALU_REMOTE_KEY = 'old-key-0123456789ab';
+    try {
+      sendTicket('history');
+      sync(client);
+      sync(box); // accepted message
+      const run = claimNextTicket(box.db)!;
+      recordRemoteEvent(box.db, { type: 'dispatch', ticket: run, runId: 1, resumed: false });
+      sync(box);
+      // A pusher plants a file that was never signed with the old key.
+      const evil = join(root, 'evil4');
+      git(root, ['clone', '-q', '--branch', 'salu/inbox', bare, evil]);
+      const forged = { v: 1, id: newId(), project: 'web', from: 'box', at: 1, type: 'ticket.done', level: 'success', title: 'forged' };
+      writeFileSync(join(evil, 'salu-inbox', 'messages', `${forged.id}.json`), JSON.stringify({ ...forged, sig: 'f'.repeat(64) }));
+      git(evil, ['add', '-A']);
+      git(evil, ['-c', 'user.name=x', '-c', 'user.email=x@x', 'commit', '-qm', 'forged']);
+      git(evil, ['push', '-q', 'origin', 'HEAD:refs/heads/salu/inbox']);
+
+      process.env.SALU_SYNC_DIR = box.sync;
+      const r = rotateKey(box.db, 'old-key-0123456789ab', 'new-key-0123456789ab');
+      expect(r).toEqual([{ project: 'web', resigned: 3 }]); // the ticket and two messages; the forgery is left alone
+
+      // The client switches to the new key and has never synced: it sees the full history, not the forgery.
+      process.env.SALU_REMOTE_KEY = 'new-key-0123456789ab';
+      const s = sync(client);
+      expect(s.messagesReceived).toBe(2);
+      expect(listNotifications(client.db).map((n) => n.title)).not.toContain('forged');
+      // Rotating again to the same key changes nothing.
+      process.env.SALU_SYNC_DIR = box.sync;
+      expect(rotateKey(box.db, 'old-key-0123456789ab', 'new-key-0123456789ab')).toEqual([{ project: 'web', resigned: 0 }]);
+    } finally {
+      delete process.env.SALU_REMOTE_KEY;
+    }
+  });
+
+  test('salu remote key --new on a box re-signs; on a client it only saves', () => {
+    const run = (home: string, ...args: string[]) =>
+      Bun.spawnSync(['bun', join(import.meta.dir, '../src/index.ts'), ...args], { cwd: join(root, home + '-web'), env: { ...process.env, SALU_HOME: join(root, home + '-home'), SALU_SYNC_DIR: join(root, home + '-syncdir'), SALU_REMOTE_ALLOW_UNSIGNED: '' } as Record<string, string>, stdout: 'pipe', stderr: 'pipe' });
+    const text = (r: ReturnType<typeof run>) => r.stdout.toString() + r.stderr.toString();
+    run('box', 'add', 'project', 'web', '.');
+    const added = text(run('box', 'remote', 'add', 'web', bare, '--box'));
+    const k1 = /\n {2}([0-9a-f]{64})\n/.exec(added)![1]!;
+    run('box', 'remote', 'sync'); // writes the inbox (README) under k1
+    const rot = run('box', 'remote', 'key', '--new');
+    expect(rot.exitCode).toBe(0);
+    const k2 = /\n {2}([0-9a-f]{64})\n/.exec(text(rot))![1]!;
+    expect(k2).not.toBe(k1);
+    expect(run('box', 'remote', 'key').stdout.toString().trim()).toBe(k2);
+    expect(text(rot)).toContain('re-signed');
   });
 });
 
