@@ -298,7 +298,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
       sqlite3 libsqlite3-dev libssl-dev nodejs npm sudo vim-tiny procps \\
     && rm -rf /var/lib/apt/lists/*
 RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash && npm install -g @anthropic-ai/claude-code
-RUN printf '#!/bin/sh\\nsocat TCP-LISTEN:3128,bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:${EGRESS_IN} &\\nexec sleep infinity\\n' > /usr/local/bin/salu-kernel-init && chmod +x /usr/local/bin/salu-kernel-init
+RUN printf '#!/bin/sh\\nsocat TCP-LISTEN:3128,bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:${EGRESS_IN} >/tmp/salu-init.log 2>&1 &\\nexec sleep infinity\\n' > /usr/local/bin/salu-kernel-init && chmod +x /usr/local/bin/salu-kernel-init
 WORKDIR ${WORKDIR}
 ENTRYPOINT ["/usr/local/bin/salu-kernel-init"]
 `;
