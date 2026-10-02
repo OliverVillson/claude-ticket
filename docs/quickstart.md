@@ -40,11 +40,11 @@ salu notif
 ```sh
 salu box status
 salu box update
-salu doctor --sandbox
+salu box login
 ```
 
 `salu box status` shows the last heartbeat, version, disk and running tickets. `salu box update`
-installs the newest release on the box. Everything runs from the Mac; you never type on the box again.
+installs the newest release on the box. `salu box login` renews your Claude login on the box (it lasts a year). With more than one box, add `--on <name>` to `salu box status`, `update`, `login` and `salu new`. Everything runs from the Mac; you never type on the box again.
 
 ## If something fails
 
