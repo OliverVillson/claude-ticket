@@ -12,7 +12,7 @@ import { DOCKERFILE, podmanCwd, boxAdmit, idleMinutes, startStats, startsLog, en
 import { kernelPath, prepareKernel, requireHuman } from '../../core/kernel.ts';
 import { helpIf } from './_shared.ts';
 
-const HELP = `salu kernel [status|setup|login|reset|shell|platform|bench]
+const HELP = `salu kernel [status|setup|login|reset|shell|platform|bench|demo]
 
 The container kernel: every ticket runs inside a rootless Podman container (with gVisor when installed) that
 has only the project's kernel folder, no logins and no home network. Installs persist per project.
@@ -22,6 +22,7 @@ has only the project's kernel folder, no logins and no home network. Installs pe
                               containers made from an older one; --yes lets it run over ssh with no terminal
   salu kernel login [--box] [token]   save the Claude token agents use inside the container; --box saves the one box login (kernel and every runner project; get one with \`claude setup-token\`);
                               without an argument it is read from the terminal, or from stdin when piped
+  salu kernel demo [--slow]   show an agent failing to steal the login, leave its folder or reach the network (for a recording)
   salu kernel reset [project] delete a project's container (installed packages go; the kernel folder stays)
   salu kernel shell [project] open a shell in a project's container, for you to look around
   salu kernel platform [systrap|kvm|ptrace|default]
@@ -158,6 +159,11 @@ export async function kernel(p: Parsed): Promise<number> {
       }
       console.log(dim('Pick with: salu kernel platform systrap|kvm   (your npm install and test runs are the real test)'));
       return 0;
+    }
+    case 'demo': {
+      const { runSafetyDemo } = await import('../../core/safety-demo.ts');
+      const r = await runSafetyDemo({ pace: flagBool(p, 'slow') ? 1400 : 0 });
+      return r.failed.length ? 1 : 0;
     }
     case 'reset':
     case 'shell': {
