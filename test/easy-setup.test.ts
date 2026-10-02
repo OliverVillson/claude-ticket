@@ -4,7 +4,7 @@
  * plus the contract's safety rules. Runs against src/control/ when it exists, else the reference in
  * test/easy-setup/ref-control.ts (the first test says which).
  */
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -236,10 +236,66 @@ describe('project.create and a ticket round trip', () => {
   });
 });
 
-// The real verb handlers (piece 3). These start working the moment src/box/handlers exists.
+// The real verb handlers (piece 3) behind the real watcher, with fake shell commands: what the box would run is recorded.
 const real = await realHandlers();
-describe.skipIf(!real)('real box handlers', () => {
-  test('placeholder: wire handlers into fakeBox({ handlers }) when piece 3 lands', () => {
-    expect(real).toBeTruthy();
+describe.skipIf(!real || !usingRealControl)('real box handlers over the control channel', () => {
+  setDefaultTimeout(60000);
+  let box: FakeBox;
+  let cmds: string[][];
+  let root: string;
+  const saved = process.env.SALU_RUNNER_ROOT;
+  beforeEach(async () => {
+    root = mkdtempSync(join(tmpdir(), 'salu-realh-'));
+    process.env.SALU_RUNNER_ROOT = join(root, 'var');
+    mkdirSync(process.env.SALU_RUNNER_ROOT, { recursive: true });
+    cmds = [];
+    const deps = {
+      salu: '/usr/local/bin/salu', user: 'salu', version: '1.2.0', tmpDir: join(root, 'tmp'), now: () => Date.now(),
+      run: async (cmd: string[]) => (cmds.push(cmd), { ok: true, out: cmd[2] === 'list' ? 'no runner projects yet' : '' }),
+    };
+    box = await fakeBox({ handlers: () => real.createHandlers(deps) });
+  });
+  afterEach(() => {
+    box.cleanup();
+    rmSync(root, { recursive: true, force: true });
+    if (saved === undefined) delete process.env.SALU_RUNNER_ROOT;
+    else process.env.SALU_RUNNER_ROOT = saved;
+  });
+
+  test('ping, login, new project, remove: the whole Mac-side story', async () => {
+    expect((await box.send('ping')).ok).toBe(true);
+    const token = 'sk-ant-oat01-' + 'Q'.repeat(50);
+    expect((await box.send('login.set', { kind: 'subscription' }, { token: Buffer.from(token) })).ok).toBe(true);
+    expect(readFileSync(join(root, 'var', 'kernel-token'), 'utf8').trim()).toBe(token);
+
+    const deploy = '-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA' + 'z'.repeat(40) + '\n-----END OPENSSH PRIVATE KEY-----\n';
+    const signing = generateKey();
+    const r = await box.send('project.create', { name: 'web', repo: 'git@github.com:me/web.git' }, { deployKey: Buffer.from(deploy), signingKey: Buffer.from(signing) });
+    expect(r.ok).toBe(true);
+    const add = cmds.find((c) => c[1] === 'runner' && c[2] === 'add')!;
+    expect(add.slice(3, 6)).toEqual(['web', '--clone', 'git@github.com:me/web.git']);
+    expect(add).not.toContain('--token-file'); // the one box login is used
+    // Secrets are never on a command line, in a reply or in the control repo.
+    for (const secret of [token, signing, 'z'.repeat(40)]) {
+      expect(JSON.stringify(cmds)).not.toContain(secret);
+      expect(JSON.stringify(r)).not.toContain(secret);
+      expect(everythingInControlRepo2(box)).not.toContain(secret);
+    }
+    expect((await box.send('project.remove', { name: 'web' })).ok).toBe(true);
+  });
+
+  test('a hand-made command with a shell string in the name runs nothing', async () => {
+    const id = '1759413000000-0000000b';
+    const m = control.signMessage({ v: 1, id, box: BOX, verb: 'project.create', at: Date.now(), args: { name: 'x; rm -rf /', repo: 'git@github.com:a/b.git' }, sealed: {} } as any, box.cfg.macKey);
+    await box.mac.put(`boxes/${BOX}/commands/${id}.json`, JSON.stringify(m));
+    expect((await control.waitReply(box.mac, box.cfg, id)).ok).toBe(false);
+    expect(cmds.filter((c) => c[2] === 'add')).toEqual([]);
   });
 });
+
+function everythingInControlRepo2(b: FakeBox): string {
+  const dir = join(b.root, 'audit2');
+  rmSync(dir, { recursive: true, force: true });
+  git(b.root, ['clone', '-q', b.controlRepo, dir]);
+  return git(dir, ['log', '-p', '--all', '--no-color']).out;
+}
