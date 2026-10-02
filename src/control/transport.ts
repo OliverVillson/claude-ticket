@@ -6,6 +6,7 @@
 import { existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { MAX_FILE_BYTES } from '../sync/format.ts';
+import { GITHUB_KNOWN_HOSTS } from './hosts.ts';
 
 export interface ControlTransport {
   /** Write-once by default: an existing path is left alone and put returns. `overwrite` replaces it (heartbeat only). */
@@ -45,7 +46,12 @@ export function memoryTransport(): ControlTransport & { files: Map<string, strin
   };
 }
 
-function gitEnv(sshKey?: string): Record<string, string> {
+/**
+ * With a deploy key, ssh trusts only github.com's pinned host key (or `hostKeys`, known_hosts lines, for tests): the box's
+ * service runs as root, whose own known_hosts has never seen github.com, and BatchMode would then fail with
+ * "Host key verification failed".
+ */
+export function gitEnv(sshKey?: string, hostKeys = GITHUB_KNOWN_HOSTS): Record<string, string> {
   const e: Record<string, string> = {
     ...(process.env as Record<string, string>),
     GIT_TERMINAL_PROMPT: '0',
@@ -54,15 +60,27 @@ function gitEnv(sshKey?: string): Record<string, string> {
     GIT_COMMITTER_NAME: 'salu',
     GIT_COMMITTER_EMAIL: 'salu@localhost',
   };
-  if (sshKey) e.GIT_SSH_COMMAND = `ssh -i ${JSON.stringify(sshKey)} -o IdentitiesOnly=yes -o BatchMode=yes`;
-  else e.GIT_SSH_COMMAND = process.env.GIT_SSH_COMMAND ?? 'ssh -o BatchMode=yes';
+  if (sshKey) {
+    const kh = `${sshKey}.known_hosts`;
+    mkdirSync(dirname(kh), { recursive: true });
+    writeFileSync(kh, hostKeys, { mode: 0o644 });
+    e.GIT_SSH_COMMAND = `ssh -i ${JSON.stringify(sshKey)} -o IdentitiesOnly=yes -o BatchMode=yes -o UserKnownHostsFile=${JSON.stringify(kh)} -o StrictHostKeyChecking=yes`;
+  } else e.GIT_SSH_COMMAND = process.env.GIT_SSH_COMMAND ?? 'ssh -o BatchMode=yes';
   return e;
 }
 
-export function gitTransport(opts: { url: string; sshKey?: string; dir: string }): ControlTransport {
+export function problem(err: string): Error {
+  const s = err.trim();
+  if (/host key verification failed|remote host identification has changed/i.test(s)) return new Error("ssh does not trust the control repo's host key (github.com's pinned key did not match). Do not continue; check this box's network and run salu update.");
+  if (/does not appear to be a git repository|repository not found|could not resolve host|no such file/i.test(s) && !/permission denied/i.test(s)) return new Error(`could not reach the control repo: ${s.split('\n').filter(Boolean)[0]}`);
+  if (/permission denied|authentication failed|could not read|403/i.test(s)) return new Error('git could not sign in to the control repo. Check its deploy key and try again.');
+  return new Error(`could not reach the control repo: ${s.split('\n').filter(Boolean).pop() ?? 'git failed'}`);
+}
+
+export function gitTransport(opts: { url: string; sshKey?: string; hostKeys?: string; dir: string }): ControlTransport {
   const { url, dir } = opts;
   const root = resolve(dir);
-  const env = gitEnv(opts.sshKey);
+  const env = gitEnv(opts.sshKey, opts.hostKeys);
   const git = (args: string[]) => {
     const r = Bun.spawnSync(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', '-c', 'core.symlinks=false', ...args], { cwd: root, stdout: 'pipe', stderr: 'pipe', env });
     return { ok: r.exitCode === 0, out: r.stdout.toString(), err: r.stderr.toString() };
@@ -86,12 +104,6 @@ export function gitTransport(opts: { url: string; sshKey?: string; dir: string }
     else if (cur.out.trim() !== url) git(['remote', 'set-url', 'origin', url]);
   }
 
-  function problem(err: string): Error {
-    const s = err.trim();
-    if (/does not appear to be a git repository|repository not found|could not resolve host|no such file/i.test(s) && !/permission denied/i.test(s)) return new Error(`could not reach the control repo: ${s.split('\n').filter(Boolean)[0]}`);
-    if (/permission denied|authentication failed|could not read|403/i.test(s)) return new Error('git could not sign in to the control repo. Check its deploy key and try again.');
-    return new Error(`could not reach the control repo: ${s.split('\n').filter(Boolean).pop() ?? 'git failed'}`);
-  }
 
   /** Bring the working copy to the remote's default branch (stays empty while the remote has none). */
   function refresh(): void {
@@ -119,7 +131,9 @@ export function gitTransport(opts: { url: string; sshKey?: string; dir: string }
   const readLocal = (p: string): string | undefined => {
     const full = inside(p);
     try {
-      if (lstatSync(full).isSymbolicLink() || !lstatSync(full).isFile()) return undefined;
+      const st = lstatSync(full);
+      // Check the size before reading: a huge file in the repo must never be loaded into memory.
+      if (st.isSymbolicLink() || !st.isFile() || st.size > MAX_FILE_BYTES) return undefined;
       return readFileSync(full, 'utf8');
     } catch {
       return undefined;

@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { generateSealKeys, openSealed, sealTo } from '../src/control/seal.ts';
 import { canonical, commandPath, replyPath, signMessage, validateArgs, verifyMessage, type Msg } from '../src/control/message.ts';
-import { gitTransport, memoryTransport, type ControlTransport } from '../src/control/transport.ts';
+import { gitEnv, gitTransport, memoryTransport, problem, type ControlTransport } from '../src/control/transport.ts';
 import { runWatcher, type Handlers } from '../src/control/watcher.ts';
 import { readHeartbeat, sendCommand, waitReply, type BoxConfig } from '../src/control/client.ts';
 import { newId } from '../src/sync/format.ts';
@@ -188,6 +188,27 @@ for (const kind of ['memory', 'git'] as const) {
   });
 }
 
+describe('ssh host key', () => {
+  test('a deploy key pins github.com and writes its own known_hosts', async () => {
+    const key = join(root, 'deploy');
+    const e = gitEnv(key);
+    const kh = readFileSync(`${key}.known_hosts`, 'utf8');
+    expect(kh).toBe('github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\n');
+    expect(e.GIT_SSH_COMMAND).toContain('StrictHostKeyChecking=yes');
+    expect(e.GIT_SSH_COMMAND).toContain(`UserKnownHostsFile=${JSON.stringify(`${key}.known_hosts`)}`);
+    const { createHash } = await import('node:crypto');
+    const fp = createHash('sha256').update(Buffer.from(kh.split(' ')[2]!.trim(), 'base64')).digest('base64').replace(/=+$/, '');
+    expect(fp).toBe('+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU');
+    expect(gitEnv(join(root, 'k2'), 'example.org ssh-ed25519 AAAA\n').GIT_SSH_COMMAND).toContain('k2.known_hosts');
+  });
+  test('a host key failure is not reported as a deploy key problem', () => {
+    const m = problem('Host key verification failed.\nfatal: Could not read from remote repository.').message;
+    expect(m).toMatch(/host key/);
+    expect(m).not.toMatch(/deploy key/);
+    expect(problem('git@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository.').message).toMatch(/deploy key/);
+  });
+});
+
 describe('git transport', () => {
   test('two writers never lose a file; write-once; path checks; file size', async () => {
     const bare = join(root, 'c.git');
@@ -203,8 +224,46 @@ describe('git transport', () => {
     await expect(a.put('boxes/x/big.json', 'x'.repeat(70000))).rejects.toThrow(/64 KiB/);
     expect(existsSync(join(root, 'evil'))).toBe(false);
   });
+  test('a file over the cap in the repo is skipped without being read', async () => {
+    const bare = join(root, 'big.git');
+    git(root, ['init', '-q', '--bare', '-b', 'main', bare]);
+    const w = join(root, 'writer');
+    git(root, ['clone', '-q', bare, w]);
+    mkdirSync(join(w, 'boxes/x/commands'), { recursive: true });
+    writeFileSync(join(w, 'boxes/x/commands/big.json'), 'x'.repeat(70000));
+    git(w, ['add', '-A']);
+    git(w, ['commit', '-q', '-m', 'big']);
+    git(w, ['push', '-q', 'origin', 'HEAD:refs/heads/main']);
+    const t = gitTransport({ url: bare, dir: join(root, 'reader') });
+    expect(await t.list('boxes/x/commands')).toEqual(['big.json']);
+    expect(await t.get('boxes/x/commands/big.json')).toBeUndefined();
+  });
   test('an unreachable repo says so in words', async () => {
     const t = gitTransport({ url: join(root, 'missing.git'), dir: join(root, 'w') });
     await expect(t.list('boxes/x/commands')).rejects.toThrow(/could not reach the control repo/);
   });
+});
+
+describe('salu control watch', () => {
+  test('stays running after several rounds and answers a command', async () => {
+    const bare = join(root, 'ctl.git');
+    git(root, ['init', '-q', '--bare', '-b', 'main', bare]);
+    const dir = join(root, 'box');
+    const { ensureBoxKeys, saveConnection } = await import('../src/control/keys.ts');
+    const { sealPub, boxKey } = ensureBoxKeys(dir);
+    const macKey = randomBytes(32);
+    saveConnection(bare, 'salubox', macKey, dir);
+    const proc = Bun.spawn(['bun', join(import.meta.dir, '../src/index.ts'), 'control', 'watch', '--interval', '1'], { env: { ...process.env, SALU_BOX_DIR: dir }, stdout: 'pipe', stderr: 'pipe' });
+    try {
+      await new Promise((r) => setTimeout(r, 3500)); // several rounds
+      expect(proc.exitCode).toBeNull();
+      const t = gitTransport({ url: bare, dir: join(root, 'mac') });
+      const cfg: BoxConfig = { box: 'salubox', macKey, boxKey, sealPub };
+      const id = await sendCommand(t, cfg, 'ping');
+      expect((await waitReply(t, cfg, id, { timeoutMs: 15000, pollMs: 500 })).ok).toBe(true);
+      expect(proc.exitCode).toBeNull();
+    } finally {
+      proc.kill();
+    }
+  }, 40000);
 });
