@@ -25,9 +25,14 @@ Usage   (salu ?  |  salu help  |  salu --help  shows this list; quote the ? in z
   salu run [project|"name"...] [--concurrency N] [--detach] [--plain]
                                              queue everything saved (or just the named tickets) and start
   salu kernel [status|setup|login|reset|shell]   the container every ticket runs in: set it up, check it, log agents in
+  salu release keygen|sign|verify            signed releases: make the key, sign a release, check a download (salu release --help)
+  salu box init [--json]                     make this box's keys for pairing with a Mac (run by the installer)
+  salu box login --stdin                     save the box's one Claude login (token on stdin)
   salu push [project] [--branch B] [--to url] [--dry-run]   send what agents made in the kernel to the project's git remote
   salu export <folder> [project] [--git] [--force]           copy what agents made in the kernel to a folder
   salu remote add|list|remove|sync            run a project on an always-on box through its git remote (salu remote --help)
+  salu box add|status|update|login|list       set up and look after your always-on box (salu box --help)
+  salu new [name] [--on box] [--repo o/r]     a new project that runs on your box, in one step
   salu memory [list|show|add|edit|rm] ...    what the project's agents remember (kept in the repo, .salu/memory)
   salu files [list|get|add|rm] ...            files every ticket of a project can share (.salu/files)
   salu sync [project] [--no-git] [--no-push]  merge memory and shared files with the agents' sandbox copy and git
@@ -40,6 +45,7 @@ Usage   (salu ?  |  salu help  |  salu --help  shows this list; quote the ? in z
   salu log "name" [--follow] [--raw]
   salu plan "name"                           split a ticket into sub-tickets with Claude
   salu runner <command>                      run salu unattended on an always-on Linux box (salu runner --help)
+  salu control watch                         (box) listen for commands from your Mac through the control repo
   salu doctor                                check that Claude Code is found and you are logged in
   salu update [version] [--check]            update salu to the latest release (or a given version)
 
@@ -105,6 +111,10 @@ export async function dispatch(argv: string[]): Promise<number> {
       return (await import('./commands/notif.ts')).notif(sub);
     case 'kernel':
       return (await import('./commands/kernel.ts')).kernel(sub);
+    case 'release':
+      return (await import('./commands/release.ts')).release(sub);
+    case 'box':
+      return (await import('./commands/box.ts')).box(sub);
     case 'push':
       return (await import('./commands/push.ts')).push(sub);
     case 'export':
@@ -117,6 +127,8 @@ export async function dispatch(argv: string[]): Promise<number> {
       return (await import('./commands/sync.ts')).sync(sub);
     case 'remote':
       return (await import('./commands/remote.ts')).remote(sub);
+    case 'new':
+      return (await import('./commands/new.ts')).newCmd(sub);
     case 'pause':
       return (await import('./commands/pause.ts')).pause(sub);
     case 'resume':
@@ -128,6 +140,8 @@ export async function dispatch(argv: string[]): Promise<number> {
       return (await import('./commands/log.ts')).log(sub);
     case 'plan':
       return (await import('./commands/plan.ts')).plan(sub);
+    case 'control':
+      return (await import('./commands/control.ts')).control(sub);
     case 'runner':
       return (await import('./commands/runner.ts')).runner(sub);
     case 'doctor':

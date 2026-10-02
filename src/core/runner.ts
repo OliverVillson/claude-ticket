@@ -39,6 +39,9 @@ export function requireRunnerName(name: string | undefined): string {
 export const runnerHome = (name: string, env?: NodeJS.ProcessEnv) => join(runnerRoot(env), name);
 export const runnerWork = (name: string, env?: NodeJS.ProcessEnv) => join(runnerHome(name, env), 'work');
 export const runnerEnvFile = (name: string, env?: NodeJS.ProcessEnv) => join(runnerEtc(env), `${name}.env`);
+/** GIT_SSH_COMMAND for the project's sync service, when its repo is reached with a deploy key of its own. */
+export const runnerGitEnvFile = (name: string, env?: NodeJS.ProcessEnv) => join(runnerEtc(env), `${name}.git.env`);
+export const renderGitEnvFile = (sshCommand: string) => `# set by \`salu runner add --deploy-key-file\`: this project's repo is reached with its own key\nGIT_SSH_COMMAND="${sshCommand}"\n`;
 export const serviceName = (name: string) => `salu-runner@${name}.service`;
 export const syncServiceName = (name: string) => `salu-sync@${name}.service`;
 
@@ -155,6 +158,8 @@ Environment=SALU_HOME=${o.root}/%i
 Environment=HOME=${o.home}
 Environment=PATH=${o.home}/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=SALU_AUTH=subscription
+# the box login (salu box login) first, so a project's own env file can still override it
+EnvironmentFile=-${o.root}/box-login.env
 EnvironmentFile=-${o.etc}/%i.env
 ExecStart=${o.bin} run --plain --no-queue %i
 Restart=always
@@ -194,6 +199,7 @@ Environment=SALU_HOME=${o.root}/%i
 Environment=HOME=${o.home}
 Environment=PATH=${o.home}/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=GIT_TERMINAL_PROMPT=0
+EnvironmentFile=-${o.etc}/%i.git.env
 ExecStart=${o.bin} remote sync --watch
 Restart=always
 RestartSec=15
@@ -214,9 +220,10 @@ export const SETUP_TOKEN_WARNING =
   'note: --auth subscription with a setup-token is the route Anthropic documents for scripts (the token needs a Pro, Max, Team or ' +
   'Enterprise plan and lasts a year). Whether always-on use of a subscription is within its terms is still being confirmed: ' +
   'check the current terms, or use --auth api-key.';
+export const BOX_LOGIN_NOTE = 'using the box login (one Claude token for every project on this box; change it with the box login command or `salu kernel login --box`)';
 export const NO_TOKEN_WARNING =
-  'warning: no setup-token given, so this box would rely on a copied `claude` login, which stops working unattended once it expires. ' +
-  'Run `claude setup-token` (on any machine with a browser), then: salu runner add <project> --token-file <file>  ' +
+  'warning: no setup-token given and the box has no login yet, so it would rely on a copied `claude` login, which stops working unattended once it expires. ' +
+  'Run `claude setup-token` (on any machine with a browser), then give the box that login once, or: salu runner add <project> --token-file <file>  ' +
   '(or CLAUDE_CODE_OAUTH_TOKEN in the environment).';
 
 export type AuthMode = 'subscription' | 'api-key';

@@ -18,7 +18,6 @@ import { kernelAuthMode, placeholderEnv } from './apiproxy.ts';
  * project. The orchestrator, database, sync and the phone stay on the host.
  */
 
-export const KERNEL_IMAGE = process.env.SALU_KERNEL_IMAGE || 'localhost/salu-kernel:1';
 export const WORKDIR = '/work';
 const EGRESS_IN = '/run/salu/egress.sock';
 const EGRESS_DIR_IN = '/run/salu';
@@ -78,7 +77,7 @@ export function createArgs(o: CreateOpts): string[] {
     '--ulimit', 'nofile=4096:8192', '--shm-size', '256m',
     ...(o.disk ? ['--storage-opt', `size=${o.disk}`] : []),
     '--hostname', 'salu-kernel', '--workdir', WORKDIR,
-    '--label', 'salu.kernel=1', '--label', `salu.project=${o.project}`, '--label', `salu.home=${ticketHome()}`, '--label', `salu.mounts=${MOUNTS_VERSION}`,
+    '--label', 'salu.kernel=1', '--label', `salu.project=${o.project}`, '--label', `salu.home=${ticketHome()}`, '--label', `salu.mounts=${MOUNTS_VERSION}`, '--label', `salu.image=${o.image ?? KERNEL_IMAGE}`,
     '-v', `${o.dir}:${WORKDIR}:rw`,
     // The socket's folder, not the socket file: a file mount keeps the inode it had at create time, and the filter
     // makes a new socket (new inode) every time it starts, which would leave a running container talking to a dead one.
@@ -169,18 +168,18 @@ export function ensureContainer(project: string, dir: string, bin = engine(), on
   if (!bin) throw new CliError('Podman was not found. Install the container runtime: sudo scripts/install-kernel-runtime.sh (Linux) or brew install podman (Mac), then salu kernel setup.');
   const name = containerName(project);
   const inspect = () => {
-    const r = podman(bin, ['inspect', '--format', '{{.State.Status}} {{index .Config.Labels "salu.mounts"}}', name]);
-    const [status = '', mounts = ''] = (r.stdout ?? '').trim().split(/\s+/);
-    return { status: r.status, text: status, mounts };
+    const r = podman(bin, ['inspect', '--format', '{{.State.Status}} {{index .Config.Labels "salu.mounts"}} {{index .Config.Labels "salu.image"}}', name]);
+    const [status = '', mounts = '', image = ''] = (r.stdout ?? '').trim().split(/\s+/);
+    return { status: r.status, text: status, mounts, image };
   };
   let state = inspect();
   for (let i = 0; i < 20 && state.text === 'stopping'; i++) {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500); // an idle stop is finishing; start only after it
     state = inspect();
   }
-  if (state.status === 0 && state.mounts !== MOUNTS_VERSION) {
-    podman(bin, ['rm', '-f', name]); // made before the egress socket folder was mounted: recreate it
-    state = { status: 1, text: '', mounts: '' };
+  if (state.status === 0 && (state.mounts !== MOUNTS_VERSION || state.image !== KERNEL_IMAGE)) {
+    podman(bin, ['rm', '-f', name]); // made before the egress socket folder was mounted, or from an older image: recreate it
+    state = { status: 1, text: '', mounts: '', image: '' };
   }
   const created = state.status !== 0;
   if (state.status !== 0) {
@@ -334,6 +333,11 @@ WORKDIR ${WORKDIR}
 ENTRYPOINT ["/usr/local/bin/salu-kernel-init"]
 `;
 
+/** The image is tagged with a hash of what it is built from, so a changed Containerfile is a new image, built once, and containers made from the old one are recreated. SALU_KERNEL_IMAGE overrides it. */
+export const KERNEL_IMAGE_REPO = 'localhost/salu-kernel';
+export const KERNEL_IMAGE_VERSION = createHash('sha256').update(DOCKERFILE).digest('hex').slice(0, 10);
+export const KERNEL_IMAGE = process.env.SALU_KERNEL_IMAGE || `${KERNEL_IMAGE_REPO}:${KERNEL_IMAGE_VERSION}`;
+
 export function buildImage(bin: string, log: (l: string) => void = () => {}): void {
   const dir = mkdtempSync(join(tmpdir(), 'salu-image-'));
   try {
@@ -344,6 +348,36 @@ export function buildImage(bin: string, log: (l: string) => void = () => {}): vo
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+export interface EnsureImageResult {
+  built: boolean;
+  /** containers removed because they were made from another image (they start again from this one with the next ticket) */
+  recycled: string[];
+  /** older salu-kernel images removed to free disk */
+  pruned: number;
+}
+
+/** Build the kernel image only when the current version is missing (or `force`), then recycle containers and drop images of other versions. Safe to run again. */
+export function ensureImage(bin: string, o: { force?: boolean; log?: (l: string) => void } = {}): EnsureImageResult {
+  const log = o.log ?? (() => {});
+  const built = o.force || !imageExists(bin);
+  if (built) buildImage(bin, log);
+  else log(`image ${KERNEL_IMAGE} is current`);
+  const recycled: string[] = [];
+  const list = podman(bin, ['ps', '-a', '--filter', 'label=salu.kernel=1', '--format', '{{.Names}} {{index .Labels "salu.image"}}']);
+  for (const line of (list.stdout ?? '').split('\n')) {
+    const [name, image = ''] = line.trim().split(/\s+/);
+    if (name && image !== KERNEL_IMAGE && podman(bin, ['rm', '-f', name]).status === 0) recycled.push(name);
+  }
+  let pruned = 0;
+  if (!process.env.SALU_KERNEL_IMAGE) {
+    const imgs = podman(bin, ['images', '--format', '{{.Repository}}:{{.Tag}}', KERNEL_IMAGE_REPO]);
+    for (const img of (imgs.stdout ?? '').split('\n').map((l) => l.trim()).filter(Boolean)) {
+      if (img !== KERNEL_IMAGE && podman(bin, ['rmi', img]).status === 0) pruned++;
+    }
+  }
+  return { built, recycled, pruned };
 }
 
 export interface KernelStatus {

@@ -6,11 +6,13 @@ import type { Parsed } from '../args.ts';
 import { flagBool, flagStr } from '../args.ts';
 import { CliError } from '../../core/errors.ts';
 import { dim, green, red } from '../../core/ansi.ts';
+import { hasBoxLogin } from '../../box/login.ts';
+import { gitSshCommand, writeKnownHosts } from '../../box/hosts.ts';
 import { checkClaude } from '../../core/claude-bin.ts';
 import { sandboxSupport } from '../../core/kernel.ts';
 import { selfCommand } from '../../orchestrator/index.ts';
 import {
-  NO_TOKEN_WARNING, SETUP_TOKEN_WARNING, SYNC_UNIT_NAME, UNIT_NAME, boxProblems, renderEnvFile, renderSyncUnit, renderUnit, requireRunnerName, runnerEnvFile, runnerEtc, runnerHome, runnerRoot, runnerWork, serviceName, syncServiceName, unitDir,
+  BOX_LOGIN_NOTE, NO_TOKEN_WARNING, SETUP_TOKEN_WARNING, renderGitEnvFile, runnerGitEnvFile, SYNC_UNIT_NAME, UNIT_NAME, boxProblems, renderEnvFile, renderSyncUnit, renderUnit, requireRunnerName, runnerEnvFile, runnerEtc, runnerHome, runnerRoot, runnerWork, serviceName, syncServiceName, unitDir,
   type AuthMode,
 } from '../../core/runner.ts';
 import { confirm, helpIf } from './_shared.ts';
@@ -25,6 +27,7 @@ const HELP = `salu runner <command>      run salu unattended on an always-on Lin
   sudo salu runner add <project> [--clone git-url | --path folder] [--auth subscription|api-key]
                                               [--token-file F | --api-key-file F] [--no-sandbox] [--concurrency N]
                                               [--remote git-url | --no-sync]
+                                              [--deploy-key-file F] [--signing-key-file F]
                                               create the project's own salu home, register the project
                                               (sandbox ON unless --no-sandbox), start it now and on every boot.
                                               Also runs \`salu remote sync --watch\` as salu-sync@<project>, so tickets
@@ -38,6 +41,11 @@ const HELP = `salu runner <command>      run salu unattended on an always-on Lin
 Each project gets its own folder /var/lib/salu/<project> (its database, log and kernel), its own
 service salu-runner@<project> and its own git sync service salu-sync@<project>; a crashed or rebooted box brings every orchestrator back, and tickets a
 dead run left running go back to the queue and resume their Claude session.
+
+--token-file is optional once the box has its one login (the pairing from a Mac gives it, or
+\`sudo -u salu salu kernel login --box\`): every project then uses that login. --deploy-key-file: the project repo's
+own ssh key (github.com's host key is pinned, so nothing asks to trust it); --signing-key-file: the project's
+signing key instead of a freshly made one. Both are copied into the project's folder and never put on a command line.
 
 Subscription: run \`claude setup-token\` on any machine with a browser (Pro, Max, Team or Enterprise plan; a one-year
 token Anthropic documents for scripts), then  --token-file <file>  (or CLAUDE_CODE_OAUTH_TOKEN in the environment).
@@ -157,7 +165,8 @@ function add(p: Parsed): number {
     const tf = flagStr(p, 'token-file');
     oauthToken = tf ? readFileSync(tf, 'utf8').trim() : process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim() || undefined;
     if (tf && !oauthToken) throw new CliError(`${tf} is empty: put the token \`claude setup-token\` printed in it`);
-    console.error(oauthToken ? SETUP_TOKEN_WARNING : NO_TOKEN_WARNING);
+    if (!oauthToken && !tf && hasBoxLogin()) console.error(`${BOX_LOGIN_NOTE}\n${SETUP_TOKEN_WARNING}`);
+    else console.error(oauthToken ? SETUP_TOKEN_WARNING : NO_TOKEN_WARNING);
   }
   const sandbox = !flagBool(p, 'no-sandbox') && p.flags.sandbox !== false;
   if (sandbox) {
@@ -170,6 +179,36 @@ function add(p: Parsed): number {
     mkdirSync(home, { recursive: true });
     sh(p, ['chown', `${user}:`, home]);
   }
+  // The project's own keys, copied into its folder (the sync unit sees only that folder) and owned by the runner user.
+  const gitEnv: string[] = [];
+  let gitEnvText: string | undefined;
+  const deployFile = flagStr(p, 'deploy-key-file');
+  const signingFile = flagStr(p, 'signing-key-file');
+  if (deployFile) {
+    const key = readFileSync(deployFile, 'utf8');
+    if (!/^-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(key)) throw new CliError(`${deployFile} is not an ssh private key`);
+    const kf = join(home, 'deploy_key');
+    const kh = join(home, 'known_hosts');
+    if (!dry(p)) {
+      writeFileSync(kf, key.endsWith('\n') ? key : key + '\n', { mode: 0o600 });
+      chmodSync(kf, 0o600);
+      writeKnownHosts(kh);
+      sh(p, ['chown', `${user}:`, kf, kh]);
+    }
+    const cmd = gitSshCommand(kf, kh);
+    gitEnv.push(`GIT_SSH_COMMAND=${cmd}`);
+    gitEnvText = renderGitEnvFile(cmd);
+  }
+  if (signingFile) {
+    const sk = readFileSync(signingFile, 'utf8').trim();
+    if (sk.length < 16) throw new CliError(`${signingFile} is not a signing key (at least 16 characters)`);
+    if (!dry(p)) {
+      const kf = join(home, 'remote.key'); // where `salu remote` keeps it for SALU_HOME=<home>
+      writeFileSync(kf, sk + '\n', { mode: 0o600 });
+      chmodSync(kf, 0o600);
+      sh(p, ['chown', `${user}:`, kf]);
+    }
+  }
   const clone = flagStr(p, 'clone');
   const path = flagStr(p, 'path') ?? runnerWork(name);
   const args = ['add', 'project', name, '--path', path];
@@ -177,7 +216,7 @@ function add(p: Parsed): number {
   if (sandbox) args.push('--sandbox');
   const conc = flagStr(p, 'concurrency');
   if (conc) args.push('--concurrency', conc);
-  const asUser = process.getuid?.() === 0 && user !== 'root' ? ['runuser', '-u', user, '--', 'env', `SALU_HOME=${home}`] : ['env', `SALU_HOME=${home}`];
+  const asUser = process.getuid?.() === 0 && user !== 'root' ? ['runuser', '-u', user, '--', 'env', `SALU_HOME=${home}`, ...gitEnv] : ['env', `SALU_HOME=${home}`, ...gitEnv];
   const made = sh(p, [...asUser, ...selfCommand(args)]);
   if (!made.ok) throw new CliError(`could not register the project:\n${made.out}`);
   if (made.out) console.log(made.out);
@@ -204,6 +243,10 @@ function add(p: Parsed): number {
     mkdirSync(dirname(envPath), { recursive: true });
     writeFileSync(envPath, text, { mode: 0o600 });
     chmodSync(envPath, 0o600);
+    if (gitEnvText) {
+      writeFileSync(runnerGitEnvFile(name), gitEnvText, { mode: 0o600 });
+      chmodSync(runnerGitEnvFile(name), 0o600);
+    }
   }
   const en = sh(p, [systemctl(), 'enable', '--now', serviceName(name), ...(sync ? [syncServiceName(name)] : [])]);
   if (!en.ok) throw new CliError(`systemctl enable failed: ${en.out}`);
@@ -241,6 +284,7 @@ function remove(p: Parsed): Promise<number> | number {
     if (purge && !dry(p)) {
       rmSync(runnerHome(name), { recursive: true, force: true });
       rmSync(runnerEnvFile(name), { force: true });
+      rmSync(runnerGitEnvFile(name), { force: true });
     }
     console.log(`${green('✓')} removed runner ${name}${purge ? ' and its data' : dim(' (data kept; --purge deletes it)')}`);
     return 0;

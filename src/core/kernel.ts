@@ -57,8 +57,9 @@ export function setHumanTty(fn: (() => boolean) | null): void {
  * can clear the marker and can fake a terminal (`script`). What actually stops a worker is the OS sandbox
  * and the file-tool fence: it cannot write outside the kernel, read your git login, or push with your credentials.
  */
-export function requireHuman(what: string): void {
-  if (insideWorker() || !ttyCheck()) throw new CliError(`salu ${what} is for you, not for agents: run it yourself, from an interactive terminal.`);
+export function requireHuman(what: string, o: { yes?: boolean } = {}): void {
+  // --yes is for a person scripting over ssh, where there is no terminal; an agent still never gets through
+  if (insideWorker() || (!o.yes && !ttyCheck())) throw new CliError(`salu ${what} is for you, not for agents: run it yourself, from an interactive terminal.`);
 }
 
 const sh = (cwd: string, ...args: string[]) => Bun.spawnSync(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' });
