@@ -42,6 +42,8 @@ export async function control(p: Parsed): Promise<number> {
     w.stop();
     return 0;
   }
+  // The watcher's own timer is unref'd (library use); this ref'd one keeps the service process alive.
+  setInterval(() => {}, 2 ** 30);
   await new Promise(() => {});
   return 0;
 }
