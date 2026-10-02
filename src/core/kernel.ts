@@ -1,4 +1,4 @@
-import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, realpathSync, statSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, realpathSync, rmdirSync, rmSync, statSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import type { HookCallback, Options } from '@anthropic-ai/claude-agent-sdk';
@@ -353,3 +353,51 @@ export function isEmptyDir(dir: string): boolean {
 }
 
 export const resolvePath = resolve;
+
+
+/** What Claude Code's bubblewrap scrub leaves behind in the working folder: empty stand-ins for files it protects. */
+const SCRUB_STUB_FILES = ['.env', '.gitmodules', '.npmrc', '.yarnrc', '.yarnrc.yml', 'bunfig.toml', 'package.json', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock'];
+const SCRUB_STUB_DIRS = ['node_modules', '.claude'];
+
+/**
+ * Remove those stand-ins after a run: zero-byte and not tracked by git (so a real, empty, committed file stays), and
+ * empty folders. An empty package.json or bunfig.toml would otherwise break the next npm or bun run and travel with
+ * the project on export. Returns what it removed.
+ */
+export function cleanScrubStubs(dir: string): string[] {
+  const removed: string[] = [];
+  const tracked = (name: string) => Bun.spawnSync(['git', 'ls-files', '--error-unmatch', name], { cwd: dir, stdout: 'ignore', stderr: 'ignore' }).exitCode === 0;
+  const names = [...SCRUB_STUB_FILES, ...readdirSyncSafe(dir).filter((f) => /^\.env\..+/.test(f))];
+  for (const f of names) {
+    try {
+      const p = join(dir, f);
+      const st = lstatSync(p);
+      if (st.isFile() && st.size === 0 && !tracked(f)) {
+        rmSync(p);
+        removed.push(f);
+      }
+    } catch {
+      /* not there */
+    }
+  }
+  for (const d of SCRUB_STUB_DIRS) {
+    try {
+      const p = join(dir, d);
+      if (lstatSync(p).isDirectory() && readdirSync(p).length === 0) {
+        rmdirSync(p);
+        removed.push(d + '/');
+      }
+    } catch {
+      /* not there, or not empty */
+    }
+  }
+  return removed;
+}
+
+function readdirSyncSafe(dir: string): string[] {
+  try {
+    return readdirSync(dir);
+  } catch {
+    return [];
+  }
+}

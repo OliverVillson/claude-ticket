@@ -25,7 +25,7 @@ describe('container arguments', () => {
     expect(a[a.indexOf('--runtime') + 1]).toBe('runsc');
     expect(a[a.indexOf('--cap-drop') + 1]).toBe('ALL');
     expect(joined).toContain('no-new-privileges');
-    expect(a.filter((x, i) => a[i - 1] === '-v')).toEqual(['/home/u/.salu/kernel/web:/work:rw', '/home/u/.salu/run/egress.sock:/run/salu/egress.sock:rw']); // the only host mounts
+    expect(a.filter((x, i) => a[i - 1] === '-v')).toEqual(['/home/u/.salu/kernel/web:/work:rw', '/home/u/.salu/run:/run/salu:rw']); // the only host mounts
     expect(joined).not.toMatch(/--privileged|--network host|--pid host|--userns host|docker\.sock|--cap-add[^ ]* (ALL|SYS_ADMIN|NET_ADMIN|SYS_PTRACE)/);
     expect(a).toContain('--memory');
     expect(a).toContain('--pids-limit');
@@ -127,6 +127,11 @@ exit 0
     expect(o.hooks).toBeUndefined();
     expect(o.cwd).toBe(join(root, 'k'));
     expect(o.env?.GITHUB_TOKEN).toBeUndefined();
+    // the login stays hidden from the agent's commands (the scrub needs bubblewrap and SETFCAP), so tools are allowed by name
+    expect(o.env?.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB).toBe('1');
+    for (const tool of ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash']) expect(o.allowedTools).toContain(tool);
+    expect(DOCKERFILE).toContain('bubblewrap');
+    expect(createArgs({ name: 'n', project: 'p', dir: '/d' }).join(' ')).toContain('SETFCAP');
   });
 });
 
@@ -412,7 +417,7 @@ describe('unloading idle containers', () => {
     writeFileSync(fake, `#!/bin/sh
 echo "$@" >> ${root}/calls2.log
 case "$1" in
-  inspect) s=$(cat ${state}); echo $s; [ "$s" = stopping ] && echo exited > ${state}; exit 0 ;;
+  inspect) s=$(cat ${state}); echo "$s 2"; [ "$s" = stopping ] && echo exited > ${state}; exit 0 ;;
   start) echo running > ${state}; exit 0 ;;
 esac
 exit 0
@@ -430,6 +435,24 @@ exit 0
     seen.length = 0;
     ensureContainer('web', join(root, 'k'), fake, (t) => seen.push(t));
     expect(seen).toEqual([]);
+  });
+
+  test('a container made with the old socket-file mount is removed and created again', () => {
+    const fake = join(root, 'podman3');
+    writeFileSync(fake, `#!/bin/sh
+echo "$@" >> ${root}/calls3.log
+case "$1" in
+  inspect) if [ -f ${root}/gone3 ]; then exit 1; fi; echo "running <no value>"; exit 0 ;;
+  rm) touch ${root}/gone3; exit 0 ;;
+  image) exit 0 ;;
+esac
+exit 0
+`);
+    chmodSync(fake, 0o755);
+    ensureContainer('web', join(root, 'k'), fake);
+    const calls = readFileSync(join(root, 'calls3.log'), 'utf8');
+    expect(calls).toContain('rm -f salu-k-web');
+    expect(calls).toMatch(/create .*salu\.mounts=2/);
   });
 });
 
