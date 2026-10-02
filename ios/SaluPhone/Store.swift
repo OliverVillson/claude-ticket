@@ -100,6 +100,7 @@ final class Store: ObservableObject {
 
     /// Needs all three: the box ignores unsigned tickets and replies, so nothing is sent without the key.
     private var client: GitHubClient? {
+        let token = token.trimmed  // a pasted token often brings a space or newline along
         guard let r = GitHubClient.parseRepo(repo), !token.isEmpty, !Self.keyTooShort(signingKey), let key = Signing.key(signingKey) else { return nil }
         return GitHubClient(owner: r.owner, repo: r.repo, token: token, key: key)
     }
@@ -283,7 +284,7 @@ final class Store: ObservableObject {
     /// Settings' "Test connection".
     func checkConnection() async -> Check {
         guard GitHubClient.parseRepo(repo) != nil else { return Check(ok: false, inbox: false, message: SaluError.badRepo.localizedDescription) }
-        guard !token.isEmpty else { return Check(ok: false, inbox: false, message: "Add a GitHub token.") }
+        guard !token.trimmed.isEmpty else { return Check(ok: false, inbox: false, message: "Add a GitHub token.") }
         guard let c = client else {
             return Check(ok: false, inbox: false, message: signingKey.trimmed.isEmpty
                 ? "Add the signing key: run `salu remote key` on the box and paste what it prints."

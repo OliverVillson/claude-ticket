@@ -8,9 +8,12 @@ enum SaluError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .http(401, _): return "GitHub refused the token. Check it in Settings."
+        case .http(403, let msg) where msg.localizedCaseInsensitiveContains("rate limit"),
+             .http(429, let msg) where msg.localizedCaseInsensitiveContains("rate limit"):
+            return "GitHub's rate limit is used up for now. It resets within the hour."
         case .http(403, _): return "The token can't reach this repo. It needs Contents read and write on it."
+        case .http(404, let msg) where msg.localizedCaseInsensitiveContains("branch"): return Self.noInbox
         case .http(404, _): return "GitHub can't find that repo. Check owner/name, and that the token covers it."
-        case .http(409, _): return Self.noInbox
         case .http(422, let msg) where msg.localizedCaseInsensitiveContains("branch"): return Self.noInbox
         case .http(let code, let msg): return "GitHub said \(code): \(msg)"
         case .notConfigured: return "Add your repository, token and signing key in Settings."
@@ -21,7 +24,8 @@ enum SaluError: LocalizedError {
 }
 
 /// Talks to the project's git remote through the GitHub contents API. No salu server involved.
-struct GitHubClient {
+/// Only constants inside, so it is safe to use from several tasks at once.
+struct GitHubClient: @unchecked Sendable {
     let owner: String
     let repo: String
     let token: String
@@ -61,8 +65,24 @@ struct GitHubClient {
         return data
     }
 
-    private struct Entry: Decodable { let name: String; let path: String; let type: String; let size: Int }
+    private struct Entry: Decodable, Sendable { let name: String; let path: String; let type: String; let size: Int }
     private struct FileBody: Decodable { let content: String }
+
+    /// One message file, read: a message, or not one the phone can use (unsigned, bad, unreadable).
+    private enum Fetched: Sendable {
+        case message(SaluMessage)
+        case bad
+    }
+
+    private func fetch(_ e: Entry) async throws -> Fetched {
+        let path = e.path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""  // a name from the remote: keep ? and # out of the URL
+        let data = try await request("contents/\(path)?ref=\(Self.branch)")  // network errors still fail the refresh
+        guard let f = try? JSONDecoder().decode(FileBody.self, from: data) else { return .bad }  // a submodule lists as a file too
+        let raw = Data(base64Encoded: f.content.replacingOccurrences(of: "\n", with: "")) ?? Data()
+        guard raw.count <= Self.maxFileBytes, Signing.verify(raw, key: key),
+              let m = try? JSONDecoder().decode(SaluMessage.self, from: raw), m.v == 1 else { return .bad }
+        return .message(m)
+    }
 
     /// Newest first. Files are write-once, so `known` ids never need fetching again, and `rejected` ones
     /// (unsigned or badly signed while a key is set) are not fetched again either; the second value
@@ -72,64 +92,70 @@ struct GitHubClient {
         do {
             listing = try JSONDecoder().decode([Entry].self, from: try await request("contents/salu-inbox/messages?ref=\(Self.branch)"))
         } catch SaluError.http(404, _) {
+            _ = try await request("")  // a wrong repo or a token that doesn't cover it is a 404 too: say so
             return ([], rejected)  // the box has not sent anything yet
         }
         var out: [SaluMessage] = []
         var bad = rejected
         var seen = Set<String>()  // a file's id comes from its content: never list one twice
+        var todo: [Entry] = []
         // like the CLI: only regular files, never symlinks, nothing over 64 KB
         for e in listing where e.name.hasSuffix(".json") && e.type == "file" && e.size <= Self.maxFileBytes {
             let id = String(e.name.dropLast(5))
             if let m = known[id] {
                 if seen.insert(m.id).inserted { out.append(m) }
-                continue
+            } else if !bad.contains(id) {
+                todo.append(e)
             }
-            if bad.contains(id) { continue }
-            let path = e.path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""  // a name from the remote: keep ? and # out of the URL
-            let data = try await request("contents/\(path)?ref=\(Self.branch)")  // network errors still fail the refresh
-            guard let f = try? JSONDecoder().decode(FileBody.self, from: data) else {
-                bad.insert(id)  // not a readable file (a submodule lists as one too)
-                continue
+        }
+        // New files, 8 at a time: a first sync with many messages takes seconds, not a minute.
+        var fetched: [(id: String, result: Fetched)] = []
+        var start = 0
+        while start < todo.count {
+            let batch = Array(todo[start..<min(start + 8, todo.count)])
+            start += batch.count
+            try await withThrowingTaskGroup(of: (String, Fetched).self, returning: Void.self) { group in
+                for e in batch {
+                    group.addTask { (String(e.name.dropLast(5)), try await self.fetch(e)) }
+                }
+                for try await r in group { fetched.append((id: r.0, result: r.1)) }
             }
-            let raw = Data(base64Encoded: f.content.replacingOccurrences(of: "\n", with: "")) ?? Data()
-            guard raw.count <= Self.maxFileBytes, Signing.verify(raw, key: key) else {
-                bad.insert(id)
-                continue
+        }
+        for f in fetched {
+            switch f.result {
+            case .message(let m): if seen.insert(m.id).inserted { out.append(m) }
+            case .bad: bad.insert(f.id)  // not fetched again
             }
-            if let m = try? JSONDecoder().decode(SaluMessage.self, from: raw), m.v == 1, seen.insert(m.id).inserted { out.append(m) }
         }
         bad.formIntersection(listing.map { String($0.name.dropLast(5)) })  // forget files the box removed
         return (out.sorted { $0.id > $1.id }, bad)
     }
 
+    /// Writes a new file on salu/inbox. GitHub answers 409 when the box pushed at the same moment:
+    /// try again, the file is new either way.
+    private func put(_ path: String, message: String, json: Data) async throws {
+        let payload: [String: Any] = ["message": message, "content": json.base64EncodedString(), "branch": Self.branch]
+        let body = try JSONSerialization.data(withJSONObject: payload)
+        for attempt in 1...3 {
+            do {
+                _ = try await request(path, method: "PUT", body: body)
+                return
+            } catch SaluError.http(409, _) where attempt < 3 {
+                try await Task.sleep(for: .milliseconds(700 * attempt))
+            }
+        }
+    }
+
     func send(_ t: SaluTicket) async throws {
-        let json = try Signing.encode(t, key: key)
-        let payload: [String: Any] = [
-            "message": "salu ticket \(t.id)",
-            "content": json.base64EncodedString(),
-            "branch": Self.branch,
-        ]
-        _ = try await request("contents/salu-inbox/tickets/\(t.id).json", method: "PUT", body: try JSONSerialization.data(withJSONObject: payload))
+        try await put("contents/salu-inbox/tickets/\(t.id).json", message: "salu ticket \(t.id)", json: try Signing.encode(t, key: key))
     }
 
     func send(_ r: SaluReply) async throws {
-        let json = try Signing.encode(r, key: key)
-        let payload: [String: Any] = [
-            "message": "salu reply \(r.id)",
-            "content": json.base64EncodedString(),
-            "branch": Self.branch,
-        ]
-        _ = try await request("contents/salu-inbox/replies/\(r.id).json", method: "PUT", body: try JSONSerialization.data(withJSONObject: payload))
+        try await put("contents/salu-inbox/replies/\(r.id).json", message: "salu reply \(r.id)", json: try Signing.encode(r, key: key))
     }
 
     func send(_ a: SaluAction) async throws {
-        let json = try Signing.encode(a, key: key)
-        let payload: [String: Any] = [
-            "message": "salu \(a.action) \(a.id)",
-            "content": json.base64EncodedString(),
-            "branch": Self.branch,
-        ]
-        _ = try await request("contents/salu-inbox/actions/\(a.id).json", method: "PUT", body: try JSONSerialization.data(withJSONObject: payload))
+        try await put("contents/salu-inbox/actions/\(a.id).json", message: "salu \(a.action) \(a.id)", json: try Signing.encode(a, key: key))
     }
 
     /// Settings' connection test. Throws when the token can't see the repo; returns whether the box
