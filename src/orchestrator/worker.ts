@@ -19,6 +19,7 @@ import { CLAUDE_MISSING, EnvironmentError, claudeExecutableOption, environmentPr
 import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../core/tags.ts';
 import { checkDisk, containerReady, containerRequired, containerSpawner, engine, requireKernelAuth, sweepStaleContainers, WORKDIR } from '../core/container.ts';
 import { startEgress } from '../core/egress.ts';
+import { kernelAuthMode, startApiProxy } from '../core/apiproxy.ts';
 import { allowedDomains, auditKernel, cleanScrubStubs, confinementFor, kernelOptions, prepareKernel, sandboxSupport, scrubSecrets } from '../core/kernel.ts';
 import { DEFAULT_TOOLS, denialsFrom, toolsToSdk } from '../core/tools.ts';
 import { memoryPrompt } from '../memory/prompt.ts';
@@ -242,7 +243,12 @@ let egressStop: Promise<() => void> | null = null;
 function ensureEgressProxy(): Promise<() => void> {
   const bin = engine();
   if (bin && !egressStop) sweepStaleContainers(bin); // first container ticket of this process: nothing here uses them yet
-  egressStop ??= startEgress({ allowedDomains: allowedDomains(), log: (l) => process.env.SALU_DEBUG && console.error(`salu egress: ${l}`) });
+  const log = (l: string) => process.env.SALU_DEBUG && console.error(`salu egress: ${l}`);
+  egressStop ??= (async () => {
+    const stops = [await startEgress({ allowedDomains: allowedDomains(), log })];
+    if (kernelAuthMode() === 'socket') stops.push(await startApiProxy({ log })); // the login stays on this side
+    return () => stops.forEach((f) => f());
+  })();
   return egressStop;
 }
 
