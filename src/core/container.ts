@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { accessSync, appendFileSync, chmodSync, constants, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir, totalmem } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { SpawnedProcess, SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
 import { CliError } from './errors.ts';
 import { egressSocketPath } from './egress.ts';
@@ -19,6 +19,9 @@ import { ticketHome } from './paths.ts';
 export const KERNEL_IMAGE = process.env.SALU_KERNEL_IMAGE || 'localhost/salu-kernel:1';
 export const WORKDIR = '/work';
 const EGRESS_IN = '/run/salu/egress.sock';
+const EGRESS_DIR_IN = '/run/salu';
+/** Bumped when what a container mounts changes, so containers made the old way are recreated. */
+const MOUNTS_VERSION = '2';
 
 export const containerOn = (env: NodeJS.ProcessEnv = process.env) => !['off', '0', 'no', 'false'].includes((env.SALU_CONTAINER ?? '').toLowerCase());
 
@@ -68,9 +71,11 @@ export function createArgs(o: CreateOpts): string[] {
     '--ulimit', 'nofile=4096:8192', '--shm-size', '256m',
     ...(o.disk ? ['--storage-opt', `size=${o.disk}`] : []),
     '--hostname', 'salu-kernel', '--workdir', WORKDIR,
-    '--label', 'salu.kernel=1', '--label', `salu.project=${o.project}`,
+    '--label', 'salu.kernel=1', '--label', `salu.project=${o.project}`, '--label', `salu.mounts=${MOUNTS_VERSION}`,
     '-v', `${o.dir}:${WORKDIR}:rw`,
-    '-v', `${o.socket ?? egressSocketPath()}:${EGRESS_IN}:rw`,
+    // The socket's folder, not the socket file: a file mount keeps the inode it had at create time, and the filter
+    // makes a new socket (new inode) every time it starts, which would leave a running container talking to a dead one.
+    '-v', `${dirname(o.socket ?? egressSocketPath())}:${EGRESS_DIR_IN}:rw`,
     ...Object.entries(env).flatMap(([k, v]) => ['--env', `${k}=${v}`]),
     o.image ?? KERNEL_IMAGE,
   ];
@@ -151,10 +156,19 @@ export function ensureContainer(project: string, dir: string, bin = engine(), on
   const t0 = performance.now();
   if (!bin) throw new CliError('Podman was not found. Install the container runtime: sudo scripts/install-kernel-runtime.sh (Linux) or brew install podman (Mac), then salu kernel setup.');
   const name = containerName(project);
-  let state = podman(bin, ['inspect', '--format', '{{.State.Status}}', name]);
-  for (let i = 0; i < 20 && (state.stdout ?? '').trim() === 'stopping'; i++) {
+  const inspect = () => {
+    const r = podman(bin, ['inspect', '--format', '{{.State.Status}} {{index .Config.Labels "salu.mounts"}}', name]);
+    const [status = '', mounts = ''] = (r.stdout ?? '').trim().split(/\s+/);
+    return { status: r.status, text: status, mounts };
+  };
+  let state = inspect();
+  for (let i = 0; i < 20 && state.text === 'stopping'; i++) {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500); // an idle stop is finishing; start only after it
-    state = podman(bin, ['inspect', '--format', '{{.State.Status}}', name]);
+    state = inspect();
+  }
+  if (state.status === 0 && state.mounts !== MOUNTS_VERSION) {
+    podman(bin, ['rm', '-f', name]); // made before the egress socket folder was mounted: recreate it
+    state = { status: 1, text: '', mounts: '' };
   }
   const created = state.status !== 0;
   if (state.status !== 0) {
@@ -167,7 +181,7 @@ export function ensureContainer(project: string, dir: string, bin = engine(), on
     if (c.status !== 0 && /storage-opt|quota|size/i.test(c.stderr + c.stdout)) c = podman(bin, createArgs({ name, project, dir, runtime: rt.name, disk: null }));
     if (c.status !== 0) throw new CliError(`could not create the kernel container: ${(c.stderr || c.stdout).trim().split('\n').pop()}`);
   }
-  if ((state.stdout ?? '').trim() !== 'running') {
+  if (state.text !== 'running') {
     const s = podman(bin, ['start', name]);
     if (s.status !== 0) throw new CliError(`could not start the kernel container: ${(s.stderr || s.stdout).trim().split('\n').pop()}`);
     onStart?.(recordStart({ project, ms: Math.round(performance.now() - t0), kind: created ? 'created' : 'started' }));

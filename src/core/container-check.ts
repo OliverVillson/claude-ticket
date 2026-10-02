@@ -24,7 +24,7 @@ export const EGRESS_TARGETS = [
 export const NON_WEB_TARGETS = ['1.1.1.1:22', '1.1.1.1:25', '1.1.1.1:3306', '1.1.1.1:5432', '1.1.1.1:8080', '1.1.1.1:6379', '1.1.1.1:53'];
 
 /** Mount points a kernel container may have; the host contributes only /work and the egress socket directory. */
-const MOUNT_OK = /^(\/|\/proc(\/.*)?|\/sys(\/.*)?|\/dev(\/.*)?|\/etc\/(hosts|hostname|resolv\.conf)|\/run\/\.containerenv|\/run\/secrets|\/run\/salu\/egress\.sock|\/work)$/;
+const MOUNT_OK = /^(\/|\/proc(\/.*)?|\/sys(\/.*)?|\/dev(\/.*)?|\/etc\/(hosts|hostname|resolv\.conf)|\/run\/\.containerenv|\/run\/secrets|\/run\/salu(\/egress\.sock)?|\/work)$/;
 
 export interface ContainerFacts {
   /** HTTP status the proxy gave for each target (0 = no answer) */

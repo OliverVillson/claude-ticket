@@ -13,7 +13,7 @@ import { ticketHome } from './paths.ts';
  */
 
 export function egressSocketPath(): string {
-  return process.env.SALU_EGRESS_SOCKET || join(ticketHome(), 'run', 'egress.sock');
+  return process.env.SALU_EGRESS_SOCKET || join(ticketHome(), 'run', 'egress', 'egress.sock');
 }
 
 const v4 = (ip: string) => ip.split('.').map(Number);
