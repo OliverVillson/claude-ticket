@@ -287,7 +287,7 @@ final class Store: ObservableObject {
         guard !token.trimmed.isEmpty else { return Check(ok: false, inbox: false, message: "Add a GitHub token.") }
         guard let c = client else {
             return Check(ok: false, inbox: false, message: signingKey.trimmed.isEmpty
-                ? "Add the signing key: run `salu remote key` on the box and paste what it prints."
+                ? "Add the signing key: run `salu remote key` on your Mac and paste what it prints."
                 : "That signing key is too short. Copy the whole line `salu remote key` prints.")
         }
         do {

@@ -57,7 +57,7 @@ struct SettingsView: View {
                 .listRowBackground(Salu.surface)
 
                 Section {
-                    SecureField("", text: $keyDraft, prompt: Text("salu remote key, on the box").foregroundStyle(Salu.chrome))
+                    SecureField("", text: $keyDraft, prompt: Text("salu remote key, on your Mac").foregroundStyle(Salu.chrome))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .submitLabel(.done)
@@ -82,7 +82,7 @@ struct SettingsView: View {
                 } header: {
                     label("signing key")
                 } footer: {
-                    note("Run `salu remote key` on the box and paste what it prints (`salu remote add <project> --box` showed it the first time). The phone signs every ticket and reply with it and ignores messages that aren't signed with it. After `salu remote key --new`, paste the new key here; messages signed with the old one are hidden. It stays in the iOS Keychain, on this phone only.")
+                    note("Run `salu remote key | pbcopy` on your Mac (or `salu remote key` on the box) and paste it here. The phone signs every ticket and reply with it and ignores messages that aren't signed with it. After `salu remote key --new`, paste the new key here; messages signed with the old one are hidden. It stays in the iOS Keychain, on this phone only.")
                 }
                 .listRowBackground(Salu.surface)
 
@@ -117,7 +117,7 @@ struct SettingsView: View {
                         }
                     }
                 } footer: {
-                    note("The app checks the inbox every 30 seconds while it is open. Pull down on a list to check now.")
+                    note("The app checks the inbox every 5 seconds while it waits on the box, else every 30 seconds while it is open. Pull down on a list to check now.")
                 }
                 .listRowBackground(Salu.surface)
 
