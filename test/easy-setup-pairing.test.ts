@@ -46,6 +46,7 @@ const run = (line: string, stdin?: string) => {
 };
 const exec: Exec = {
   async capture(cmd, o) {
+    if (cmd[0] === 'ssh-keygen' && cmd[1] === '-F') return ok('# the box is a local shell here: its host key is "known"');
     if (cmd[0] === 'ssh') return run(cmd.at(-1)!, o?.stdin);
     if (cmd[0] === 'gh') {
       if (cmd[1] === '--version') return ok('gh 2');
@@ -100,7 +101,7 @@ afterAll(() => {
 describe.skipIf(!hasKeygen)('pairing, with the real Mac code and the real box commands', () => {
   test('salu box add pairs; ping, status and login.set then work', async () => {
     const said: string[] = [];
-    const d = { exec, control: controlApi, say: (l: string) => said.push(l), askSecret: async () => TOKEN };
+    const d = { exec, control: controlApi, say: (l: string) => said.push(l), askSecret: async () => TOKEN, confirm: async () => true };
     process.env.SALU_BOX_INSTALL = 'true'; // salu is already "installed"
     const cfg = await addBox(d as any, { host: 'oliver@salubox.local', tokenFile: undefined }, async () => TOKEN);
     expect(cfg.paired).toBe(true);
@@ -130,5 +131,14 @@ describe.skipIf(!hasKeygen)('pairing, with the real Mac code and the real box co
   // is restarted every 5 s.
   test('salu control watch stays running by itself', () => {
     expect(readFileSync(join(root, 'watch.log'), 'utf8')).not.toContain('watch exited');
+  });
+
+  // Found on the real box: the installer's closing JSON line carried boxKey (the key that signs replies) into the terminal and the install log.
+  test('the installer\'s box init line (--no-secret) does not print the reply key', () => {
+    const r = spawnSync('sh', ['-c', 'salu box init --json --no-secret'], { cwd: boxHome, env: { ...process.env, ...boxEnv }, encoding: 'utf8' });
+    expect(r.status).toBe(0);
+    const j = JSON.parse(r.stdout.trim().split('\n').pop()!);
+    expect(j.boxKey).toBeUndefined();
+    expect(r.stdout).not.toContain(readFileSync(join(root, 'boxdir', 'box.key'), 'utf8').trim());
   });
 });
