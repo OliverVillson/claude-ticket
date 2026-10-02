@@ -5,7 +5,7 @@ export interface Parsed {
 
 const BOOLEAN_FLAGS = new Set([
   'plain', 'yes', 'detach', 'follow', 'json', 'projects', 'help', 'version', 'all', 'default', 'raw', 'force', 'no-color', 'quiet', 'check', 'queue', 'save', 'backlog', 'now', 'refresh', 'sandbox', 'no-sandbox', 'git', 'dry-run',
-  'no-queue', 'purge', 'no-sync', 'box', 'watch', 'no-harden', 'new', 'kernel', 'no-git', 'no-push', 'no-inbox',
+  'no-queue', 'purge', 'no-sync', 'box', 'watch', 'no-harden', 'new', 'kernel', 'no-git', 'no-push', 'no-inbox', 'quick',
 ]);
 const SHORT: Record<string, string> = { y: 'yes', f: 'follow', h: 'help', v: 'version', p: 'project', n: 'limit', c: 'concurrency', a: 'all', q: 'quiet' };
 
@@ -45,7 +45,7 @@ export function parseArgs(argv: string[]): Parsed {
     }
     if (value === undefined) {
       const next = argv[i + 1];
-      if (next !== undefined && (!next.startsWith('-') || /^-\d/.test(next))) {
+      if (next !== undefined && (!next.startsWith('-') || next === '-' || /^-\d/.test(next))) {
         value = next;
         i++;
       } else {
