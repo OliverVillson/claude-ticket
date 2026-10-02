@@ -226,3 +226,42 @@ describe('cli', () => {
     expect(out.join('\n')).toContain('no box yet');
   });
 });
+
+import { realControlApi } from '../src/boxmac/bridge.ts';
+import { gitTransport } from '../src/control/transport.ts';
+import { runWatcher, type Handlers } from '../src/control/watcher.ts';
+import { randomBytes } from 'node:crypto';
+import { generateSealKeys, openSealed } from '../src/control/seal.ts';
+
+describe('real control channel', () => {
+  test('a command goes through a git repo to a watcher and the answer comes back; secrets arrive sealed', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ctl-'));
+    const bare = join(root, 'c.git');
+    Bun.spawnSync(['git', 'init', '-q', '--bare', '-b', 'main', bare]);
+    const macKey = randomBytes(32), boxKey = randomBytes(32), seal = generateSealKeys();
+    const got: Record<string, string> = {};
+    const handlers = new Proxy({} as Handlers, {
+      get: (_t, verb: string) => async (a: any) => {
+        if (verb === 'project.create') got.deployKey = a.secret('deployKey').toString();
+        return { ok: true, message: `${verb} done`, data: { args: a.args } };
+      },
+    });
+    const w = runWatcher(gitTransport({ url: bare, dir: join(root, 'boxwc') }), handlers, { box: 'salubox', macKey, boxKey, sealKey: seal.privateKey, handledFile: join(root, 'handled') });
+    const cfg: BoxConfig = { box: 'salubox', host: 'o@h', repoHttps: bare, macKey: macKey.toString('base64'), boxKey: boxKey.toString('base64'), sealPub: seal.publicKey.toString('base64') };
+    const pump = setInterval(() => void w.tick(), 100);
+    try {
+      const r = await realControlApi.call(cfg, 'project.create', { name: 'web', repo: 'git@github.com:o/web.git' }, { secrets: { deployKey: Buffer.from('PRIVATE'), signingKey: Buffer.from('SIGN') }, timeoutMs: 20_000 });
+      expect(r).toMatchObject({ ok: true, message: 'project.create done' });
+      expect(got.deployKey).toBe('PRIVATE');
+    } finally {
+      clearInterval(pump);
+      w.stop();
+    }
+  }, 30_000);
+
+  test('an unpaired box gives a plain message instead of crashing', async () => {
+    const r = await realControlApi.call({ box: 'x', host: 'o@h' }, 'ping', {});
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('salu box add');
+  });
+});
