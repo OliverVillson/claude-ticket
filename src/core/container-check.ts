@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -71,6 +71,28 @@ export function judgeContainer(f: ContainerFacts): Probe[] {
 
 const sh = (bin: string, args: string[]) => spawnSync(bin, args, { encoding: 'utf8', timeout: 60000, cwd: podmanCwd() });
 
+/**
+ * Like `sh` but without blocking this process: the egress filter under test runs in THIS process, so a blocking
+ * spawnSync would stop it from answering the container's requests until the probe timed out.
+ */
+const shAsync = (bin: string, args: string[], timeoutMs = 60000) =>
+  new Promise<{ status: number | null; stdout: string; stderr: string }>((resolve) => {
+    const c = spawn(bin, args, { cwd: podmanCwd(), stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    c.stdout.on('data', (d) => (stdout += d));
+    c.stderr.on('data', (d) => (stderr += d));
+    const t = setTimeout(() => c.kill('SIGKILL'), timeoutMs);
+    c.on('close', (status) => {
+      clearTimeout(t);
+      resolve({ status, stdout, stderr });
+    });
+    c.on('error', () => {
+      clearTimeout(t);
+      resolve({ status: null, stdout, stderr });
+    });
+  });
+
 export async function runContainerCheck(o: { bin?: string | null } = {}): Promise<Probe[]> {
   const bin = o.bin ?? engine();
   if (!bin || !imageExists(bin)) return [{ name: 'container kernel proof', ok: false, detail: 'the container kernel is not set up here: run `salu kernel setup`' }];
@@ -89,21 +111,21 @@ export async function runContainerCheck(o: { bin?: string | null } = {}): Promis
     const s = sh(bin, ['start', name]);
     if (s.status !== 0) return [{ name: 'container kernel proof', ok: false, detail: `could not start the test container: ${(s.stderr || s.stdout).trim().split('\n').pop()}` }];
     await new Promise((r) => setTimeout(r, 1500)); // the proxy forwarder inside starts with the container
-    const inside = (cmd: string[]) => sh(bin, ['exec', '--workdir', WORKDIR, name, ...cmd]);
+    const inside = (cmd: string[]) => shAsync(bin, ['exec', '--workdir', WORKDIR, name, ...cmd]);
     const egress: Record<string, number> = {};
-    for (const t of EGRESS_TARGETS) egress[t] = Number(inside(['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '10', `http://${t}/`]).stdout.trim()) || 0;
+    for (const t of EGRESS_TARGETS) egress[t] = Number((await inside(['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '10', `http://${t}/`])).stdout.trim()) || 0;
     const ports: Record<string, number> = {};
-    for (const t of NON_WEB_TARGETS) ports[t] = Number(inside(['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '10', `http://${t}/`]).stdout.trim()) || 0;
-    const probe = (url: string) => Number(inside(['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '10', url]).stdout.trim()) || 0;
-    const control = probe('http://example.com/');
+    for (const t of NON_WEB_TARGETS) ports[t] = Number((await inside(['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '10', `http://${t}/`])).stdout.trim()) || 0;
+    const probe = async (url: string) => Number((await inside(['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '10', url])).stdout.trim()) || 0;
+    const control = await probe('http://example.com/');
     let diagnostics: string | undefined;
     if (control === 0) {
-      const d = inside(['sh', '-c', 'echo "proxy env: $HTTP_PROXY"; echo "interfaces: $(cat /proc/net/dev | tail -n +3 | cut -d: -f1 | tr -d " " | tr "\\n" ",")"; echo "init log: $(cat /tmp/salu-init.log 2>&1 | tail -3)"; ls -l /run/salu 2>&1; (ps -eo pid,args 2>&1 | grep -c "[s]ocat TCP-LISTEN") | sed "s/^/forwarders running: /"; curl -sv --max-time 5 http://example.com/ -o /dev/null 2>&1 | tail -4; echo | socat - UNIX-CONNECT:/run/salu/egress.sock 2>&1 | head -2']);
+      const d = await inside(['sh', '-c', 'echo "proxy env: $HTTP_PROXY"; echo "interfaces: $(cat /proc/net/dev | tail -n +3 | cut -d: -f1 | tr -d " " | tr "\\n" ",")"; echo "init log: $(cat /tmp/salu-init.log 2>&1 | tail -3)"; ls -l /run/salu 2>&1; (ps -eo pid,args 2>&1 | grep -c "[s]ocat TCP-LISTEN") | sed "s/^/forwarders running: /"; curl -sv --max-time 5 http://example.com/ -o /dev/null 2>&1 | tail -4; echo | socat - UNIX-CONNECT:/run/salu/egress.sock 2>&1 | head -2']);
       diagnostics = `Inside the container: ${(d.stdout + d.stderr).trim().replace(/\n+/g, ' | ')}`;
     }
-    const direct = inside(['curl', '-s', '-o', '/dev/null', '--noproxy', '*', '--max-time', '6', 'http://1.1.1.1/']);
-    const envText = inside(['sh', '-c', 'env; cat /proc/1/environ | tr "\\0" "\\n"']).stdout;
-    const mounts = inside(['cat', '/proc/self/mountinfo']).stdout.split('\n').map((l) => l.split(' ')[4] ?? '').filter(Boolean);
+    const direct = await inside(['curl', '-s', '-o', '/dev/null', '--noproxy', '*', '--max-time', '6', 'http://1.1.1.1/']);
+    const envText = (await inside(['sh', '-c', 'env; cat /proc/1/environ | tr "\\0" "\\n"'])).stdout;
+    const mounts = (await inside(['cat', '/proc/self/mountinfo'])).stdout.split('\n').map((l) => l.split(' ')[4] ?? '').filter(Boolean);
     const hostSecrets = Object.entries(process.env).filter(([k, v]) => CREDENTIAL_ENV.test(k) && v && v.length > 8).map(([, v]) => v!);
     return judgeContainer({ egress, ports, control, diagnostics, directExit: direct.status ?? 1, envText, hostSecrets, mountPoints: mounts });
   } finally {
