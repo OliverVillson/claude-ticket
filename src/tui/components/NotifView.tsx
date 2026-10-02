@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Text, useApp, useInput, useStdout, useWindowSize } from 'ink';
 import type { Database } from 'bun:sqlite';
-import { countUnread, fetchInBackground, listNotifs, markAllRead, markRead, type Notif } from '../../notif/index.ts';
+import { FETCH_MS, countUnread, fetchInBackground, listNotifs, markAllRead, markRead, type Notif } from '../../notif/index.ts';
 import { clampCursor } from '../layout.ts';
 import { displayWidth } from '../format.ts';
 import { MOUSE_OFF, MOUSE_ON, isMouseInput, parseMouse } from '../mouse.ts';
@@ -41,8 +41,6 @@ function load(db: Database, o: { projectId?: number; showRead?: boolean }): Noti
 
 const keyOf = (xs: Notif[]) => xs.map((n) => `${n.id}${n.read_at ? 'r' : 'u'}`).join(',');
 
-/** How often the window asks the git transport for new messages while it is open. */
-export const FETCH_MS = 30_000;
 
 /**
  * The notification window: unread messages from the project orchestrators, newest first.

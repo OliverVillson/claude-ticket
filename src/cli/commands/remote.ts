@@ -29,7 +29,7 @@ port. Tickets go to the box, results and messages come back, all through the pro
 
 On your computer:  salu remote add web                 tickets you add to "web" are sent to the box
 On the box:        salu remote add web <url> --box     this machine runs them and reports back
-                   salu remote sync --watch            keep exchanging (every 30s, --interval to change)
+                   salu remote sync --watch            keep exchanging (every 3s, --interval to change)
 
 Phone notifications (on the box): \`salu remote ntfy\` makes a private topic name; subscribe to it in the free ntfy
 app. From then on each message the box posts also goes to ntfy as one line (the title only, never the body).
@@ -67,6 +67,11 @@ const warnUnsigned = () => {
   const w = unsignedWarning();
   if (w) console.error(`${red('!')} ${w}`);
 };
+
+/** Is anything queued to go out on a project's remote? A cheap local check, so the watch loop can sync at once. */
+function hasOutgoing(db: ReturnType<typeof openDb>, only?: number[]): boolean {
+  return listRemotes(db).some((r) => (!only || only.includes(r.project_id)) && (pendingMessages(db, r.project_id).length > 0 || pendingOutTickets(db, r.project_id).length > 0 || pendingOutReplies(db, r.project_id).length > 0 || pendingOutActions(db, r.project_id).length > 0));
+}
 
 export async function remote(p: Parsed): Promise<number> {
   if (helpIf(p, HELP)) return 0;
@@ -208,7 +213,7 @@ export async function remote(p: Parsed): Promise<number> {
         return bad;
       };
       if (!flagBool(p, 'watch')) return once() ? 1 : 0;
-      const every = Math.max(5, flagNum(p, 'interval') ?? 30) * 1000;
+      const every = Math.max(1, flagNum(p, 'interval') ?? 3) * 1000;
       let stop = false;
       process.on('SIGINT', () => (stop = true));
       process.on('SIGTERM', () => (stop = true));
@@ -220,7 +225,9 @@ export async function remote(p: Parsed): Promise<number> {
           for (const r of results) console.log(`${new Date().toISOString()} ${r.project}: ${r.error ? 'error: ' + r.error : describe(r.summary!)}`);
         }
         quiet = !busy;
-        for (let waited = 0; waited < every && !stop; waited += 500) await Bun.sleep(500);
+        const failed = results.some((r) => r.error); // a failing push is retried on the normal beat, not twice a second
+        // Wait for the next round, but go early when something is waiting to leave (the orchestrator just posted).
+        for (let waited = 0; waited < every && !stop && !(waited > 0 && !failed && hasOutgoing(db, only)); waited += 500) await Bun.sleep(500);
       }
       return 0;
     }
