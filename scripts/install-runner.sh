@@ -7,6 +7,7 @@
 # Environment:
 #   SALU_RUNNER_USER   Linux user that runs the orchestrators and holds the Claude login (default: salu, created if missing)
 #   SALU_VERSION       release to install (default: latest), e.g. v0.3.0
+#   SALU_BINARY        install this already-built salu binary instead of a release (for running a branch before it is released)
 # Afterwards: run `claude setup-token` somewhere with a browser, then
 #   sudo salu runner add <project> --clone <git-url> --token-file <file>
 set -euo pipefail
@@ -37,7 +38,13 @@ id "$RUNNER_USER" >/dev/null 2>&1 || useradd --create-home --shell /bin/bash "$R
 ok "user $RUNNER_USER"
 
 # 3. salu itself, system-wide
-curl -fsSL "$BASE" | SALU_INSTALL_DIR=/usr/local/bin SALU_NO_MODIFY_PATH=1 bash -s -- ${SALU_VERSION:-}
+if [ -n "${SALU_BINARY:-}" ]; then
+  [ -x "$SALU_BINARY" ] || { echo "SALU_BINARY=$SALU_BINARY is not an executable file (build it with: bun run build)" >&2; exit 1; }
+  install -m 0755 "$SALU_BINARY" /usr/local/bin/salu
+  ok "salu from $SALU_BINARY ($(/usr/local/bin/salu --version 2>/dev/null || echo unknown))"
+else
+  curl -fsSL "$BASE" | SALU_INSTALL_DIR=/usr/local/bin SALU_NO_MODIFY_PATH=1 bash -s -- ${SALU_VERSION:-}
+fi
 
 # 4. Claude Code, as the runner user (lands in ~/.local/bin, which the systemd unit puts on PATH)
 if ! runuser -u "$RUNNER_USER" -- bash -lc 'command -v claude >/dev/null || [ -x "$HOME/.local/bin/claude" ]'; then

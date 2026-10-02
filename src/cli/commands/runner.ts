@@ -131,7 +131,7 @@ function setup(p: Parsed): number {
   const r = sh(p, [systemctl(), 'daemon-reload']);
   if (!r.ok) throw new CliError(`systemctl daemon-reload failed: ${r.out}`);
   console.log(`${green('✓')} installed ${unitPath()} ${dim(`(runs as ${user.name}, binary ${bin})`)}`);
-  console.log(dim(`next: log in once as ${user.name} (run \`claude\`, then /login), then \`sudo salu runner add <project> --clone <git-url>\``));
+  console.log(dim(`next: log in once as ${user.name} (run \`sudo -u ${user.name} -H ~${user.name}/.local/bin/claude\`, then /login), then \`sudo salu runner add <project> --clone <git-url>\``));
   return 0;
 }
 
