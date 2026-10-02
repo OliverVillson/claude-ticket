@@ -39,6 +39,7 @@ Every file is JSON with this envelope; `sig` is the HMAC-SHA256 hex of the canon
   "args": { ... }, "sealed": { "<field>": "<base64 sealed box>" }, "sig": "<hex>" }
 ```
 
+Everything on the box side is at-most-once: an id is recorded in `handled` before its handler runs.
 Replay: the box remembers handled ids (`/var/lib/salu/box/handled`) and ignores a repeat. Commands older than
 24 h are ignored. Unknown verb, bad signature or bad args: a reply with `ok:false`, never a crash.
 
@@ -74,17 +75,33 @@ export function signMessage(m: Omit<Msg,'sig'>, key: Buffer): Msg;
 export function verifyMessage(m: Msg, key: Buffer): boolean;
 // transport.ts   (git, with a local-bare-repo implementation for tests)
 export interface ControlTransport {
-  put(path: string, body: string): Promise<void>;            // write-once, retries on push race
+  put(path: string, body: string, o?: { overwrite?: boolean }): Promise<void>; // write-once (an existing path is left alone), retries on push race; overwrite is for heartbeat.json only
   list(dir: string): Promise<string[]>;
   get(path: string): Promise<string | undefined>;
 }
-export function gitTransport(opts: { url: string; sshKey?: string; dir: string }): ControlTransport;
+export function gitTransport(opts: { url: string; sshKey?: string; dir: string }): ControlTransport; // url may be a local bare repo
+export function memoryTransport(): ControlTransport & { files: Map<string, string> };             // no git, for unit tests
 // watcher.ts  (box side)
-export function runWatcher(t: ControlTransport, h: Handlers, o: { box: string; macKey: Buffer; boxKey: Buffer; sealKey: Buffer; intervalMs?: number }): { stop(): void };
+export function runWatcher(t: ControlTransport, h: Handlers, o: {
+  box: string; macKey: Buffer; boxKey: Buffer; sealKey: Buffer; intervalMs?: number;  // default 5000
+  handledFile?: string;                    // default /var/lib/salu/box/handled
+  heartbeat?: () => Record<string, unknown>; heartbeatMs?: number;   // heartbeat.json every 60 s when given
+  now?: () => number; onError?: (e: unknown) => void; onHandled?: (id: string, verb: string, ok: boolean) => void;
+}): { stop(): void; tick(): Promise<number> };       // tick() runs one poll now (tests, `--once`)
 export type Handlers = Record<Verb, (a: { args: any; secret(field: string): Buffer }) => Promise<{ ok: boolean; message: string; data?: unknown }>>;
 // client.ts   (Mac side)
+export interface BoxConfig { box: string; macKey: Buffer; boxKey: Buffer; sealPub: Buffer }  // what ~/.salu/boxes/<box>.json holds (keys base64 on disk, Buffers in memory)
 export function sendCommand(t: ControlTransport, cfg: BoxConfig, verb: Verb, args: object, secrets?: Record<string, Buffer>): Promise<string>; // returns the id
-export function waitReply(t: ControlTransport, cfg: BoxConfig, id: string, o?: { timeoutMs?: number }): Promise<Reply>;
+export function waitReply(t: ControlTransport, cfg: BoxConfig, id: string, o?: { timeoutMs?: number; pollMs?: number }): Promise<Reply>; // default 60 s; a reply that is not signed by the box key is ignored
+export function readHeartbeat(t: ControlTransport, cfg: BoxConfig): Promise<Heartbeat | undefined>; // undefined when missing or not signed by the box
+// keys.ts     (box side; dir = SALU_BOX_DIR, default /var/lib/salu/box)
+export function ensureBoxKeys(dir?: string): { sealPub: Buffer; boxKey: Buffer };   // seal.key, seal.pub, box.key; idempotent (used by `salu box init`)
+export function saveConnection(url: string, box: string, macKey: Buffer, dir?: string): void; // mac.key, control.json (used by `salu box connect`)
+export function loadBoxState(dir?: string): BoxState;
+// seal.ts also: generateSealKeys(): { publicKey: Buffer; privateKey: Buffer }
+// handlers.ts: `export const handlers: Handlers` is what `salu control watch` runs; ping is built in, the other
+// entries say "not known yet". Box handlers (piece 3) replace entries there. `heartbeatData()` is the heartbeat body.
+// service.ts: controlUnit() renders salu-control.service (ExecStart=salu control watch); `salu control unit` prints it.
 ```
 
 Handlers for the verbs live in `src/box/handlers/*.ts` (piece 3). The Mac commands live in
