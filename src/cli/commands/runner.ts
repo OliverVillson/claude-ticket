@@ -361,12 +361,16 @@ function doctor(): number {
   return 1;
 }
 
+/** Flags that take a value. One left empty (a long line cut by a terminal, a forgotten argument) is an error, never a silent default. */
+const VALUE_FLAGS = ['user', 'bin', 'auth', 'api-key-file', 'token-file', 'clone', 'path', 'concurrency', 'remote', 'lines'];
+
 export async function runner(p: Parsed): Promise<number> {
   const sub = p.positional[0];
   if (!sub || sub === 'help' || flagBool(p, 'help')) {
     console.log(HELP);
     return 0;
   }
+  for (const f of VALUE_FLAGS) if (p.flags[f] === '') throw new CliError(`--${f} needs a value (nothing was done)`);
   switch (sub) {
     case 'setup': return setup(p);
     case 'add': return add(p);
