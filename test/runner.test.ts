@@ -127,6 +127,17 @@ describe('salu runner (fake systemctl)', () => {
     return { d, env, run, calls: () => (existsSync(calls) ? readFileSync(calls, 'utf8') : '') };
   }
 
+  test('a value flag left empty stops everything before anything is made', async () => {
+    const b = box();
+    for (const flag of ['--token-file', '--clone', '--api-key-file', '--remote', '--concurrency']) {
+      const r = await b.run('add', 'web', '--no-sandbox', flag);
+      expect(r.code).not.toBe(0);
+      expect(r.err).toContain(`${flag} needs a value`);
+    }
+    expect(existsSync(join(b.d, 'var', 'web'))).toBe(false); // nothing was cloned or created
+    expect(existsSync(join(b.d, 'units'))).toBe(false);
+  });
+
   test('add registers the project in its own home, writes a private env file and enables the service', async () => {
     const b = box();
     const r = await b.run('add', 'web', '--no-sandbox');
