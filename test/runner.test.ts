@@ -7,7 +7,7 @@ import { boxProblems, renderEnvFile, renderSyncUnit, renderUnit, requireRunnerNa
 const ENTRY = join(import.meta.dir, '..', 'src', 'index.ts');
 
 describe('runner files', () => {
-  const unit = renderUnit({ bin: '/usr/local/bin/salu', user: 'salu', home: '/home/salu', root: '/var/lib/salu', etc: '/etc/salu' });
+  const unit = renderUnit({ bin: '/usr/local/bin/salu', user: 'salu', home: '/home/salu', root: '/var/lib/salu', etc: '/etc/salu', uid: 1001 });
 
   test('the unit is one orchestrator per project instance, restarts, starts on boot and never queues the backlog', () => {
     expect(unit).toContain('ExecStart=/usr/local/bin/salu run --plain --no-queue %i');
@@ -30,7 +30,7 @@ describe('runner files', () => {
   });
 
   describe('unit hardening', () => {
-    const o = { bin: '/usr/local/bin/salu', user: 'salu', home: '/home/salu', root: '/var/lib/salu', etc: '/etc/salu' };
+    const o = { bin: '/usr/local/bin/salu', user: 'salu', home: '/home/salu', root: '/var/lib/salu', etc: '/etc/salu', uid: 1001 };
     const sync = renderSyncUnit(o);
 
     test('both units confine the service to its own project folder and an empty home', () => {
@@ -40,28 +40,27 @@ describe('runner files', () => {
       }
     });
 
-    test('the orchestrator unit lets rootless Podman work and gives it the kernel login, nothing more', () => {
-      expect(unit).not.toMatch(/^NoNewPrivileges=yes/m);
+    test('the orchestrator unit that runs containers has no file-system confinement and the smallest capability set', () => {
+      for (const bad of ['NoNewPrivileges', 'PrivateTmp', 'ProtectHome', 'ProtectSystem', 'TemporaryFileSystem', 'BindPaths', 'BindReadOnlyPaths', 'ReadWritePaths', 'ProtectControlGroups', 'ProtectKernelModules']) expect(unit).not.toContain(bad); // one shared mount namespace for the user's podmans
       expect(unit).toContain('CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_DAC_OVERRIDE CAP_SYS_ADMIN\n');
       expect(unit).toMatch(/^AmbientCapabilities=$/m);
-      expect(unit).toContain('Environment=XDG_RUNTIME_DIR=/run/user/%U');
+      expect(unit).toContain('Environment=XDG_RUNTIME_DIR=/run/user/1001\n'); // the user's own id, not systemd's %U
       expect(unit).toContain('Environment=SALU_KERNEL_TOKEN_FILE=/var/lib/salu/kernel-token');
-      expect(unit).toContain('/home/salu/.local/share/containers');
-      expect(unit).toContain('BindReadOnlyPaths=-/home/salu/.local/bin -/home/salu/.local/share/claude -/var/lib/salu/kernel-token');
-      expect(unit).not.toContain('.ssh');
+      expect(() => renderUnit({ ...o, uid: undefined })).toThrow();
       expect(sync).toContain('NoNewPrivileges=yes'); // the sync unit never runs containers
     });
 
     test('least privilege: the orchestrator gets the Claude login but no ssh keys, sync the reverse', () => {
-      expect(unit).toContain('/home/salu/.claude');
-      expect(unit).not.toContain('.ssh');
+      const tight = renderUnit({ ...o, kernel: false });
+      expect(tight).toContain('/home/salu/.claude');
+      expect(tight).not.toContain('.ssh');
       expect(sync).toContain('/home/salu/.ssh');
       expect(sync).not.toContain('.claude');
     });
 
     test('nothing that breaks bubblewrap or Bun is set', () => {
       for (const u of [unit, sync]) for (const bad of ['RestrictNamespaces', 'SystemCallFilter', 'ProtectKernelTunables', 'ProtectProc', 'ProcSubset', 'PrivateDevices', 'MemoryDenyWriteExecute']) expect(u).not.toContain(bad);
-      expect(unit).toContain('AF_NETLINK'); // bubblewrap sets up its network namespace over netlink
+      expect(renderUnit({ ...o, kernel: false })).toContain('AF_NETLINK'); // bubblewrap sets up its network namespace over netlink
     });
 
     test('--no-harden renders the plain units, and paths with spaces are refused', () => {

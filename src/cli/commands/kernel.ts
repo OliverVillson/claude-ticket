@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { runnerRoot } from '../../core/runner.ts';
 import { spawnSync } from 'node:child_process';
 import type { Parsed } from '../args.ts';
-import { flagStr } from '../args.ts';
+import { flagBool, flagStr } from '../args.ts';
 import { openDb } from '../../db/db.ts';
 import { resolveProject } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
@@ -95,9 +95,8 @@ export async function kernel(p: Parsed): Promise<number> {
     }
     case 'login': {
       requireHuman('kernel login');
-      const box = rest.includes('--box'); // the one login runner projects read (/var/lib/salu/kernel-token)
-      const args = rest.filter((a) => a !== '--box');
-      const token = (args[0] ?? (await readToken())).trim();
+      const box = flagBool(p, 'box'); // the one login runner projects read (/var/lib/salu/kernel-token); a boolean flag, so never in rest
+      const token = (rest[0] ?? (await readToken())).trim();
       if (!token) throw new CliError('no token given. Run `claude setup-token` and paste the result.');
       const file = box ? join(runnerRoot(), 'kernel-token') : tokenFile();
       try {

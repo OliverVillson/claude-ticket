@@ -58,6 +58,8 @@ export interface UnitOptions {
    * strictest settings, so the orchestrator unit gets the smallest set that works: see hardening().
    */
   kernel?: boolean;
+  /** the runner user's numeric id (systemd's %U is the manager's, not User='s) */
+  uid?: number;
 }
 
 /**
@@ -77,19 +79,37 @@ export interface UnitOptions {
 export function hardening(o: UnitOptions, kind: 'orchestrator' | 'sync'): string {
   if (o.harden === false) return '';
   for (const v of [o.home, o.root]) if (/\s/.test(v)) throw new CliError(`cannot harden a unit with whitespace in a path: ${v}`);
+  if (kind === 'orchestrator' && o.kernel !== false) {
+    // Rootless Podman keeps one pause process per user, and every later podman of that user joins its mount
+    // namespace. A unit with its own view of the file system (PrivateTmp, ProtectHome, ProtectSystem, binds) would
+    // hand that view to every podman the user runs afterwards, and take theirs: either order breaks one side
+    // (reproduced). So in kernel mode the unit has no file-system confinement at all. What confines agents is the
+    // gVisor container, not this unit; what is kept is everything that does not touch mounts. Podman also needs
+    // newuidmap (setuid root, so no NoNewPrivileges) and SETUID SETGID DAC_OVERRIDE SYS_ADMIN in the bounding set.
+    if (o.uid === undefined) throw new CliError(`the runner user's numeric id is needed for the kernel unit (XDG_RUNTIME_DIR)`);
+    return `
+# Orchestrator that runs tickets in containers (see hardening() in src/core/runner.ts): no file-system confinement,
+# because rootless Podman shares one mount namespace across everything this user runs.
+Environment=XDG_RUNTIME_DIR=/run/user/${o.uid}
+Environment=SALU_KERNEL_TOKEN_FILE=${o.root}/kernel-token
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_DAC_OVERRIDE CAP_SYS_ADMIN
+AmbientCapabilities=
+RemoveIPC=yes
+UMask=0077
+`;
+  }
   const h = o.home;
-  const kernel = kind === 'orchestrator' && o.kernel !== false;
-  // What rootless Podman needs (reproduced with emulated systemd): newuidmap is setuid root, so NoNewPrivileges must be
-  // off; it needs SETUID SETGID DAC_OVERRIDE SYS_ADMIN in the bounding set (nothing is ambient); its image store, state
-  // and runtime directory must be writable. The agents are not in this process: they run inside gVisor containers.
   const binds =
     kind === 'orchestrator'
-      ? { rw: [`${h}/.claude`, `${h}/.claude.json`, ...(kernel ? [`${h}/.local/share/containers`, `${h}/.local/state/salu`, '/run/user/%U'] : [])], ro: [`${h}/.local/bin`, `${h}/.local/share/claude`, ...(kernel ? [`${o.root}/kernel-token`] : [])] }
+      ? { rw: [`${h}/.claude`, `${h}/.claude.json`], ro: [`${h}/.local/bin`, `${h}/.local/share/claude`] }
       : { rw: [`${h}/.ssh`], ro: [`${h}/.gitconfig`, `${h}/.config/git`] };
   return `
 # Confinement of the service itself (see hardening() in src/core/runner.ts).
-${kernel ? '# NoNewPrivileges is off: rootless Podman starts containers through setuid newuidmap.' : 'NoNewPrivileges=yes'}
-${kernel ? `Environment=XDG_RUNTIME_DIR=/run/user/%U\nEnvironment=SALU_KERNEL_TOKEN_FILE=${o.root}/kernel-token\n` : ''}ProtectSystem=strict
+NoNewPrivileges=yes
+ProtectSystem=strict
 ProtectHome=tmpfs
 TemporaryFileSystem=${o.root}:ro
 BindPaths=${o.root}/%i ${binds.rw.map((x) => '-' + x).join(' ')}
@@ -102,8 +122,9 @@ ProtectClock=yes
 ProtectHostname=yes
 LockPersonality=yes
 RestrictRealtime=yes
-${kernel ? '' : 'RestrictSUIDSGID=yes\n'}RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
-CapabilityBoundingSet=${kernel ? 'CAP_SETUID CAP_SETGID CAP_DAC_OVERRIDE CAP_SYS_ADMIN' : ''}
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+CapabilityBoundingSet=
 AmbientCapabilities=
 RemoveIPC=yes
 UMask=0077

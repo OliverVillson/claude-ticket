@@ -64,12 +64,13 @@ function mustRoot(what: string): void {
 }
 
 /** The Linux user the orchestrators run as: --user, else the user who ran sudo, else the current user (or "salu" for root). */
-function runnerUser(p: Parsed): { name: string; home: string } {
+function runnerUser(p: Parsed): { name: string; home: string; uid: number } {
   const name = flagStr(p, 'user') ?? (process.env.SALU_RUNNER_USER || process.env.SUDO_USER) ?? (userInfo().username === 'root' ? 'salu' : userInfo().username);
   if (!/^[a-z_][a-z0-9_-]*$/.test(name)) throw new CliError(`"${name}" is not a valid user name`);
   const r = spawnSync('getent', ['passwd', name], { encoding: 'utf8' });
   const home = r.status === 0 ? r.stdout.split(':')[5] : '';
-  return { name, home: home || (name === 'root' ? '/root' : `/home/${name}`) };
+  const uid = r.status === 0 ? Number(r.stdout.split(':')[2]) : NaN;
+  return { name, home: home || (name === 'root' ? '/root' : `/home/${name}`), uid };
 }
 
 function unitPath(): string {
@@ -114,7 +115,9 @@ function setup(p: Parsed): number {
     if (!mk.ok) throw new CliError(`could not create the user ${user.name}: ${mk.out}`);
     console.log(`${green('✓')} created user ${user.name}`);
   }
-  const uo = { bin, user: user.name, home: user.home, root: runnerRoot(), etc: runnerEtc(), harden: !flagBool(p, 'no-harden') };
+  let uid = user.uid;
+  if (!Number.isInteger(uid)) uid = Number(spawnSync('id', ['-u', user.name], { encoding: 'utf8' }).stdout.trim()); // the user was just created
+  const uo = { bin, user: user.name, uid: Number.isInteger(uid) && uid >= 0 ? uid : dry(p) ? 1000 : undefined, home: user.home, root: runnerRoot(), etc: runnerEtc(), harden: !flagBool(p, 'no-harden') };
   const text = renderUnit(uo);
   if (dry(p)) console.log(text + '\n' + renderSyncUnit(uo));
   else {
@@ -122,6 +125,7 @@ function setup(p: Parsed): number {
     writeFileSync(unitPath(), text);
     writeFileSync(syncUnitPath(), renderSyncUnit(uo));
     mkdirSync(runnerRoot(), { recursive: true });
+    sh(p, ['chown', `${user.name}:`, runnerRoot()]); // `sudo -u <user> salu kernel login --box` writes its token here
     mkdirSync(runnerEtc(), { recursive: true, mode: 0o755 });
   }
   const r = sh(p, [systemctl(), 'daemon-reload']);
