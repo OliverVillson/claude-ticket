@@ -28,6 +28,8 @@ Usage   (salu ?  |  salu help  |  salu --help  shows this list; quote the ? in z
   salu push [project] [--branch B] [--to url] [--dry-run]   send what agents made in the kernel to the project's git remote
   salu export <folder> [project] [--git] [--force]           copy what agents made in the kernel to a folder
   salu remote add|list|remove|sync            run a project on an always-on box through its git remote (salu remote --help)
+  salu box add|status|update|login|list       set up and look after your always-on box (salu box --help)
+  salu new [name] [--on box] [--repo o/r]     a new project that runs on your box, in one step
   salu memory [list|show|add|edit|rm] ...    what the project's agents remember (kept in the repo, .salu/memory)
   salu files [list|get|add|rm] ...            files every ticket of a project can share (.salu/files)
   salu sync [project] [--no-git] [--no-push]  merge memory and shared files with the agents' sandbox copy and git
@@ -117,6 +119,10 @@ export async function dispatch(argv: string[]): Promise<number> {
       return (await import('./commands/sync.ts')).sync(sub);
     case 'remote':
       return (await import('./commands/remote.ts')).remote(sub);
+    case 'box':
+      return (await import('./commands/box.ts')).box(sub);
+    case 'new':
+      return (await import('./commands/new.ts')).newCmd(sub);
     case 'pause':
       return (await import('./commands/pause.ts')).pause(sub);
     case 'resume':
