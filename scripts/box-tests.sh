@@ -159,9 +159,13 @@ fi
 selected 1.2 && manual 1.2 "$(title_of 1.2) — reboot, wait two minutes, run: salu runner list (every project runner active)"
 if run_ok 1.4; then
   if have ss; then
-    open="$(ss -H -tlnp 2>/dev/null | awk '{print $4}' | grep -vE '^(127\.|\[::1\]|\[?::1\]?:|127\.0\.0\.53)' | sed -E 's/.*:([0-9]+)$/\1/' | sort -un | tr '\n' ' ')"
+    addrs="$(ss -H -tlnp 2>/dev/null | awk '{print $4}' | grep -vE '^(127\.|\[::1\]|\[?::1\]?:|127\.0\.0\.53)')"
+    # Tailscale's peer API listens on the box's tailnet address only: reachable from your own devices, not the LAN or the internet
+    TAILNET='^(100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9.]+|\[fd7a:115c:a1e0:[0-9a-f:]*\]):[0-9]+$'
+    tailnet="$(printf '%s\n' "$addrs" | grep -E "$TAILNET" | tr '\n' ' ')"
+    open="$(printf '%s\n' "$addrs" | grep -vE "$TAILNET" | grep . | sed -E 's/.*:([0-9]+)$/\1/' | sort -un | tr '\n' ' ')"
     extra="$(for p in $open; do [ "$p" = 22 ] || printf '%s ' "$p"; done)"
-    if [ -z "$extra" ]; then pass 1.4 "$(title_of 1.4)" "listening beyond loopback: ${open:-nothing}. Still check from another machine: nmap -Pn <box-ip>"
+    if [ -z "$extra" ]; then pass 1.4 "$(title_of 1.4)" "listening beyond loopback: ${open:-nothing}${tailnet:+; tailnet only (Tailscale): ${tailnet% }}. Still check from another machine: nmap -Pn <box-ip>"
     else fail 1.4 "$(title_of 1.4)" "also listening beyond loopback: $extra"$'\n'"$(ss -H -tlnp 2>/dev/null | head -n 8)"; fi
   else skip 1.4 "$(title_of 1.4)" "ss not found"; fi
 fi
