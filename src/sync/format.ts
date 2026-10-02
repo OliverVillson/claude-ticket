@@ -10,6 +10,7 @@
  *   salu-inbox/actions/<id>.json    client -> box   resolve or reopen a ticket
  *   salu-inbox/messages/<id>.json   box -> client   something the orchestrator wants you to know
  */
+import { userInfo } from 'node:os';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -46,6 +47,7 @@ export interface TicketFile {
   labels: string[];
   priority: number;
   queue: boolean; // true: run it as soon as the box can; false: save it in the backlog
+  by?: string; // who added it (co-working: several people send tickets to one project)
   at: number;
 }
 
@@ -133,6 +135,7 @@ export interface MessageFile {
   checklist?: ChecklistItem[]; // ticket.status: the worker's live checklist, replacing the last one
   decision?: Decision; // ticket.decision: a question with options; answer it with a reply file carrying `decision`
   outputs?: Output[]; // ticket.output: what the worker made (branch, PR, files, links)
+  by?: string; // ticket.accepted: who added the ticket (so teammates can show it as theirs)
   parent?: { ref?: string; name: string; id: number }; // ticket.spawned: `ticket` is a sub-thread a worker started; this is the thread that started it
 }
 
@@ -221,6 +224,23 @@ export function signatureOk(o: any, key = remoteKey()): boolean {
   return timingSafeEqual(want, Buffer.from(o.sig, 'hex'));
 }
 
+/** A person's name from the remote: short, printable, no control characters. Null when it is not usable. */
+export function personName(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const n = stripControl(v).replace(/\s+/g, ' ').trim().slice(0, 40);
+  return n || null;
+}
+
+/** The label that marks a ticket as someone's (`by-bob`). */
+export function byLabel(name: string): string {
+  return 'by-' + (name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30) || 'someone');
+}
+
+/** Who is adding tickets on this computer: SALU_USER, else the login name. */
+export function whoAmI(env: NodeJS.ProcessEnv = process.env): string {
+  return personName(env.SALU_USER) ?? personName(userInfo().username) ?? 'someone';
+}
+
 /** Validate untrusted JSON from the remote. Returns null for anything that does not fit. */
 export function parseTicketFile(text: string): TicketFile | null {
   if (text.length > MAX_FILE_BYTES) return null;
@@ -238,7 +258,8 @@ export function parseTicketFile(text: string): TicketFile | null {
   if (o.tags && typeof o.tags === 'object') for (const [k, v] of Object.entries(o.tags)) if (typeof v === 'string' && k.length <= 64 && v.length <= 2000) tags[stripControl(k)] = stripControl(v);
   const labels = Array.isArray(o.labels) ? o.labels.filter((l: unknown): l is string => typeof l === 'string' && l.length <= 64).slice(0, 50).map(stripControl) : [];
   const priority = Number.isInteger(o.priority) && o.priority >= 1 && o.priority <= 5 ? o.priority : 3;
-  return { v: 1, id: o.id, project: str(o.project, 200) ?? '', name: name.trim(), query, tags, labels, priority, queue: o.queue !== false, at: Number.isFinite(o.at) ? o.at : 0 };
+  const by = personName(o.by);
+  return { v: 1, id: o.id, project: str(o.project, 200) ?? '', name: name.trim(), query, tags, labels, priority, queue: o.queue !== false, ...(by ? { by } : {}), at: Number.isFinite(o.at) ? o.at : 0 };
 }
 
 export function parseReplyFile(text: string): ReplyFile | null {
@@ -318,6 +339,8 @@ export function parseMessageFile(text: string): MessageFile | null {
     m.ticket = { name: stripControl(o.ticket.name.slice(0, 200)), id: o.ticket.id };
     if (isId(o.ticket.ref)) m.ticket.ref = o.ticket.ref;
   }
+  const by = personName(o.by);
+  if (by) m.by = by;
   const branch = str(o.branch, 200);
   if (branch) m.branch = branch;
   const question = str(o.question, 20000);
