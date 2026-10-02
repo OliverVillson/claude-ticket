@@ -126,9 +126,9 @@ describe.skipIf(!hasKeygen)('pairing, with the real Mac code and the real box co
     expect(again.paired).toBe(true);
   });
 
-  // Found by this test: `salu control watch` exits (code 0) after each round instead of staying up, so under systemd it
-  // is restarted every 5 s. Remove `.failing` when src/control's watcher keeps the process alive.
-  test.failing('salu control watch stays running by itself', () => {
+  // Found by the first version of this test: the watcher used to exit after each round.
+  // is restarted every 5 s.
+  test('salu control watch stays running by itself', () => {
     expect(readFileSync(join(root, 'watch.log'), 'utf8')).not.toContain('watch exited');
   });
 });
