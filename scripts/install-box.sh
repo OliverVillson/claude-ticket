@@ -72,6 +72,10 @@ if [ "$PROFILE" = laptop ]; then
   [ -f /sys/class/power_supply/AC/online ] || [ -f /sys/class/power_supply/ACAD/online ] || note "no AC adapter info found"
 fi
 command -v ufw >/dev/null 2>&1 && ok "ufw installed" || note "ufw not installed (this installer adds it)"
+if command -v runsc >/dev/null 2>&1; then
+  grep -qs 'SALU_KERNEL_REQUIRE=1' /etc/systemd/system/salu-runner@.service.d/10-kernel.conf && ok "runner tickets require the container kernel" \
+    || bad "runner tickets could fall back to the weaker fence: SALU_KERNEL_REQUIRE=1 is not set on salu-runner@ (run this script again)"
+fi
 
 if [ "$CHECK" = 1 ]; then
   echo; [ "$PROBLEMS" = 0 ] && ok "ready" || echo "$PROBLEMS thing(s) to fix: run without --check to fix what can be fixed here"
@@ -153,8 +157,10 @@ if [ -n "$KERNEL_SH" ] && [ -f "$KERNEL_SH" ]; then
     ok "container runtime for the safe kernel"
     KERNEL_DONE=1
     # On a box every ticket must run in the container: a ticket that cannot get one fails instead of running in the weaker fence.
-    mkdir -p /etc/systemd/system/salu@.service.d
-    printf '[Service]\nEnvironment=SALU_KERNEL_REQUIRE=1\n' > /etc/systemd/system/salu@.service.d/10-kernel.conf
+    # on the runner's unit (salu-runner@, see src/core/runner.ts); earlier versions of this script wrote it to a unit that does not exist
+    rm -rf /etc/systemd/system/salu@.service.d
+    mkdir -p /etc/systemd/system/salu-runner@.service.d
+    printf '[Service]\nEnvironment=SALU_KERNEL_REQUIRE=1\n' > /etc/systemd/system/salu-runner@.service.d/10-kernel.conf
     systemctl daemon-reload
     ok "tickets on this box require the container kernel (SALU_KERNEL_REQUIRE=1; they fail rather than run in the fence)"
   else
