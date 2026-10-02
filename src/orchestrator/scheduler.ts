@@ -5,6 +5,8 @@
  * Each tick: write the heartbeat, reconcile running workers with the database, ask the usage hooks
  * whether dispatch is held, then claim tickets into free slots and start one worker per ticket.
  */
+import { totalmem } from 'node:os';
+import { boxAdmit, boxConcurrency, containerReady, releaseBoxSlot, takeBoxSlot } from '../core/container.ts';
 import type { Denial } from '../core/tools.ts';
 import type { Database } from 'bun:sqlite';
 import { statSync, watch, type FSWatcher } from 'node:fs';
@@ -131,15 +133,36 @@ export class Orchestrator {
     return [...this.active.values()].map((a) => ({ ticket: a.ticket, live: a.live, startedAt: a.startedAt, run: a.run }));
   }
 
-  /** The global concurrency cap as it stands now. */
-  get concurrency(): number {
+  /** A cap somebody set on purpose (--concurrency, `salu change`, SALU_CONCURRENCY), or null. */
+  private get explicitConcurrency(): number | null {
     if (this.opts.concurrency && this.opts.concurrency > 0) return this.opts.concurrency;
     const fromState = Number(getState(this.db, STATE.concurrency));
     if (Number.isInteger(fromState) && fromState > 0) return fromState;
     const fromEnv = Number(process.env.SALU_CONCURRENCY);
     if (Number.isInteger(fromEnv) && fromEnv > 0) return fromEnv;
-    return DEFAULT_CONCURRENCY;
+    return null;
   }
+
+  /**
+   * The cap this orchestrator applies to itself. Without an explicit setting, container tickets are also limited
+   * box-wide (see `boxFull`), because every project's orchestrator runs on the same machine.
+   */
+  get concurrency(): number {
+    const explicit = this.explicitConcurrency;
+    if (explicit != null) return explicit;
+    return containerReady() ? boxConcurrency(totalmem()) : DEFAULT_CONCURRENCY;
+  }
+
+  /** True when container tickets across all orchestrators leave no room for another (see `boxAdmit`). */
+  private boxFull(): boolean {
+    if (this.explicitConcurrency != null || !containerReady()) return false;
+    const a = boxAdmit();
+    if (a.ok) return false;
+    if (a.reason !== this.lastBoxWait) this.log('info', `waiting to start the next ticket: ${a.reason}`);
+    this.lastBoxWait = a.reason;
+    return true;
+  }
+  private lastBoxWait: string | null = null;
 
   get isStopping(): boolean {
     return this.stopping;
@@ -273,6 +296,7 @@ export class Orchestrator {
     const cap = this.concurrency;
     let guard = 0;
     while (this.active.size < cap && guard++ < 100) {
+      if (this.boxFull()) return;
       const projects = listProjects(db).filter((p) => !this.opts.projectIds || this.opts.projectIds.includes(p.id));
       if (projects.length === 0) return;
       const eligible = projects.filter((p) => p.concurrency == null || p.concurrency <= 0 || this.runningIn(p.id) < p.concurrency).map((p) => p.id);
@@ -307,6 +331,7 @@ export class Orchestrator {
     const entry: Active = { ticket: t, run, abort, startedAt, live, lastLiveWrite: 0, promise: Promise.resolve() };
     entry.watch = this.tokens.watch(t, [...this.active.values()].map((a) => a.watch).filter((w): w is RunWatch => !!w));
     this.active.set(t.id, entry);
+    if (containerReady()) takeBoxSlot(t.id);
     this.writeLive(entry, true);
     this.emit({ type: 'dispatch', ticket: t, runId: run.id, resumed });
 
@@ -358,6 +383,7 @@ export class Orchestrator {
     const db = this.db;
     const t = entry.ticket;
     this.active.delete(t.id);
+    releaseBoxSlot(t.id);
     clearWorkerInfo(db, t.id);
     const now = Date.now();
     if (result.outcome === 'done' || result.outcome === 'blocked') {
@@ -569,6 +595,7 @@ export class Orchestrator {
     // Anything still marked running after the grace period is parked so the next run resumes it.
     for (const [id, a] of [...this.active]) {
       this.active.delete(id);
+      releaseBoxSlot(id);
       clearWorkerInfo(this.db, id);
       const t = getTicketById(this.db, id);
       if (t && t.status === 'running') updateTicket(this.db, id, { status: 'todo', attempts: Math.max(0, t.attempts - 1), error: null });

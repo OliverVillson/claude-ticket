@@ -1,0 +1,157 @@
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { podmanCwd, CREDENTIAL_ENV, claudeAuthEnv, containerAuthEnv, createArgs, engine, imageExists, runtime, WORKDIR } from './container.ts';
+import { API_PLACEHOLDER, API_SOCKET_IN, kernelAuthMode, startApiProxy } from './apiproxy.ts';
+import { startEgress } from './egress.ts';
+import type { Probe } from './sandbox-check.ts';
+
+/**
+ * The container half of `salu doctor --sandbox`: no model involved. It starts a throwaway container the same way
+ * a ticket's is started and attacks the boundary from inside it: the private, loopback and cloud-metadata
+ * addresses (in the spellings that fooled the filter before), the network that should not exist, the login this
+ * machine runs on, and the list of what the host mounted in.
+ */
+
+/** Addresses the egress filter must refuse, through the proxy. */
+export const EGRESS_TARGETS = [
+  '169.254.169.254', // cloud metadata
+  '192.168.1.1', '10.0.0.1', '172.16.0.1', '127.0.0.1', // home network and this machine
+  '[::ffff:a9fe:a9fe]', '[0:0:0:0:0:ffff:a9fe:a9fe]', '[2002:a9fe:a9fe::1]', '[::ffff:10.0.0.1]', '[::1]', // other spellings
+];
+
+/** Public addresses on ports that are not web ports (ssh, mail, databases, alternates): the filter must refuse each. */
+export const NON_WEB_TARGETS = ['1.1.1.1:22', '1.1.1.1:25', '1.1.1.1:3306', '1.1.1.1:5432', '1.1.1.1:8080', '1.1.1.1:6379', '1.1.1.1:53'];
+
+/** Mount points a kernel container may have; the host contributes only /work and the egress socket directory. */
+const MOUNT_OK = /^(\/|\/proc(\/.*)?|\/sys(\/.*)?|\/dev(\/.*)?|\/etc\/(hosts|hostname|resolv\.conf)|\/run\/\.containerenv|\/run\/secrets|\/run\/salu(\/egress\.sock)?|\/work)$/;
+
+export interface ContainerFacts {
+  /** HTTP status the proxy gave for each target (0 = no answer) */
+  egress: Record<string, number>;
+  /** HTTP status the proxy gave for a public address on each non-web port (0 = no answer) */
+  ports: Record<string, number>;
+  /** HTTP status of a plain web request through the proxy to a public site (0 = no answer); omitted = not tried */
+  control?: number;
+  /** what the container shows about its proxy forwarder when nothing answers (processes, socket, a verbose curl) */
+  diagnostics?: string;
+  /** exit status of a request made around the proxy: must fail, the container has no network */
+  directExit: number;
+  /** everything the container can see of its environment */
+  envText: string;
+  hostSecrets: string[];
+  mountPoints: string[];
+  /** socket mode only: the kernel login must not be in the environment a ticket's Claude Code gets (placeholder only) */
+  authSocket?: { spawnEnvHasToken: boolean; placeholderOnly: boolean; apiStatus: number };
+}
+
+/** Decide the probes from the facts. Pure, so it is tested without Podman. */
+export function judgeContainer(f: ContainerFacts): Probe[] {
+  const open = Object.entries(f.egress).filter(([, code]) => code !== 403);
+  const portsOpen = Object.entries(f.ports).filter(([, code]) => code !== 403);
+  const leaked = f.hostSecrets.filter((v) => v && f.envText.includes(v));
+  const extra = f.mountPoints.filter((m) => !MOUNT_OK.test(m));
+  // Nothing answering at all means the in-container forwarder or the host proxy is unreachable: that fails closed,
+  // but it proves nothing about the filter and agents have no web access either, so say so instead of "not refused".
+  const dead = f.control === 0 && Object.values(f.egress).concat(Object.values(f.ports)).every((c) => c === 0);
+  if (dead) {
+    return [
+      { name: 'container: the egress proxy answers from inside the container', ok: false, detail: `no request through the proxy got an answer, not even to a public site: agents have no web access, and the filter could not be tested. ${f.diagnostics ?? ''}`.trim() },
+      { name: 'container: no network of its own', ok: f.directExit !== 0, detail: f.directExit !== 0 ? 'a request that skips the filter cannot connect' : 'the container reached the internet around the filter' },
+      { name: 'container: the login this machine runs on is not inside', ok: leaked.length === 0, detail: leaked.length ? 'a credential from this machine is in the container environment' : 'no host credential in the container environment' },
+      { name: 'container: only the kernel folder and the egress socket are mounted from the host', ok: extra.length === 0, detail: extra.length ? `unexpected mounts: ${extra.join(', ')}` : 'nothing else from this machine is visible' },
+    ];
+  }
+  const a = f.authSocket;
+  const authProbes: Probe[] = a ? [
+    { name: 'container: the Claude login stays on the host (socket mode)', ok: !a.spawnEnvHasToken && a.placeholderOnly, detail: !a.spawnEnvHasToken && a.placeholderOnly ? 'the container environment holds only the placeholder' : 'the real token would be inside the container' },
+    { name: 'container: the API socket only passes model calls', ok: a.apiStatus === 403 || a.apiStatus === 405, detail: a.apiStatus === 403 || a.apiStatus === 405 ? 'other paths are refused by the host' : `unexpected answer from the API socket (${a.apiStatus || 'none'})` },
+  ] : [];
+  return [
+    ...authProbes,
+    { name: 'container: the egress filter refuses private, loopback and cloud-metadata addresses', ok: open.length === 0, detail: open.length ? `not refused: ${open.map(([t, c]) => `${t} (${c || 'no answer'})`).join(', ')}` : `${Object.keys(f.egress).length} spellings all refused` },
+    { name: 'container: only web ports (80, 443) are open', ok: portsOpen.length === 0 && Object.keys(f.ports).length > 0, detail: portsOpen.length ? `not refused: ${portsOpen.map(([t, code]) => `${t} (${code || 'no answer'})`).join(', ')}` : `${Object.keys(f.ports).length} non-web ports all refused` },
+    { name: 'container: no network of its own', ok: f.directExit !== 0, detail: f.directExit !== 0 ? 'a request that skips the filter cannot connect' : 'the container reached the internet around the filter' },
+    { name: 'container: the login this machine runs on is not inside', ok: leaked.length === 0, detail: leaked.length ? 'a credential from this machine is in the container environment' : 'no host credential in the container environment' },
+    { name: 'container: only the kernel folder and the egress socket are mounted from the host', ok: extra.length === 0, detail: extra.length ? `unexpected mounts: ${extra.join(', ')}` : 'nothing else from this machine is visible' },
+  ];
+}
+
+const sh = (bin: string, args: string[]) => spawnSync(bin, args, { encoding: 'utf8', timeout: 60000, cwd: podmanCwd() });
+
+/**
+ * Like `sh` but without blocking this process: the egress filter under test runs in THIS process, so a blocking
+ * spawnSync would stop it from answering the container's requests until the probe timed out.
+ */
+const shAsync = (bin: string, args: string[], timeoutMs = 60000) =>
+  new Promise<{ status: number | null; stdout: string; stderr: string }>((resolve) => {
+    const c = spawn(bin, args, { cwd: podmanCwd(), stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    c.stdout.on('data', (d) => (stdout += d));
+    c.stderr.on('data', (d) => (stderr += d));
+    const t = setTimeout(() => c.kill('SIGKILL'), timeoutMs);
+    c.on('close', (status) => {
+      clearTimeout(t);
+      resolve({ status, stdout, stderr });
+    });
+    c.on('error', () => {
+      clearTimeout(t);
+      resolve({ status: null, stdout, stderr });
+    });
+  });
+
+export async function runContainerCheck(o: { bin?: string | null } = {}): Promise<Probe[]> {
+  const bin = o.bin ?? engine();
+  if (!bin || !imageExists(bin)) return [{ name: 'container kernel proof', ok: false, detail: 'the container kernel is not set up here: run `salu kernel setup`' }];
+  const tmp = mkdtempSync(join(tmpdir(), 'salu-container-check-'));
+  const work = join(tmp, 'work');
+  const sockDir = join(tmp, 'run');
+  mkdirSync(work);
+  mkdirSync(sockDir);
+  const socket = join(sockDir, 'egress.sock');
+  const name = `salu-k-doctor-${process.pid}`;
+  let stop: (() => void) | null = null;
+  try {
+    stop = await startEgress({ path: socket });
+    const stopApi = kernelAuthMode() === 'socket' ? await startApiProxy({ path: join(sockDir, 'api.sock') }) : null;
+    const stopEgress = stop;
+    stop = () => (stopEgress(), stopApi?.());
+    const c = sh(bin, createArgs({ name, project: 'doctor', dir: work, runtime: runtime().name, socket, disk: null }));
+    if (c.status !== 0) return [{ name: 'container kernel proof', ok: false, detail: `could not create the test container: ${(c.stderr || c.stdout).trim().split('\n').pop()}` }];
+    const s = sh(bin, ['start', name]);
+    if (s.status !== 0) return [{ name: 'container kernel proof', ok: false, detail: `could not start the test container: ${(s.stderr || s.stdout).trim().split('\n').pop()}` }];
+    await new Promise((r) => setTimeout(r, 1500)); // the proxy forwarder inside starts with the container
+    const inside = (cmd: string[]) => shAsync(bin, ['exec', '--workdir', WORKDIR, name, ...cmd]);
+    const egress: Record<string, number> = {};
+    for (const t of EGRESS_TARGETS) egress[t] = Number((await inside(['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '10', '--proxy', 'http://127.0.0.1:3128', '--noproxy', '', `http://${t}/`])).stdout.trim()) || 0;
+    const ports: Record<string, number> = {};
+    for (const t of NON_WEB_TARGETS) ports[t] = Number((await inside(['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '10', '--proxy', 'http://127.0.0.1:3128', '--noproxy', '', `http://${t}/`])).stdout.trim()) || 0;
+    const probe = async (url: string) => Number((await inside(['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '10', url])).stdout.trim()) || 0;
+    const control = await probe('http://example.com/');
+    let diagnostics: string | undefined;
+    if (control === 0) {
+      const d = await inside(['sh', '-c', 'echo "proxy env: $HTTP_PROXY"; echo "interfaces: $(cat /proc/net/dev | tail -n +3 | cut -d: -f1 | tr -d " " | tr "\\n" ",")"; echo "init log: $(cat /tmp/salu-init.log 2>&1 | tail -3)"; ls -l /run/salu 2>&1; (ps -eo pid,args 2>&1 | grep -c "[s]ocat TCP-LISTEN") | sed "s/^/forwarders running: /"; curl -sv --max-time 5 http://example.com/ -o /dev/null 2>&1 | tail -4; echo | socat - UNIX-CONNECT:/run/salu/egress.sock 2>&1 | head -2']);
+      diagnostics = `Inside the container: ${(d.stdout + d.stderr).trim().replace(/\n+/g, ' | ')}`;
+    }
+    const direct = await inside(['curl', '-s', '-o', '/dev/null', '--noproxy', '*', '--max-time', '6', 'http://1.1.1.1/']);
+    const envText = (await inside(['sh', '-c', 'env; cat /proc/1/environ | tr "\\0" "\\n"'])).stdout;
+    const mounts = (await inside(['cat', '/proc/self/mountinfo'])).stdout.split('\n').map((l) => l.split(' ')[4] ?? '').filter(Boolean);
+    const hostSecrets = Object.entries(process.env).filter(([k, v]) => CREDENTIAL_ENV.test(k) && v && v.length > 8).map(([, v]) => v!);
+    let authSocket: ContainerFacts['authSocket'];
+    if (kernelAuthMode() === 'socket') {
+      const real = claudeAuthEnv();
+      const spawnEnv = containerAuthEnv(real);
+      const tok = Object.values(real)[0] ?? '';
+      const apiStatus = Number((await inside(['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '10', '--unix-socket', API_SOCKET_IN, 'http://localhost/v1/models'])).stdout.trim()) || 0;
+      authSocket = { spawnEnvHasToken: !!tok && Object.values(spawnEnv).some((v) => v.includes(tok)), placeholderOnly: Object.values(spawnEnv).includes(API_PLACEHOLDER), apiStatus };
+      if (tok) hostSecrets.push(tok);
+    }
+    return judgeContainer({ egress, ports, control, diagnostics, directExit: direct.status ?? 1, envText, hostSecrets, mountPoints: mounts, authSocket });
+  } finally {
+    sh(bin, ['rm', '-f', name]);
+    stop?.();
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}

@@ -7,7 +7,7 @@
  */
 import { safeText } from '../core/ansi.ts';
 import { appendFileSync, mkdirSync } from 'node:fs';
-import { basename, dirname } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import type { Project, TicketView } from '../db/types.ts';
 import { ticketTags } from '../db/types.ts';
@@ -17,7 +17,10 @@ import { detectLimit, parseLimitText, probeWindow } from '../usage/index.ts';
 import type { LimitHit } from '../usage/types.ts';
 import { CLAUDE_MISSING, EnvironmentError, claudeExecutableOption, environmentProblem, runningCompiled } from '../core/claude-bin.ts';
 import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../core/tags.ts';
-import { auditKernel, confinementFor, kernelOptions, prepareKernel, sandboxSupport, scrubSecrets } from '../core/kernel.ts';
+import { checkDisk, containerReady, containerRequired, containerSpawner, engine, requireKernelAuth, sweepStaleContainers, WORKDIR } from '../core/container.ts';
+import { projectSocketDir, startEgress } from '../core/egress.ts';
+import { kernelAuthMode, startApiProxy } from '../core/apiproxy.ts';
+import { allowedDomains, auditKernel, cleanScrubStubs, confinementFor, kernelOptions, prepareKernel, sandboxSupport, scrubSecrets } from '../core/kernel.ts';
 import { DEFAULT_TOOLS, denialsFrom, toolsToSdk } from '../core/tools.ts';
 import { memoryPrompt } from '../memory/prompt.ts';
 import { refreshKernel } from '../memory/sync.ts';
@@ -81,7 +84,7 @@ export function saluToolOn(t: TicketView, project: Project | null): boolean {
   return !(o.tools && o.tools.length === 0);
 }
 
-export function workerSdkOptions(t: TicketView, project: Project | null, extra: { resume?: string | null; abort?: AbortController; kernel?: string; fence?: { osSandbox: boolean } } = {}): Options {
+export function workerSdkOptions(t: TicketView, project: Project | null, extra: { resume?: string | null; abort?: AbortController; kernel?: string; fence?: { osSandbox: boolean }; container?: { project: string; dir: string; onStderr?: (s: string) => void } } = {}): Options {
   const s = effectiveSettings(t, project);
   const opts: Options = {
     cwd: extra.kernel ?? t.project_path,
@@ -119,9 +122,20 @@ export function workerSdkOptions(t: TicketView, project: Project | null, extra: 
   }
   // Project settings (CLAUDE.md, skills, hooks, .mcp.json) always load: a worker is a full Claude Code session.
   opts.settingSources = ['user', 'project', 'local'];
-  const confined = !!extra.kernel || (!!extra.fence && extra.fence.osSandbox);
+  const confined = !!extra.kernel || !!extra.container || (!!extra.fence && extra.fence.osSandbox);
   Object.assign(opts, toolsToSdk(s.tools, s.permission, { confined }));
-  if (extra.kernel || extra.fence) {
+  if (extra.container) {
+    // The container is the boundary: Claude Code runs inside it with prompts off. Nothing here is a list of things
+    // to block; what the agent can reach is what the container was given (its kernel folder and the egress filter).
+    opts.cwd = extra.container.dir;
+    opts.permissionMode = 'bypassPermissions';
+    opts.allowDangerouslySkipPermissions = true;
+    opts.env = scrubSecrets(opts.env ?? {});
+    // With the subprocess scrub on (it hides the login from commands the agent runs) Claude Code ignores
+    // bypassPermissions, so everything a worker uses is allowed by name instead.
+    opts.allowedTools = [...new Set([...(opts.allowedTools ?? []), 'Read', 'Write', 'Edit', 'MultiEdit', 'Glob', 'Grep', 'Bash'])];
+    opts.spawnClaudeCodeProcess = containerSpawner(extra.container.project, extra.container.dir, { onStderr: extra.container.onStderr });
+  } else if (extra.kernel || extra.fence) {
     // The kernel (own copy) or the fence (real project): writes confined to the folder by the OS sandbox around shell
     // commands and by a hook on the file tools; credentials closed to the file tools; no logins in the environment.
     const k = kernelOptions(extra.kernel ?? t.project_path, { mode: extra.kernel ? 'kernel' : 'fence' });
@@ -224,32 +238,62 @@ export function promptFor(input: WorkerInput): string {
 // The real runner
 // -------------------------------------------------------------------------------------------------
 
+let egressSweep = false;
+const egressStops = new Map<string, Promise<() => void>>();
+/** The egress filter (and the login proxy) a project's container goes through; started once per project per process, in the project's own socket folder. */
+function ensureEgressProxy(project: string): Promise<() => void> {
+  const bin = engine();
+  if (bin && !egressSweep) sweepStaleContainers(bin); // first container ticket of this process: nothing here uses them yet
+  egressSweep = true;
+  const log = (l: string) => process.env.SALU_DEBUG && console.error(`salu egress: ${l}`);
+  if (!egressStops.has(project))
+    egressStops.set(project, (async () => {
+      const dir = projectSocketDir(project);
+      const stops = [await startEgress({ path: join(dir, 'egress.sock'), allowedDomains: allowedDomains(), log })];
+      if (kernelAuthMode() === 'socket') stops.push(await startApiProxy({ path: join(dir, 'api.sock'), log })); // the login stays on this side
+      return () => stops.forEach((f) => f());
+    })());
+  return egressStops.get(project)!;
+}
+
 export const sdkRunner: WorkerRunner = {
   name: 'sdk',
   async *run(input) {
     // The compiled binary has no claude of its own: fail with instructions, not the SDK's error.
     if (runningCompiled() && !claudeExecutableOption()) throw new EnvironmentError(process.env.SALU_CLAUDE_PATH ? `SALU_CLAUDE_PATH points to ${process.env.SALU_CLAUDE_PATH}, which is not an executable file` : CLAUDE_MISSING);
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
-    const mode = confinementFor(input.project);
+    let mode = confinementFor(input.project);
+    const inContainer = mode !== 'off' && containerReady();
+    if (mode !== 'off' && !inContainer && containerRequired()) throw new EnvironmentError('SALU_KERNEL_REQUIRE=1 but the container kernel is not ready here. Run `salu doctor`, then `salu kernel setup`.');
+    if (inContainer) {
+      mode = 'kernel';
+      requireKernelAuth(); // the container only ever gets the login from `salu kernel login`; none means no run
+    }
+    const fellBack = mode !== 'off' && !inContainer && process.platform === 'linux';
     const kernel = mode === 'kernel' ? prepareKernel(input.ticket.project, input.ticket.project_path) : undefined;
     if (kernel) refreshKernel(input.ticket.project, input.ticket.project_path, kernel); // your memory edits reach the sandbox copy
-    const ticket = kernel ? { ...input.ticket, project_path: kernel } : input.ticket;
+    const ticket = kernel ? { ...input.ticket, project_path: inContainer ? WORKDIR : kernel } : input.ticket;
+    if (inContainer) {
+      checkDisk(kernel!);
+      await ensureEgressProxy(input.ticket.project);
+    }
     // Without the OS sandbox (a Linux machine lacking bubblewrap) a fenced worker keeps the file-tool fence and the
     // old narrow shell rules, so it never gets more than it can be held to.
     const fence = mode === 'fence' ? { osSandbox: sandboxSupport().ok } : undefined;
-    const options = workerSdkOptions(ticket, input.project, { resume: input.resume, abort: input.abort, kernel, fence });
+    const stderr: string[] = [];
+    const options = workerSdkOptions(ticket, input.project, { resume: input.resume, abort: input.abort, kernel: inContainer ? undefined : kernel, fence, container: inContainer ? { project: input.ticket.project, dir: kernel!, onStderr: (s) => stderr.push(s.trim()) } : undefined });
     input = { ...input, ticket };
     if (saluToolOn(ticket, input.project)) {
       // The thread tools: in-process, so they write to the same database the orchestrator uses.
       options.mcpServers = { ...options.mcpServers, salu: await saluMcpServer(openDb(), input.ticket) };
       options.allowedTools = [...(options.allowedTools ?? []), ...TOOL_NAMES];
     }
-    const stderr: string[] = [];
     options.stderr = (data: string) => {
       const text = data.trim();
       if (text) stderr.push(text);
     };
     yield { type: 'ticket_start', ts: Date.now(), ticket_id: input.ticket.id, name: input.ticket.name, project: input.ticket.project, resume: !!options.resume, runner: 'sdk', options: { model: options.model ?? null, effort: options.effort ?? null, permissionMode: options.permissionMode, maxTurns: options.maxTurns, cwd: options.cwd } };
+    if (fellBack) yield { type: 'stderr', text: 'salu: no container kernel here (run `salu kernel`), so this ticket runs in the weaker fence, not in a container', ts: Date.now() };
     const q = query({ prompt: promptFor(input), options });
     try {
       for await (const m of q) {
@@ -259,9 +303,11 @@ export const sdkRunner: WorkerRunner = {
     } catch (e) {
       // The process's own explanation (bad flag, not logged in, ...) is on stderr; log it before rethrowing.
       while (stderr.length) yield { type: 'stderr', text: stderr.shift(), ts: Date.now() };
+      if (inContainer && kernel) cleanScrubStubs(kernel);
       throw e;
     }
     while (stderr.length) yield { type: 'stderr', text: stderr.shift(), ts: Date.now() };
+    if (inContainer && kernel) cleanScrubStubs(kernel); // the empty stand-ins Claude Code's bubblewrap scrub leaves behind
     // Tricks that beat a check-then-use guard leave links behind: say so in the log.
     const findings = kernel ? auditKernel(kernel) : [];
     if (findings.length) yield { type: 'stderr', text: `salu kernel audit: ${findings.slice(0, 5).join('; ')}${findings.length > 5 ? ` (and ${findings.length - 5} more)` : ''}`, ts: Date.now() };

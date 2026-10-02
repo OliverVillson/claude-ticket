@@ -3,7 +3,7 @@ import { linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { auditKernel, orchestratorEnvToScrub } from '../src/core/kernel.ts';
-import { judge, plantCanaries, ticketText } from '../src/core/sandbox-check.ts';
+import { failureTail, judge, plantCanaries, ticketText } from '../src/core/sandbox-check.ts';
 
 let root: string;
 beforeAll(() => {
@@ -98,5 +98,29 @@ else await execReplace([process.execPath, '${script}'], { PATH: process.env.PATH
     expect(out.pid).toBe(Number(out.parent));
     expect(out.token).toBe(false);
     expect(out.environ).toBe(false);
+  });
+});
+
+describe('the sandbox check says why a ticket did not run', () => {
+  test('the worker\'s stderr and error go into the failing probe', () => {
+    const log = JSON.stringify({ type: 'stderr', text: 'Invalid API key' }) + '\nClaude Code process exited with code 1';
+    expect(failureTail(log)).toContain('Invalid API key');
+    expect(failureTail(log)).toContain('exited with code 1');
+    expect(failureTail('')).toContain('nothing at all');
+    expect(failureTail(JSON.stringify({ type: 'stderr', text: 'import{Le}from"/$bunfs/x.js"' }))).toContain('Raw end');
+    // a crash dump of bundled source followed by the real error: only the error survives
+    const dump = JSON.stringify({ type: 'stderr', text: '// (c) Anthropic PBC\nimport{Le,gs}from"/$bunfs/root/chunk-51c5swn7.js";' + 'x'.repeat(400) + '\nerror: EACCES: permission denied, mkdir \'/root/.claude\'\nBun v1.3' });
+    const t = failureTail(dump);
+    expect(t).toContain('EACCES');
+    expect(t).not.toContain('bunfs');
+  });
+});
+
+import { loginSummary } from '../src/cli/commands/doctor.ts';
+describe('doctor login line', () => {
+  test('JSON from `claude auth status` is summarised, plain text is kept', () => {
+    expect(loginSummary('{\n  "loggedIn": true,\n  "authMethod": "oauth_token",\n  "email": "a@b.c"\n}')).toBe('(a@b.c, oauth_token)');
+    expect(loginSummary('{"loggedIn": true}')).toBe('');
+    expect(loginSummary('Logged in as a@b.c\nextra')).toBe('Logged in as a@b.c');
   });
 });

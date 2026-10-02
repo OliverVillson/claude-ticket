@@ -7,7 +7,7 @@ import { boxProblems, renderEnvFile, renderSyncUnit, renderUnit, requireRunnerNa
 const ENTRY = join(import.meta.dir, '..', 'src', 'index.ts');
 
 describe('runner files', () => {
-  const unit = renderUnit({ bin: '/usr/local/bin/salu', user: 'salu', home: '/home/salu', root: '/var/lib/salu', etc: '/etc/salu' });
+  const unit = renderUnit({ bin: '/usr/local/bin/salu', user: 'salu', home: '/home/salu', root: '/var/lib/salu', etc: '/etc/salu', uid: 1001 });
 
   test('the unit is one orchestrator per project instance, restarts, starts on boot and never queues the backlog', () => {
     expect(unit).toContain('ExecStart=/usr/local/bin/salu run --plain --no-queue %i');
@@ -30,25 +30,37 @@ describe('runner files', () => {
   });
 
   describe('unit hardening', () => {
-    const o = { bin: '/usr/local/bin/salu', user: 'salu', home: '/home/salu', root: '/var/lib/salu', etc: '/etc/salu' };
+    const o = { bin: '/usr/local/bin/salu', user: 'salu', home: '/home/salu', root: '/var/lib/salu', etc: '/etc/salu', uid: 1001 };
     const sync = renderSyncUnit(o);
 
     test('both units confine the service to its own project folder and an empty home', () => {
-      for (const u of [unit, sync]) {
+      const tight = renderUnit({ ...o, kernel: false });
+      for (const u of [tight, sync]) {
         for (const d of ['NoNewPrivileges=yes', 'ProtectSystem=strict', 'ProtectHome=tmpfs', 'TemporaryFileSystem=/var/lib/salu:ro', 'BindPaths=/var/lib/salu/%i', 'ReadWritePaths=/var/lib/salu/%i', 'PrivateTmp=yes', 'CapabilityBoundingSet=\n', 'RestrictSUIDSGID=yes', 'UMask=0077']) expect(u).toContain(d);
       }
     });
 
+    test('the orchestrator unit that runs containers has no file-system confinement and the smallest capability set', () => {
+      for (const bad of ['NoNewPrivileges', 'PrivateTmp', 'ProtectHome', 'ProtectSystem', 'TemporaryFileSystem', 'BindPaths', 'BindReadOnlyPaths', 'ReadWritePaths', 'ProtectControlGroups', 'ProtectKernelModules']) expect(unit).not.toContain(bad); // one shared mount namespace for the user's podmans
+      expect(unit).toContain('CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_DAC_OVERRIDE CAP_SYS_ADMIN\n');
+      expect(unit).toMatch(/^AmbientCapabilities=$/m);
+      expect(unit).toContain('Environment=XDG_RUNTIME_DIR=/run/user/1001\n'); // the user's own id, not systemd's %U
+      expect(unit).toContain('Environment=SALU_KERNEL_TOKEN_FILE=/var/lib/salu/kernel-token');
+      expect(() => renderUnit({ ...o, uid: undefined })).toThrow();
+      expect(sync).toContain('NoNewPrivileges=yes'); // the sync unit never runs containers
+    });
+
     test('least privilege: the orchestrator gets the Claude login but no ssh keys, sync the reverse', () => {
-      expect(unit).toContain('/home/salu/.claude');
-      expect(unit).not.toContain('.ssh');
+      const tight = renderUnit({ ...o, kernel: false });
+      expect(tight).toContain('/home/salu/.claude');
+      expect(tight).not.toContain('.ssh');
       expect(sync).toContain('/home/salu/.ssh');
       expect(sync).not.toContain('.claude');
     });
 
     test('nothing that breaks bubblewrap or Bun is set', () => {
       for (const u of [unit, sync]) for (const bad of ['RestrictNamespaces', 'SystemCallFilter', 'ProtectKernelTunables', 'ProtectProc', 'ProcSubset', 'PrivateDevices', 'MemoryDenyWriteExecute']) expect(u).not.toContain(bad);
-      expect(unit).toContain('AF_NETLINK'); // bubblewrap sets up its network namespace over netlink
+      expect(renderUnit({ ...o, kernel: false })).toContain('AF_NETLINK'); // bubblewrap sets up its network namespace over netlink
     });
 
     test('--no-harden renders the plain units, and paths with spaces are refused', () => {
@@ -114,6 +126,17 @@ describe('salu runner (fake systemctl)', () => {
     };
     return { d, env, run, calls: () => (existsSync(calls) ? readFileSync(calls, 'utf8') : '') };
   }
+
+  test('a value flag left empty stops everything before anything is made', async () => {
+    const b = box();
+    for (const flag of ['--token-file', '--clone', '--api-key-file', '--remote', '--concurrency']) {
+      const r = await b.run('add', 'web', '--no-sandbox', flag);
+      expect(r.code).not.toBe(0);
+      expect(r.err).toContain(`${flag} needs a value`);
+    }
+    expect(existsSync(join(b.d, 'var', 'web'))).toBe(false); // nothing was cloned or created
+    expect(existsSync(join(b.d, 'units'))).toBe(false);
+  });
 
   test('add registers the project in its own home, writes a private env file and enables the service', async () => {
     const b = box();

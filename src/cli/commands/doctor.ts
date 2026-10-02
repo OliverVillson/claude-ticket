@@ -1,5 +1,6 @@
 import type { Parsed } from '../args.ts';
 import { checkClaude, environmentProblem, loginProblem, runningCompiled } from '../../core/claude-bin.ts';
+import { kernelStatus } from '../../core/container.ts';
 import { applyAuthPolicy } from '../../core/env.ts';
 import { probeWindow } from '../../usage/index.ts';
 import { ensureHome } from '../../core/paths.ts';
@@ -23,13 +24,14 @@ logged in (it sends one tiny test request to check the login really works), and 
   --sandbox   also prove the kernel sandbox holds on this machine: one small ticket tries to read, write and hard-link
               canary files in your home folder and salu checks the files (uses a few haiku requests)`;
 
-async function run(cmd: string[]): Promise<{ ok: boolean; out: string }> {
+async function run(cmd: string[], o: { full?: boolean } = {}): Promise<{ ok: boolean; out: string }> {
   try {
     const p = Bun.spawn(cmd, { stdout: 'pipe', stderr: 'pipe', env: process.env });
     const timer = setTimeout(() => p.kill(), 8000);
     const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
     clearTimeout(timer);
-    return { ok: (await p.exited) === 0, out: (out || err).trim().split('\n')[0] ?? '' };
+    const text = (out || err).trim();
+    return { ok: (await p.exited) === 0, out: o.full ? text : (text.split('\n')[0] ?? '') };
   } catch (e: any) {
     return { ok: false, out: String(e?.message ?? e) };
   }
@@ -67,6 +69,19 @@ async function restartWithCanary(p: Parsed): Promise<string | undefined> {
 
 /** `salu doctor --sandbox`: a real ticket in a throwaway sandboxed project attacks canary files in your home folder. */
 async function sandboxProof(canaryEnvValue: string | undefined): Promise<number> {
+  let failed = 0;
+  if (kernelStatus().mode === 'container') {
+    console.log(`\n${dim('Container proof: a throwaway container is attacked from inside (private and metadata addresses, the network, host logins, mounts)...')}`);
+    const { runContainerCheck } = await import('../../core/container-check.ts');
+    for (const pr of await runContainerCheck()) {
+      if (pr.ok) console.log(`${green('✓')} ${pr.name} ${dim(`(${pr.detail})`)}`);
+      else {
+        failed++;
+        console.log(`${red('✗')} ${pr.name}`);
+        console.log(`  ${dim(pr.detail)}`);
+      }
+    }
+  }
   if (!sandboxOn()) {
     console.log(`${red('✗')} SALU_SANDBOX is off, so workers would not run in the kernel; there is nothing to prove`);
     return 1;
@@ -82,7 +97,6 @@ async function sandboxProof(canaryEnvValue: string | undefined): Promise<number>
   const { selectRunner } = await import('../../orchestrator/worker.ts');
   const probes = await runSandboxCheck(await selectRunner(), { onLine: () => process.stdout.write('.'), canaryEnvValue });
   console.log('');
-  let failed = 0;
   for (const pr of probes) {
     if (pr.ok) console.log(`${green('✓')} ${pr.name} ${dim(`(${pr.detail})`)}`);
     else if (pr.soft) console.log(`${dim('·')} ${pr.name}: ${pr.detail}`);
@@ -112,6 +126,12 @@ export async function doctor(p: Parsed): Promise<number> {
   else if (sb.ok) ok('workers can only change files in their project folder (the sandbox can run here; salu add project --sandbox gives them their own copy)');
   else no(`the sandbox cannot run here, so workers get file-tool confinement only and no free shell: ${sb.problem}`, 'Install it, then tickets get the full Claude Code toolset inside the fence.');
 
+  const ks = kernelStatus();
+  if (ks.mode === 'container') ok(`container kernel ready (${ks.gvisor ? 'gVisor' : 'default runtime'})`);
+  else if (ks.mode === 'refused') no('the container kernel is required here but not ready: tickets will fail until it is', ks.problems.join('; '));
+  else if (process.platform === 'linux') console.log(`${red('✗')} tickets run in the weaker fence, not in a container: ${ks.problems.join('; ')}`); // shown loudly, not counted: the fence is a supported fallback
+  else console.log(`${dim('·')} container kernel not available on this platform, workers use the fenced mode`);
+
   const c = checkClaude();
   if (!c.ok) {
     no('Claude Code was not found', c.problem);
@@ -120,10 +140,10 @@ export async function doctor(p: Parsed): Promise<number> {
     if (!v.ok) no(`${c.path} does not run: ${v.out}`, 'Reinstall Claude Code: curl -fsSL https://claude.ai/install.sh | bash');
     else {
       ok(`Claude Code ${v.out} at ${c.path} ${dim(`(${c.source})`)}`);
-      const a = await run([c.path!, 'auth', 'status']);
+      const a = await run([c.path!, 'auth', 'status'], { full: true }); // all of it: newer versions print JSON over several lines
       const out = await loginProblem(c.path!);
       if (out) no('Claude Code is logged out', out);
-      else if (a.ok) ok(`logged in ${dim(a.out)}`.trimEnd());
+      else if (a.ok) ok(`logged in ${dim(loginSummary(a.out))}`.trimEnd());
       else console.log(`${dim('·')} could not confirm the login (${a.out || 'no answer'}).`);
       // The status command can say "logged in" for a login that has since expired: ask Claude for real.
       if (!out && process.env.SALU_WORKER !== 'fake') {
@@ -155,4 +175,15 @@ export async function doctor(p: Parsed): Promise<number> {
   if (p.flags.sandbox) bad += await sandboxProof(canary);
   console.log(bad ? `\n${bad} problem${bad === 1 ? '' : 's'} to fix.` : '\nAll good.');
   return bad ? 1 : 0;
+}
+
+/** `claude auth status` prints JSON in newer versions: show who and how, not its first brace. */
+export function loginSummary(out: string): string {
+  try {
+    const j = JSON.parse(out);
+    const bits = [j.email, j.orgName ?? j.organization, j.authMethod ?? j.loginMethod ?? j.method, j.subscriptionType].filter((x) => typeof x === 'string' && x);
+    return bits.length ? `(${bits.join(', ')})` : '';
+  } catch {
+    return out.split('\n')[0].trim();
+  }
 }

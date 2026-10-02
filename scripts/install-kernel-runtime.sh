@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+# Installs what the salu container kernel needs on an Ubuntu 24.04 box (home server or VPS):
+# rootless Podman, gVisor (runsc), and the AppArmor / user-namespace allowance they need.
+# Run as root. Safe to run again. Works with or without KVM (gVisor does not need it).
+#
+#   sudo scripts/install-kernel-runtime.sh [--user NAME] [--no-gvisor] [--check]
+#
+# --user NAME   the account that runs salu (default: the user who ran sudo, else "salu")
+# --no-gvisor   Podman only (containers then share the host kernel directly: weaker)
+# --check       change nothing, report what is missing, exit 1 if anything is
+set -euo pipefail
+
+USER_NAME="${SUDO_USER:-salu}"
+GVISOR=1
+CHECK=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --user) USER_NAME="$2"; shift 2 ;;
+    --no-gvisor) GVISOR=0; shift ;;
+    --check) CHECK=1; shift ;;
+    *) echo "unknown option $1" >&2; exit 2 ;;
+  esac
+done
+
+say() { printf '%s\n' "$*"; }
+missing=0
+need() { if eval "$2" >/dev/null 2>&1; then say "ok:      $1"; else say "missing: $1"; missing=1; fi; return 0; }
+
+if [ "$(id -u)" -ne 0 ] && [ "$CHECK" -eq 0 ]; then say "run as root: sudo $0 $*" >&2; exit 1; fi
+if [ -r /etc/os-release ]; then . /etc/os-release; fi
+if [ "${ID:-}" != "ubuntu" ] && [ "${ID:-}" != "debian" ]; then say "this script supports Ubuntu and Debian (found ${PRETTY_NAME:-unknown})" >&2; exit 1; fi
+ARCH="$(uname -m)"
+case "$ARCH" in x86_64) GARCH=x86_64 ;; aarch64) GARCH=aarch64 ;; *) say "unsupported CPU: $ARCH" >&2; exit 1 ;; esac
+
+AA_PROFILE=/etc/apparmor.d/salu-kernel-userns
+RUNSC_WRAPPER=/usr/local/bin/runsc-salu
+CONF=/etc/containers/containers.conf.d/50-salu-gvisor.conf
+
+if [ "$CHECK" -eq 1 ]; then
+  need "podman" "command -v podman"
+  need "uidmap (newuidmap)" "command -v newuidmap"
+  need "pasta or slirp4netns" "command -v pasta || command -v slirp4netns"
+  need "user $USER_NAME exists" "id $USER_NAME"
+  need "subuid range for $USER_NAME" "grep -q '^$USER_NAME:' /etc/subuid"
+  need "linger for $USER_NAME" "test -e /var/lib/systemd/linger/$USER_NAME"
+  [ "$GVISOR" -eq 1 ] && need "gVisor (runsc)" "command -v runsc"
+  need "AppArmor allowance for user namespaces" "test ! -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns || test \"\$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)\" = 0 || test -e $AA_PROFILE"
+  # Real checks, not file presence: the profile is loaded and enforced, and a container actually runs.
+  if [ -r /sys/kernel/security/apparmor/profiles ] && [ -e "$AA_PROFILE" ]; then
+    need "AppArmor profile loaded (salu-podman)" "grep -q '^salu-podman ' /sys/kernel/security/apparmor/profiles"
+  fi
+  if command -v podman >/dev/null 2>&1 && id "$USER_NAME" >/dev/null 2>&1; then
+    IMG="${SALU_KERNEL_IMAGE:-localhost/salu-kernel:1}"
+    if sudo -u "$USER_NAME" -H sh -c "cd ~ && podman image exists $IMG" 2>/dev/null; then
+      # --entrypoint: the image's own entrypoint (salu-kernel-init) never exits; timeout: a check must not hang
+      need "a container runs for $USER_NAME" "sudo -u $USER_NAME -H sh -c 'cd ~ && timeout 120 podman run --rm --network none --entrypoint true $IMG'"
+      [ "$GVISOR" -eq 1 ] && command -v runsc >/dev/null 2>&1 && need "a gVisor container runs for $USER_NAME" "sudo -u $USER_NAME -H sh -c 'cd ~ && timeout 120 podman run --rm --runtime runsc --network none --entrypoint true $IMG'"
+    else
+      say "skipped: a real container run (the kernel image is not built yet: salu kernel setup, then run --check again)"
+    fi
+  fi
+  exit $missing
+fi
+
+say "== packages"
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y -qq podman uidmap passt slirp4netns fuse-overlayfs crun curl ca-certificates bzip2 apparmor-utils socat iproute2 python3 util-linux >/dev/null
+
+say "== user $USER_NAME"
+id "$USER_NAME" >/dev/null 2>&1 || useradd -m -s /bin/bash "$USER_NAME"
+grep -q "^$USER_NAME:" /etc/subuid || usermod --add-subuids 100000-165535 "$USER_NAME"
+grep -q "^$USER_NAME:" /etc/subgid || usermod --add-subgids 100000-165535 "$USER_NAME"
+loginctl enable-linger "$USER_NAME"   # rootless containers keep running with nobody logged in
+
+say "== AppArmor: user namespaces for the container tools only"
+# Ubuntu 24.04 blocks unprivileged user namespaces for programs without a profile. Rather than turning that
+# restriction off for everything, give these specific programs permission to create them.
+if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+  PODMAN_BIN="$(command -v podman)"; CRUN_BIN="$(command -v crun)"; BWRAP_BIN="$(command -v bwrap || echo /usr/bin/bwrap)"
+  cat > "$AA_PROFILE" <<PROFILE
+abi <abi/4.0>,
+include <tunables/global>
+profile salu-podman $PODMAN_BIN flags=(unconfined) { userns, }
+profile salu-crun $CRUN_BIN flags=(unconfined) { userns, }
+profile salu-runsc /usr/local/bin/runsc flags=(unconfined) { userns, }
+profile salu-bwrap $BWRAP_BIN flags=(unconfined) { userns, }
+profile salu-buildah /usr/bin/buildah flags=(unconfined) { userns, }
+profile salu-newuidmap /usr/bin/newuidmap flags=(unconfined) { userns, }
+PROFILE
+  apparmor_parser -r "$AA_PROFILE" || say "warning: could not load $AA_PROFILE; if rootless Podman fails with 'permission denied' on a namespace, run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 (system-wide, weaker)"
+fi
+
+if [ "$GVISOR" -eq 1 ]; then
+  say "== gVisor"
+  # gVisor publishes one archive per release (runsc plus a gvisor-bin/ folder of helpers that must sit next to it).
+  # Pinned to a release and checked against its published sha512; bump both together (SALU_GVISOR_RELEASE overrides
+  # the release, and then the checksum is read from the .sha512 next to the archive).
+  GV_RELEASE="${SALU_GVISOR_RELEASE:-20260928.0}"
+  case "$GARCH" in
+    x86_64)  GV_SHA=c8d3a9fd4d4c4f5b8ff213caa4517356be128d18659ec4cde37828fe797f61a9725a602a846c81a8ed19c057a996515d31c081eba343ed4613a89951ba32ed59 ;;
+    aarch64) GV_SHA=926538a4f20056d44838f230297ecec9192db2562e2523a207295f706b76126725f2ff7b4e59d747147510c5714057eeec862a0f77d43bf625746592b5f51b00 ;;
+  esac
+  [ "$GV_RELEASE" != "20260928.0" ] && GV_SHA=""
+  if [ ! -x /usr/local/bin/runsc ] || [ ! -d /usr/local/bin/gvisor-bin ]; then
+    URL="https://storage.googleapis.com/gvisor/releases/release/$GV_RELEASE/$GARCH"
+    TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+    curl -fsSL -o "$TMP/gvisor.tar.bz2" "$URL/gvisor.tar.bz2" || { say "FAILED: could not download gVisor $GV_RELEASE from $URL"; exit 1; }
+    [ -n "$GV_SHA" ] || GV_SHA="$(curl -fsSL "$URL/gvisor.tar.bz2.sha512" | cut -d' ' -f1)"
+    echo "$GV_SHA  $TMP/gvisor.tar.bz2" | sha512sum -c - >/dev/null || { say "FAILED: the gVisor download does not match its checksum"; exit 1; }
+    mkdir "$TMP/x" && tar -xjf "$TMP/gvisor.tar.bz2" -C "$TMP/x"
+    rm -rf /usr/local/bin/gvisor-bin
+    cp -a "$TMP/x/gvisor-bin" /usr/local/bin/gvisor-bin
+    install -m 0755 "$TMP/x/runsc" /usr/local/bin/runsc
+  fi
+  # Rootless gVisor needs no cgroup ownership, and reaching the egress filter's unix socket needs host-uds.
+  cat > "$RUNSC_WRAPPER" <<WRAP
+#!/bin/sh
+# Platform: SALU_GVISOR_PLATFORM, else the file written by \`salu kernel platform\`, else gVisor's default (systrap).
+P="\${SALU_GVISOR_PLATFORM:-}"
+[ -z "\$P" ] && [ -r "\${XDG_CONFIG_HOME:-\$HOME/.config}/salu/gvisor-platform" ] && P="\$(cat "\${XDG_CONFIG_HOME:-\$HOME/.config}/salu/gvisor-platform")"
+case "\$P" in kvm|ptrace|systrap) set -- --platform="\$P" "\$@" ;; esac
+# With --network none, rootless Podman leaves the spec's network namespace without a path (the runtime makes a fresh
+# one), and gVisor then builds a sandbox with no interfaces at all: no 127.0.0.1, so the egress forwarder cannot start.
+# So, at create, make a persistent empty network namespace here, bring its loopback up, and write its path into the
+# spec: the container still has no route anywhere, but gVisor now has a loopback to import. Best effort, logged to
+# ~/.local/state/salu/runsc-wrapper.log. Removed again on delete.
+BUNDLE=""; CMD=""; PREV=""; ID=""
+for A in "\$@"; do
+  [ "\$PREV" = "--bundle" ] && BUNDLE="\$A"
+  case "\$A" in --bundle=*) BUNDLE="\${A#--bundle=}" ;; create|delete) CMD="\$A" ;; esac
+  PREV="\$A"; ID="\$A"
+done
+NSDIR="\${XDG_RUNTIME_DIR:-/tmp}/salu-netns"
+LOG="\${XDG_STATE_HOME:-\$HOME/.local/state}/salu/runsc-wrapper.log"
+mkdir -p "\$(dirname "\$LOG")" 2>/dev/null
+note() { echo "\$(date -u +%FT%TZ) \$*" >>"\$LOG" 2>/dev/null; }
+if [ "\$CMD" = delete ]; then
+  [ -n "\$ID" ] && { umount "\$NSDIR/\$ID" 2>/dev/null; rm -f "\$NSDIR/\$ID" 2>/dev/null; }
+elif [ "\$CMD" = create ] && [ -r "\$BUNDLE/config.json" ]; then
+  NETNS="\$(python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(next((n.get("path","") for n in c.get("linux",{}).get("namespaces",[]) if n.get("type")=="network"),""))' "\$BUNDLE/config.json" 2>/dev/null)"
+  # Podman keeps the spec we edited and reuses it when a stopped container starts again, but the namespace file is
+  # removed on delete (every stop), so a path of ours that no longer exists is made again, not trusted.
+  case "\$NETNS" in "\$NSDIR"/*) ! nsenter --net="\$NETNS" true 2>/dev/null && NETNS="" ;; esac
+  if [ -z "\$NETNS" ]; then
+    NETNS="\$NSDIR/\$ID"
+    if mkdir -p "\$NSDIR" && touch "\$NETNS" && unshare --net="\$NETNS" true 2>>"\$LOG" \
+       && python3 -c 'import json,sys; f=sys.argv[1]; c=json.load(open(f)); [n.__setitem__("path", sys.argv[2]) for n in c["linux"]["namespaces"] if n.get("type")=="network"]; json.dump(c, open(f,"w"))' "\$BUNDLE/config.json" "\$NETNS" 2>>"\$LOG"; then
+      note "made network namespace \$NETNS for \$ID"
+    else
+      note "could not make a network namespace for \$ID"; rm -f "\$NETNS"; NETNS=""
+    fi
+  fi
+  if [ -n "\$NETNS" ]; then
+    nsenter --net="\$NETNS" ip link set lo up >>"\$LOG" 2>&1 && note "lo up in \$NETNS" || note "could not bring lo up in \$NETNS"
+  fi
+fi
+# "podman exec -t" hands the runtime a --tty flag that runsc's exec does not define ("flag provided but not defined:
+# -tty"); the terminal itself comes through --console-socket, so drop the flag.
+case " \$* " in *" exec "*)
+  for A in "\$@"; do shift; case "\$A" in --tty|--tty=*|-tty) ;; *) set -- "\$@" "\$A" ;; esac; done ;;
+esac
+exec /usr/local/bin/runsc --ignore-cgroups --host-uds=open --network=sandbox "\$@"
+WRAP
+  chmod 0755 "$RUNSC_WRAPPER"
+  mkdir -p "$(dirname "$CONF")"
+  cat > "$CONF" <<CONFIG
+[engine.runtimes]
+runsc = ["$RUNSC_WRAPPER"]
+CONFIG
+fi
+
+say "== check"
+FAILED=0
+# The very first rootless Podman call on a fresh user can fail to mount its overlay storage (seen on a real box);
+# `podman system migrate` initialises it, so run that once and try again before calling it a failure.
+podman_info() { sudo -u "$USER_NAME" -H sh -c 'cd ~ && podman info --format "rootless={{.Host.Security.Rootless}} runtime={{.Host.OCIRuntime.Name}}"'; }
+if ! podman_info >/dev/null 2>&1; then
+  sudo -u "$USER_NAME" -H sh -c 'cd ~ && podman system migrate' >/dev/null 2>&1 || true
+fi
+podman_info || { say "FAILED: podman did not start for $USER_NAME (see the message above)"; FAILED=1; }
+if [ "$GVISOR" -eq 1 ]; then
+  sudo -u "$USER_NAME" -H sh -c 'cd ~ && podman run --rm --runtime runsc --network none docker.io/library/alpine:3 echo "gVisor container works"' || { say "FAILED: a gVisor test container did not run (see the message above)"; FAILED=1; }
+fi
+[ "$FAILED" -eq 0 ] || { say "the container runtime is not working: fix the message above, then run this script again"; exit 1; }
+say "done. Next, as $USER_NAME: salu kernel setup && salu kernel login"
