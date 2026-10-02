@@ -1,5 +1,5 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
@@ -20,7 +20,7 @@ what it downloads before it runs anything.
   salu release keygen             once: make the signing key (~/.salu/release.key) and print its public half
   salu release sign v1.2.0        download the release, check its files, sign SHA256SUMS, upload SHA256SUMS.sig (needs gh)
         --quick                   sign what SHA256SUMS says without downloading every file first
-  salu release sign <folder>      sign the SHA256SUMS in a folder (what the release workflow does)
+  salu release sign <folder>      sign the SHA256SUMS in a folder (a release workflow can do this when SALU_RELEASE_KEY is set; not used today)
         the key is read from SALU_RELEASE_KEY, else --key FILE, else ~/.salu/release.key
   salu release verify <file> <file.sig>    check one file against its own signature (install-box.sh)
   salu release verify <folder> [--require a,b] [--json]
@@ -66,7 +66,6 @@ export async function release(p: Parsed): Promise<number> {
       console.log(`${green('✓')} signing key saved to ${out} ${dim('(back it up; anyone with it can sign releases)')}`);
       console.log(`\npublic key (goes into src/release/key.ts):\n  ${k.pub}\n`);
       console.log(dim('Sign each release with:   salu release sign <tag>'));
-      console.log(dim(`Or let GitHub sign it:    gh secret set SALU_RELEASE_KEY < ${out.replace(homedir(), '~')}`));
       return 0;
     }
     case 'sign': {
