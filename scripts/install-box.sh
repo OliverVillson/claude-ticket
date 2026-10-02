@@ -176,6 +176,7 @@ if [ "${KERNEL_DONE:-0}" = 1 ]; then
   echo "Then, as the runner user, build the container kernel and give it its own login token:"
   echo "  sudo -iu ${SALU_RUNNER_USER:-salu} salu kernel setup      # builds the image (a few GB, once)"
   echo "  sudo -iu ${SALU_RUNNER_USER:-salu} salu kernel login      # an agent token from claude setup-token; revocable"
+  echo "  sudo -iu ${SALU_RUNNER_USER:-salu} salu kernel login --box   # the same token again, for runner projects (/var/lib/salu/kernel-token)"
   echo "  sudo -iu ${SALU_RUNNER_USER:-salu} salu doctor --sandbox  # attacks a throwaway container; every line a green check"
   echo "Until the image and login exist, tickets on this box fail with a message rather than run unprotected."
 fi

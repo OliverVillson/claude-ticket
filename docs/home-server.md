@@ -189,6 +189,7 @@ rootless container; installs work there and nothing reaches your files or logins
 ```sh
 sudo -iu salu salu kernel setup      # builds the image, a few GB, once
 sudo -iu salu salu kernel login      # a separate agent token: run claude setup-token on the Mac again, paste it; revocable
+sudo -iu salu salu kernel login --box   # the same agent token again: runner projects read /var/lib/salu/kernel-token
 sudo -iu salu salu kernel status     # want: tickets run in a container
 sudo -iu salu salu doctor --sandbox  # attacks a throwaway container from inside; every line should be green
 ```
