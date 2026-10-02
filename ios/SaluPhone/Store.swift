@@ -100,9 +100,9 @@ final class Store: ObservableObject {
 
     /// Needs all three: the box ignores unsigned tickets and replies, so nothing is sent without the key.
     private var client: GitHubClient? {
-        let token = token.trimmed  // a pasted token often brings a space or newline along
-        guard let r = GitHubClient.parseRepo(repo), !token.isEmpty, !Self.keyTooShort(signingKey), let key = Signing.key(signingKey) else { return nil }
-        return GitHubClient(owner: r.owner, repo: r.repo, token: token, key: key)
+        let tok = token.trimmed  // a pasted token often brings a space or newline along
+        guard let r = GitHubClient.parseRepo(repo), !tok.isEmpty, !Self.keyTooShort(signingKey), let key = Signing.key(signingKey) else { return nil }
+        return GitHubClient(owner: r.owner, repo: r.repo, token: tok, key: key)
     }
     private var repoKey: String {
         if demo { return "demo" }
