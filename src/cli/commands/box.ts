@@ -15,7 +15,7 @@ import { selfCommand } from '../../orchestrator/index.ts';
 import { VERSION } from '../dispatch.ts';
 import { helpIf } from './_shared.ts';
 
-const HELP = `salu box add <user@host> [--name box] [--repo owner/name] [--token-file f] [--fresh]
+const HELP = `salu box add <user@host> [--name box] [--repo owner/name] [--token-file f] [--fresh] [--host-key SHA256:...]
 salu box status [--on box] [--json]
 salu box update [version] [--on box]
 salu box login [--on box] [--token-file f]
@@ -72,8 +72,16 @@ async function readSecret(question: string): Promise<string> {
   });
 }
 
+async function askYesNo(question: string): Promise<boolean> {
+  if (!process.stdin.isTTY) return false;
+  const rl = (await import('node:readline')).createInterface({ input: process.stdin, output: process.stdout });
+  const a: string = await new Promise((res) => rl.question(question, res));
+  rl.close();
+  return /^y(es)?$/i.test(a.trim());
+}
+
 export function realDeps(): Deps {
-  return { exec: realExec, control: controlApi, say: (l) => console.log(l), askSecret: readSecret };
+  return { exec: realExec, control: controlApi, say: (l) => console.log(l), askSecret: readSecret, confirm: askYesNo };
 }
 
 const readFile = (p: string) => {
@@ -93,7 +101,7 @@ export async function box(p: Parsed, deps: Deps = realDeps()): Promise<number> {
       if (!rest[0]) throw new CliError('usage: salu box add user@host   (the box you installed Ubuntu on)');
       const tokenFile = flagStr(p, 'token-file');
       const read = makeTokenReader(deps, tokenFile, readFile);
-      await addBox(deps, { host: rest[0], name: flagStr(p, 'name'), repo: flagStr(p, 'repo'), tokenFile, fresh: flagBool(p, 'fresh') }, read);
+      await addBox(deps, { host: rest[0], name: flagStr(p, 'name'), repo: flagStr(p, 'repo'), tokenFile, fresh: flagBool(p, 'fresh'), hostKey: flagStr(p, 'host-key') }, read);
       return 0;
     }
     case 'init': {

@@ -22,6 +22,9 @@ class Fake {
   boxReplies: Partial<Record<Verb, ControlReply>> = {};
   keys: string[] = [];
   staged: Record<string, string> = {};
+  knownHost = false;
+  confirmed = true;
+  asked: string[] = [];
   sessions: string[] = [];
 
   exec: Exec = {
@@ -48,6 +51,9 @@ class Fake {
       if (cmd[0] === 'gh' && cmd[2] === 'create') { expect(cmd).toContain('--private'); expect(cmd).not.toContain('--public'); this.repos.set(cmd[3]!, { isPrivate: true }); return ok(); }
       if (cmd[0] === 'gh' && cmd[2] === 'clone') { mkdirSync(join(cmd[4]!, '.git'), { recursive: true }); return ok(); }
       if (cmd[0] === 'git') return ok('https://github.com/oliver/web.git\n');
+      if (cmd[0] === 'ssh-keygen' && cmd[1] === '-F') return this.knownHost ? ok('found') : bad('', 1);
+      if (cmd[0] === 'ssh-keyscan') return ok('box.local ssh-ed25519 AAAAhost\n');
+      if (cmd[0] === 'ssh-keygen' && cmd[1] === '-lf') return ok(`256 SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA box.local (ED25519)\n`);
       if (cmd[0] === 'ssh-keygen') { const f = cmd[cmd.indexOf('-f') + 1]!; writeFileSync(f, 'PRIVATEKEY\n'); writeFileSync(f + '.pub', 'ssh-ed25519 AAAAproj salu x\n'); return ok(); }
       return bad('unexpected ' + j);
     },
@@ -65,18 +71,20 @@ class Fake {
       return this.boxReplies[verb] ?? { ok: true, message: `${verb} ok`, data: { lines: ['sandbox: green'] } };
     },
   };
-  deps = (): Deps => ({ exec: this.exec, control: () => this.control, say: (l) => this.said.push(l), askSecret: async () => 'sk-ant-oat01-' + 'x'.repeat(40) });
+  deps = (): Deps => ({ exec: this.exec, control: () => this.control, say: (l) => this.said.push(l), askSecret: async () => 'sk-ant-oat01-' + 'x'.repeat(40), confirm: async (q) => { this.asked.push(q); return this.confirmed; } });
 }
 
 const token = () => Promise.resolve('sk-ant-oat01-' + 'x'.repeat(40));
 
 const HOME0 = process.env.SALU_HOME;
+const REAL_HOME = process.env.HOME;
 const KEY0 = process.env.SALU_REMOTE_KEY;
 afterEach(() => {
-  for (const [k, v] of [['SALU_HOME', HOME0], ['SALU_REMOTE_KEY', KEY0]] as const) v === undefined ? delete process.env[k] : (process.env[k] = v);
+  for (const [k, v] of [['HOME', REAL_HOME], ['SALU_HOME', HOME0], ['SALU_REMOTE_KEY', KEY0]] as const) v === undefined ? delete process.env[k] : (process.env[k] = v);
 });
 beforeEach(() => {
   process.env.SALU_HOME = mkdtempSync(join(tmpdir(), 'salu-boxmac-'));
+  process.env.HOME = mkdtempSync(join(tmpdir(), 'salu-home-'));
   delete process.env.SALU_REMOTE_KEY;
 });
 
@@ -121,6 +129,40 @@ describe('salu box add', () => {
     await addBox(f.deps(), { host: 'oliver@box.local' }, token);
     expect(f.sessions[0]).toMatch(/command -v salu .*install-box\.sh.*&& sudo salu box init/);
     expect(f.calls.find((c) => c.cmd.includes('-t'))).toBeTruthy();
+  });
+
+  test('shows the host key fingerprint, asks once, and saves exactly that key; ssh keeps its normal check', async () => {
+    const f = new Fake();
+    await addBox(f.deps(), { host: 'oliver@box.local' }, token);
+    expect(f.asked.length).toBe(1);
+    expect(f.said.join('\n')).toContain('SHA256:' + 'A'.repeat(43));
+    expect(f.said.join('\n')).toContain('ssh_host_ed25519_key.pub');
+    expect(require('node:fs').readFileSync(join(process.env.HOME!, '.ssh', 'known_hosts'), 'utf8')).toContain('ssh-ed25519 AAAAhost');
+    for (const c of f.calls) expect(c.cmd.join(' ')).not.toMatch(/StrictHostKeyChecking=(no|accept-new)/);
+  });
+
+  test('a fingerprint that is not confirmed stops before anything is sent', async () => {
+    const f = new Fake();
+    f.confirmed = false;
+    await expect(addBox(f.deps(), { host: 'oliver@box.local' }, token)).rejects.toThrow(/not confirmed/);
+    expect(f.calls.some((c) => c[0 as never] === undefined && c.cmd[0] === 'ssh')).toBe(false);
+    expect(f.sessions.length).toBe(0);
+  });
+
+  test('--host-key checks without asking, and a different key is refused', async () => {
+    const f = new Fake();
+    await addBox(f.deps(), { host: 'oliver@box.local', hostKey: 'SHA256:' + 'A'.repeat(43) }, token);
+    expect(f.asked.length).toBe(0);
+    const g = new Fake();
+    await expect(addBox(g.deps(), { host: 'oliver@other.local', hostKey: 'SHA256:' + 'B'.repeat(43) }, token)).rejects.toThrow(/Someone else may be answering/);
+    expect(g.sessions.length).toBe(0);
+  });
+
+  test('a host ssh already knows is not asked about', async () => {
+    const f = new Fake();
+    f.knownHost = true;
+    await addBox(f.deps(), { host: 'oliver@box.local' }, token);
+    expect(f.asked.length).toBe(0);
   });
 
   test('refuses a public control repo and bad host names', async () => {
