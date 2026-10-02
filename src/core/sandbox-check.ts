@@ -3,6 +3,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Project, TicketView } from '../db/types.ts';
 import type { WorkerRunner } from '../orchestrator/types.ts';
+import { ticketHome } from './paths.ts';
 
 /**
  * `salu doctor --sandbox`: prove the kernel holds on this machine. It plants canary files in your home folder,
@@ -90,7 +91,10 @@ export function failureTail(log: string): string {
   // human lines from the END of the output only.
   const real = lines.map((x) => x.trim()).filter((x) => x && x.length < 240 && !/\$bunfs|\(c\) Anthropic|import\{|function\(|=>\{/.test(x));
   const tail = real.slice(-6).join(' | ').slice(-700);
-  return tail ? `. What the worker said (last lines): ${tail}` : '';
+  if (tail) return `. What the worker said (last lines): ${tail}`;
+  // Nothing readable survived the filter: show the raw last lines, each cut short, rather than nothing.
+  const raw = lines.map((x) => x.trim()).filter(Boolean).slice(-10).map((x) => x.slice(0, 200)).join(' | ');
+  return raw ? `. Raw end of the worker output: ${raw}` : '. The worker printed nothing at all.';
 }
 
 export function judge(c: Canaries, log: string, o: { kernelHasLink: boolean; ran: boolean; envChecked?: boolean }): Probe[] {
@@ -142,6 +146,17 @@ export async function runSandboxCheck(runner: WorkerRunner, o: { home?: string; 
       }
     } catch (e: any) {
       log += String(e?.message ?? e);
+    }
+    if (!ran) {
+      // the whole run, for when the one-line summary is not enough
+      try {
+        const f = join(ticketHome(), 'doctor-worker.log');
+        mkdirSync(ticketHome(), { recursive: true });
+        writeFileSync(f, log || '(the worker produced no output)\n');
+        log += `\n(full worker output saved to ${f})`;
+      } catch {
+        /* best effort */
+      }
     }
     const kernelDir = join(process.env.SALU_KERNEL!, 'salu-sandbox-check');
     let kernelHasLink = false;

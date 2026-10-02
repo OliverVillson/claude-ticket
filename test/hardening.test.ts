@@ -106,7 +106,8 @@ describe('the sandbox check says why a ticket did not run', () => {
     const log = JSON.stringify({ type: 'stderr', text: 'Invalid API key' }) + '\nClaude Code process exited with code 1';
     expect(failureTail(log)).toContain('Invalid API key');
     expect(failureTail(log)).toContain('exited with code 1');
-    expect(failureTail('')).toBe('');
+    expect(failureTail('')).toContain('nothing at all');
+    expect(failureTail(JSON.stringify({ type: 'stderr', text: 'import{Le}from"/$bunfs/x.js"' }))).toContain('Raw end');
     // a crash dump of bundled source followed by the real error: only the error survives
     const dump = JSON.stringify({ type: 'stderr', text: '// (c) Anthropic PBC\nimport{Le,gs}from"/$bunfs/root/chunk-51c5swn7.js";' + 'x'.repeat(400) + '\nerror: EACCES: permission denied, mkdir \'/root/.claude\'\nBun v1.3' });
     const t = failureTail(dump);
