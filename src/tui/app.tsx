@@ -30,7 +30,7 @@ import { CommandLine } from './components/CommandLine.tsx';
 import { ResultView } from './components/ResultView.tsx';
 import { NotifScreen } from './components/NotifView.tsx';
 import { isMouseInput } from './mouse.ts';
-import { fetchInBackground } from '../notif/index.ts';
+import { fetchInBackground, FETCH_MS } from '../notif/index.ts';
 import { LIST_HINTS, ListView, listInnerWidth } from './components/ListView.tsx';
 import type { Message } from './messages.ts';
 import { runCommand } from './command.ts';
@@ -285,7 +285,7 @@ export function App(p: AppProps) {
   useEffect(() => {
     if (standaloneForm) return;
     void fetchInBackground(db);
-    const i = setInterval(() => void fetchInBackground(db), 60_000);
+    const i = setInterval(() => void fetchInBackground(db), FETCH_MS);
     return () => clearInterval(i);
   }, [db, standaloneForm]);
 

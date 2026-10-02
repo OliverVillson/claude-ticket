@@ -1,6 +1,9 @@
 import type { Database } from 'bun:sqlite';
 import type { Project, TicketView } from '../db/types.ts';
-import { createTicket, deleteTicket, replyToTicket, resolveTicketById, queueTicket, unqueueTicket, getProjectByName, updateTicket, wakeOrchestrator } from '../db/queries.ts';
+import { createTicket, deleteTicket, getProjectById, getProjectByName, markFollowUpsDelivered, queueTicket, replyToTicket, resolveTicketById, unqueueTicket, updateTicket, wakeOrchestrator } from '../db/queries.ts';
+import { fetchInBackground } from '../notif/index.ts';
+import { getRemote } from '../sync/store.ts';
+import { publishAction, publishReply, publishTicket } from '../sync/sync.ts';
 import { clearPause, enterManualPause } from '../usage/index.ts';
 import { parseTags, validatePriority } from '../core/tags.ts';
 import { CliError } from '../core/errors.ts';
@@ -77,15 +80,24 @@ export function defaultActions(db: Database): TuiActions {
   return {
     create(input) {
       const v = validateInput(input);
+      const projectId = resolveProjectId(db, input, v.project);
+      const project = getProjectById(db, projectId);
+      const toBox = !!project && getRemote(db, projectId)?.role === 'client';
+      // A ticket for a box is created unclaimable (backlog) and sent there; it only shows as queued once published.
       const t = createTicket(db, {
-        project_id: resolveProjectId(db, input, v.project),
+        project_id: projectId,
         name: v.name,
         query: v.query,
         tags: v.tags,
         labels: v.labels,
         priority: v.priority,
-        status: input.queue ? 'todo' : 'backlog',
+        status: input.queue && !toBox ? 'todo' : 'backlog',
       });
+      if (toBox) {
+        publishTicket(db, project!, t, { queue: !!input.queue });
+        void fetchInBackground(db, { now: true });
+        return input.queue ? updateTicket(db, t.id, { status: 'todo' }) : t;
+      }
       if (input.queue) wakeOrchestrator();
       return t;
     },
@@ -122,11 +134,19 @@ export function defaultActions(db: Database): TuiActions {
       queueTicket(db, ticket.id, { now: true });
     },
     resolve(ticket) {
-      return resolveTicketById(db, ticket.id);
+      const t = resolveTicketById(db, ticket.id);
+      const project = getProjectById(db, t.project_id);
+      if (project && publishAction(db, project, t, 'resolve')) void fetchInBackground(db, { now: true });
+      return t;
     },
     reply(ticket, message) {
       const t = replyToTicket(db, ticket.id, message);
       answerOpenWithText(db, ticket.id, message); // typed words answer open decisions, like `salu reply`
+      const project = getProjectById(db, t.project_id);
+      if (project && publishReply(db, project, t, message)) {
+        markFollowUpsDelivered(db, t.id); // it runs on the box: nothing waits for a local worker
+        void fetchInBackground(db, { now: true });
+      }
       return t;
     },
     answerDecision(ticket, decisionId, index) {
