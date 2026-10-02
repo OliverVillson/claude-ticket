@@ -211,6 +211,52 @@ describe('salu runner (fake systemctl)', () => {
     expect((await b.run('add', 'x', '--no-sandbox', '--token-file', tf)).err).toContain('is empty');
   });
 
+  test('with the box login saved, add needs no --token-file: the unit reads box-login.env, the project env holds no token', async () => {
+    const b = box();
+    const { saveBoxLogin } = await import('../src/box/login.ts');
+    const saved = process.env.SALU_RUNNER_ROOT;
+    process.env.SALU_RUNNER_ROOT = join(b.d, 'var');
+    saveBoxLogin('sk-ant-oat01-boxlogin');
+    process.env.SALU_RUNNER_ROOT = saved;
+    const r = await b.run('add', 'web', '--no-sandbox', '--no-sync');
+    expect(r.code).toBe(0);
+    expect(r.err).toContain('box login');
+    expect(r.err).not.toContain('no setup-token given');
+    expect(readFileSync(join(b.d, 'etc', 'web.env'), 'utf8')).not.toContain('OAUTH');
+    expect(readFileSync(join(b.d, 'units', 'salu-runner@.service'), 'utf8')).toContain(`EnvironmentFile=-${join(b.d, 'var')}/box-login.env`);
+    // an explicit token still wins (the way back to a separate login per project)
+    const tf = join(b.d, 'tok');
+    writeFileSync(tf, 'sk-ant-oat01-own\n');
+    await b.run('add', 'own', '--no-sandbox', '--no-sync', '--token-file', tf);
+    expect(readFileSync(join(b.d, 'etc', 'own.env'), 'utf8')).toContain('CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-own');
+  });
+
+  test('--deploy-key-file and --signing-key-file land in the project folder, private, with github.com pinned; purge removes them', async () => {
+    const b = box();
+    const dk = join(b.d, 'dk');
+    const sk = join(b.d, 'sk');
+    writeFileSync(dk, '-----BEGIN OPENSSH PRIVATE KEY-----\nAAA\n-----END OPENSSH PRIVATE KEY-----\n');
+    writeFileSync(sk, 'b'.repeat(64) + '\n');
+    const r = await b.run('add', 'web', '--no-sandbox', '--no-sync', '--deploy-key-file', dk, '--signing-key-file', sk);
+    expect(r.code).toBe(0);
+    const home = join(b.d, 'var', 'web');
+    expect(statSync(join(home, 'deploy_key')).mode & 0o777).toBe(0o600);
+    expect(statSync(join(home, 'remote.key')).mode & 0o777).toBe(0o600);
+    expect(readFileSync(join(home, 'remote.key'), 'utf8').trim()).toBe('b'.repeat(64));
+    expect(readFileSync(join(home, 'known_hosts'), 'utf8')).toContain('github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl');
+    const genv = readFileSync(join(b.d, 'etc', 'web.git.env'), 'utf8');
+    expect(genv).toContain(`GIT_SSH_COMMAND="ssh -i ${home}/deploy_key`);
+    expect(genv).toContain('StrictHostKeyChecking=yes');
+    expect(readFileSync(join(b.d, 'units', 'salu-sync@.service'), 'utf8')).toContain('EnvironmentFile=-' + join(b.d, 'etc') + '/%i.git.env');
+    expect(b.calls()).not.toContain('BEGIN OPENSSH');
+    await b.run('remove', 'web', '--purge', '--yes');
+    expect(existsSync(join(b.d, 'etc', 'web.git.env'))).toBe(false);
+    // something that is not a key is refused before anything is made
+    const junk = join(b.d, 'junk');
+    writeFileSync(junk, 'hello\n');
+    expect((await b.run('add', 'x', '--no-sandbox', '--no-sync', '--deploy-key-file', junk)).err).toContain('not an ssh private key');
+  });
+
   test('an api key goes only into the root env file, never onto a command line', async () => {
     const b = box();
     const keyFile = join(b.d, 'key');

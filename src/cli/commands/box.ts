@@ -10,6 +10,8 @@ import { listBoxes, pickBox, removeBoxFile } from '../../boxmac/state.ts';
 import { spawnSync } from 'node:child_process';
 import { boxDir, boxInit, readBoxName } from '../../box/init.ts';
 import { saveConnection } from '../../control/keys.ts';
+import { boxLoginFile, saveBoxLogin } from '../../box/login.ts';
+import { selfCommand } from '../../orchestrator/index.ts';
 import { VERSION } from '../dispatch.ts';
 import { helpIf } from './_shared.ts';
 
@@ -21,6 +23,7 @@ salu box list
 salu box remove <box> [--yes]
 salu box init [--json] [--name box]          (on the box; pairing runs these)
 salu box connect --url <ssh-url> --mac-key -
+salu box login --stdin                       (on the box: the token comes in on stdin)
 
 Set up an always-on computer (a salu box) from this one.
 add       pairs with the box over ssh once: installs salu there, makes a private repo
@@ -136,6 +139,21 @@ export async function box(p: Parsed, deps: Deps = realDeps()): Promise<number> {
       return r.ok ? 0 : 1;
     }
     case 'login': {
+      if (flagBool(p, 'stdin')) {
+        // The box's side: the Mac sends the token over ssh stdin, never on the command line.
+        const token = (await new Response(Bun.stdin.stream()).text()).trim();
+        if (!token) throw new CliError('no token on stdin: run `claude setup-token` and pipe it in');
+        try {
+          saveBoxLogin(token);
+        } catch (e: any) {
+          // Not allowed to write the box's folder (an ordinary ssh user): run again through passwordless sudo, with the token on stdin.
+          if (!/EACCES|EPERM|permission/i.test(String(e?.message)) || process.getuid?.() === 0) throw new CliError(e.message);
+          const r = spawnSync('sudo', ['-n', ...selfCommand(['box', 'login', '--stdin'])], { input: token, encoding: 'utf8' });
+          if (r.status !== 0) throw new CliError(`this user cannot write ${boxLoginFile()} and sudo is not available without a password: run it as root, or as the user that owns /var/lib/salu`);
+        }
+        console.log(`${green('✓')} the box login is saved ${dim('(every runner project and the kernel use it)')}`);
+        return 0;
+      }
       const b = pickBox(on);
       const token = await makeTokenReader(deps, flagStr(p, 'token-file'), readFile)();
       const r = await loginViaControl(deps, b, token);
