@@ -78,13 +78,13 @@ export function judgeContainer(f: ContainerFacts): Probe[] {
   ];
 }
 
-const sh = (bin: string, args: string[]) => spawnSync(bin, args, { encoding: 'utf8', timeout: 60000, cwd: podmanCwd() });
+export const sh = (bin: string, args: string[]) => spawnSync(bin, args, { encoding: 'utf8', timeout: 60000, cwd: podmanCwd() });
 
 /**
  * Like `sh` but without blocking this process: the egress filter under test runs in THIS process, so a blocking
  * spawnSync would stop it from answering the container's requests until the probe timed out.
  */
-const shAsync = (bin: string, args: string[], timeoutMs = 60000) =>
+export const shAsync = (bin: string, args: string[], timeoutMs = 60000) =>
   new Promise<{ status: number | null; stdout: string; stderr: string }>((resolve) => {
     const c = spawn(bin, args, { cwd: podmanCwd(), stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
