@@ -21,6 +21,8 @@ class Fake {
   failOnce = new Set<string>();
   boxReplies: Partial<Record<Verb, ControlReply>> = {};
   keys: string[] = [];
+  staged: Record<string, string> = {};
+  sessions: string[] = [];
 
   exec: Exec = {
     capture: async (cmd, o) => {
@@ -28,7 +30,9 @@ class Fake {
       const j = cmd.join(' ');
       for (const f of this.failOnce) if (j.includes(f)) { this.failOnce.delete(f); return bad('boom: ' + f); }
       if (cmd[0] === 'ssh') {
-        if (j.includes('box init')) return ok(`installing...\n${INIT}\n`);
+        const up = /cat > (\S+)/.exec(j);
+        if (up) { this.staged[up[1]!] = o?.stdin ?? ''; return ok(); }
+        if (/cat \.salu-pair/.test(j)) return ok(`${INIT}\n`);
         return ok();
       }
       if (cmd[0] === 'gh' && cmd[1] === '--version') return ok('gh 2');
@@ -47,7 +51,13 @@ class Fake {
       if (cmd[0] === 'ssh-keygen') { const f = cmd[cmd.indexOf('-f') + 1]!; writeFileSync(f, 'PRIVATEKEY\n'); writeFileSync(f + '.pub', 'ssh-ed25519 AAAAproj salu x\n'); return ok(); }
       return bad('unexpected ' + j);
     },
-    interactive: async (cmd) => { this.calls.push({ cmd }); return 0; },
+    interactive: async (cmd) => {
+      this.calls.push({ cmd });
+      const line = cmd.at(-1)!;
+      this.sessions.push(line);
+      for (const f of this.failOnce) if (line.includes(f)) { this.failOnce.delete(f); return 1; }
+      return 0;
+    },
   };
   control: ControlApi = {
     call: async (_cfg, verb, args, o) => {
@@ -77,12 +87,17 @@ describe('salu box add', () => {
     expect(cfg.paired).toBe(true);
     expect(loadBox('salubox')?.repoSsh).toBe('git@github.com:oliver/salu-control.git');
     expect(f.keys.some((k) => k.includes('read_only=false') && k.includes('AAAAdeploy'))).toBe(true);
-    const connect = f.calls.find((c) => c.cmd.join(' ').includes('box connect'))!;
-    expect(connect.stdin).toBe(loadBox('salubox')!.macKey + '\n');
-    expect(connect.cmd.join(' ')).not.toContain(loadBox('salubox')!.macKey!);
-    const login = f.calls.find((c) => c.cmd.join(' ').includes('box login'))!;
-    expect(login.stdin).toContain('sk-ant-oat01-');
-    expect(login.cmd.join(' ')).not.toContain('sk-ant');
+    // two terminal sessions (keys, then connect + login), each one sudo prompt; secrets only in staged files
+    expect(f.sessions.length).toBe(2);
+    expect(f.sessions[0]).toContain('sudo salu box init --json --name salubox');
+    expect(f.sessions[1]).toMatch(/^sudo sh -c 'salu box connect --url git@github.com:oliver\/salu-control.git --mac-key - < \S+ && salu box login --stdin < \S+'$/);
+    const staged = Object.values(f.staged);
+    expect(staged).toContain(loadBox('salubox')!.macKey + '\n');
+    expect(staged.some((v) => v.startsWith('sk-ant-oat01-'))).toBe(true);
+    const argv = f.calls.map((c) => c.cmd.join(' ')).join('\n');
+    expect(argv).not.toContain(loadBox('salubox')!.macKey!);
+    expect(argv).not.toContain('sk-ant');
+    expect(f.calls.some((c) => /rm -f \.salu-pair-\w+ \.salu-pair-\w+/.test(c.cmd.join(' ')))).toBe(true);
     expect(f.controlCalls.map((c) => c.verb)).toEqual(['ping', 'status']);
     expect(f.said.join('\n')).toContain('sandbox: green');
   });
@@ -90,27 +105,22 @@ describe('salu box add', () => {
   test('stops where it failed and a second run resumes', async () => {
     const f = new Fake();
     f.failOnce.add('box connect');
-    await expect(addBox(f.deps(), { host: 'oliver@box.local' }, token)).rejects.toThrow(/would not connect/);
+    await expect(addBox(f.deps(), { host: 'oliver@box.local' }, token)).rejects.toThrow(/refused a step/);
     expect(loadBox('box')?.keyAdded).toBe(true);
     expect(loadBox('box')?.connected).toBeUndefined();
-    const before = f.calls.filter((c) => c.cmd.join(' ').includes('box init')).length;
+    expect(f.sessions.filter((l) => l.includes('box init')).length).toBe(1);
+    expect(f.calls.some((c) => /rm -f/.test(c.cmd.join(' ')))).toBe(true);
     await addBox(f.deps(), { host: 'oliver@box.local' }, token);
-    expect(f.calls.filter((c) => c.cmd.join(' ').includes('box init')).length).toBe(before);
+    expect(f.sessions.filter((l) => l.includes('box init')).length).toBe(1);
     expect(f.calls.filter((c) => c.cmd[1] === 'repo' && c.cmd[2] === 'create').length).toBe(1);
     expect(loadBox('box')?.paired).toBe(true);
   });
 
-  test('installs salu over ssh -t when the box does not have it', async () => {
+  test('installs salu only when missing, in the same terminal session as init', async () => {
     const f = new Fake();
-    let first = true;
-    const orig = f.exec.capture;
-    f.exec.capture = async (cmd, o) => {
-      if (first && cmd.join(' ').includes('box init')) { first = false; return bad('bash: salu: command not found', 127); }
-      return orig(cmd, o);
-    };
     await addBox(f.deps(), { host: 'oliver@box.local' }, token);
-    const inst = f.calls.find((c) => c.cmd.includes('-t'))!;
-    expect(inst.cmd.at(-1)).toContain('install-box.sh');
+    expect(f.sessions[0]).toMatch(/command -v salu .*install-box\.sh.*&& sudo salu box init/);
+    expect(f.calls.find((c) => c.cmd.includes('-t'))).toBeTruthy();
   });
 
   test('refuses a public control repo and bad host names', async () => {

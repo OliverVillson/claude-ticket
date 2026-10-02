@@ -38,11 +38,20 @@ const sshProblem = (host: string, err: string): string => {
   return `ssh to ${host} failed: ${err.trim().split('\n').pop() || 'no details'}`;
 };
 
-/** Run one salu command on the box through ssh; `stdin` carries secrets so they never show in a process list. */
-async function onBox(d: Deps, host: string, args: string[], stdin?: string) {
-  const r = await d.exec.capture([...sshBase(host), 'salu', ...args], { stdin, timeoutMs: 120_000 });
-  return r;
+const tmpName = () => `.salu-pair-${randomBytes(6).toString('hex')}`;
+
+/** Run a shell line on the box inside one `ssh -t`, so sudo can ask for its password once. */
+async function inTerminal(d: Deps, host: string, line: string): Promise<number> {
+  return d.exec.interactive([...sshBase(host).slice(0, -1), '-t', host, line]);
 }
+
+/** Put a secret in a private file in the box user's home (ssh stdin, never argv), to be read by a shell redirect. */
+async function stage(d: Deps, host: string, file: string, secret: string): Promise<void> {
+  const r = await d.exec.capture([...sshBase(host), `umask 077; cat > ${file}`], { stdin: secret, timeoutMs: 60_000 });
+  if (!r.ok) throw new CliError(r.err ? sshProblem(host, r.err) : `could not reach ${host}`);
+}
+
+const unstage = (d: Deps, host: string, files: string[]) => d.exec.capture([...sshBase(host), `rm -f ${files.join(' ')}`], { timeoutMs: 30_000 }).catch(() => undefined);
 
 const need = (b: BoxConfig, ...f: (keyof BoxConfig)[]) => {
   for (const k of f) if (!b[k]) throw new CliError(`the saved state for box "${b.box}" is incomplete (${k}). Start over: salu box add ${b.host} --name ${b.box} --fresh`);
@@ -65,17 +74,14 @@ export async function addBox(d: Deps, o: AddOpts, readToken: () => Promise<strin
   const persist = () => saveBox(cfg);
   persist();
 
-  // 1. salu on the box, and its keys.
+  // 1. salu on the box (installed if missing), and its keys. One terminal session: sudo asks once.
   if (!cfg.sealPub) {
-    d.say('Reaching the box (it may ask for its password)...');
-    let r = await onBox(d, cfg.host, ['box', 'init', '--json', '--name', name]);
-    if ((!r.ok && /not found|no such file/i.test(r.err + r.out)) || r.code === 127) {
-      d.say('Installing salu on the box (a few minutes, and it asks for the sudo password)...');
-      const code = await d.exec.interactive([...sshBase(cfg.host).slice(0, -1), '-t', cfg.host, process.env.SALU_BOX_INSTALL ?? INSTALL_DEFAULT]);
-      if (code !== 0) throw new CliError(`the installer on the box stopped (exit ${code}). Run salu box add again and it continues from here.`);
-      r = await onBox(d, cfg.host, ['box', 'init', '--json', '--name', name]);
-    }
-    if (!r.ok) throw new CliError(/permission denied|could not resolve|refused|timed out|unreachable/i.test(r.err) ? sshProblem(cfg.host, r.err) : `the box could not make its keys: ${(r.err || r.out).trim().split('\n').pop() || 'no details'}`);
+    d.say('Reaching the box. It will ask for its sudo password.');
+    const out = tmpName();
+    const install = process.env.SALU_BOX_INSTALL ?? INSTALL_DEFAULT;
+    const code = await inTerminal(d, cfg.host, `( command -v salu >/dev/null || { ${install}; } ) && sudo salu box init --json --name ${name} > ${out}`);
+    const r = await d.exec.capture([...sshBase(cfg.host), `cat ${out}; rm -f ${out}`], { timeoutMs: 30_000 });
+    if (code !== 0 || !r.ok) throw new CliError(code === 255 ? sshProblem(cfg.host, r.err || 'ssh failed') : `setting up the box stopped (exit ${code}). Run salu box add again and it continues from here.`);
     const line = r.out.split('\n').map((s) => s.trim()).filter((s) => s.startsWith('{')).pop();
     let j: any;
     try {
@@ -103,26 +109,38 @@ export async function addBox(d: Deps, o: AddOpts, readToken: () => Promise<strin
     d.say(`✓ private repo ${slug}`);
   }
 
-  // 3. tell the box about the repo and give it the key that signs commands.
-  if (!cfg.connected) {
+  // 3 + 4. tell the box about the repo, and give it the Claude login. Secrets are staged in private
+  // files and read by redirect inside one terminal session, so sudo can ask for its password once.
+  if (!cfg.connected || !cfg.loggedIn) {
     need(cfg, 'repoSsh');
+    if (!/^git@github\.com:[\w.-]+\/[\w.-]+\.git$/.test(cfg.repoSsh!)) throw new CliError(`unexpected repo address ${cfg.repoSsh}. Start over: salu box add ${cfg.host} --fresh`);
     cfg.macKey ??= randomBytes(32).toString('base64');
     persist();
-    const r = await onBox(d, cfg.host, ['box', 'connect', '--url', cfg.repoSsh!, '--mac-key', '-'], cfg.macKey + '\n');
-    if (!r.ok) throw new CliError(`the box would not connect to the repo: ${(r.err || r.out).trim().split('\n').pop() || 'no details'}`);
-    cfg = { ...cfg, connected: true };
+    const token = cfg.loggedIn ? undefined : await readToken();
+    const files: string[] = [];
+    const steps: string[] = [];
+    try {
+      if (!cfg.connected) {
+        const f = tmpName();
+        await stage(d, cfg.host, f, cfg.macKey + '\n');
+        files.push(f);
+        steps.push(`salu box connect --url ${cfg.repoSsh} --mac-key - < ${f}`);
+      }
+      if (token) {
+        const f = tmpName();
+        await stage(d, cfg.host, f, token + '\n');
+        files.push(f);
+        steps.push(`salu box login --stdin < ${f}`);
+      }
+      d.say('Setting up the box (sudo may ask for its password again).');
+      const code = await inTerminal(d, cfg.host, `sudo sh -c '${steps.join(' && ')}'`);
+      if (code !== 0) throw new CliError(`the box refused a step (exit ${code}); its message is above. Run salu box add again to retry from here.`);
+    } finally {
+      if (files.length) await unstage(d, cfg.host, files);
+    }
+    cfg = { ...cfg, connected: true, loggedIn: true };
     persist();
-    d.say('✓ the box watches the repo');
-  }
-
-  // 4. the Claude login.
-  if (!cfg.loggedIn) {
-    const token = await readToken();
-    const r = await onBox(d, cfg.host, ['box', 'login', '--stdin'], token + '\n');
-    if (!r.ok) throw new CliError(`the box did not accept the login: ${(r.err || r.out).trim().split('\n').pop() || 'no details'}`);
-    cfg = { ...cfg, loggedIn: true };
-    persist();
-    d.say('✓ the box is logged in to Claude');
+    d.say('✓ the box watches the repo and is logged in to Claude');
   }
 
   // 5. does it answer?
