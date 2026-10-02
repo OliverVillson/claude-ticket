@@ -132,6 +132,7 @@ exit 0
     for (const tool of ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash']) expect(o.allowedTools).toContain(tool);
     expect(DOCKERFILE).toContain('bubblewrap');
     expect(DOCKERFILE).toContain('APT::Sandbox::User "root"');
+    expect(DOCKERFILE).toContain('chown root:root /var/cache/apt/archives/partial');
     expect(createArgs({ name: 'n', project: 'p', dir: '/d' }).join(' ')).toContain('SETFCAP');
   });
 });
