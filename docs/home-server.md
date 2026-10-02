@@ -179,6 +179,7 @@ sudo -u salu env SALU_HOME=/var/lib/salu/web salu remote key     # prints the si
 **5. On the Mac: connect and send the first ticket:**
 ```sh
 salu update && cd ~/code/web
+salu add project web .                                 # register the folder first (skip if it already exists)
 salu remote add web --key <the key from the box>
 salu add "say hello" "Create HELLO.md containing one friendly line, and commit it."
 salu notif                                             # shows "done" after a minute or two
