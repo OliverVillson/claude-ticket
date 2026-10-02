@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
@@ -202,6 +202,20 @@ describe('git transport', () => {
     await expect(a.put('../evil', 'x')).rejects.toThrow(/bad control path/);
     await expect(a.put('boxes/x/big.json', 'x'.repeat(70000))).rejects.toThrow(/64 KiB/);
     expect(existsSync(join(root, 'evil'))).toBe(false);
+  });
+  test('a file over the cap in the repo is skipped without being read', async () => {
+    const bare = join(root, 'big.git');
+    git(root, ['init', '-q', '--bare', '-b', 'main', bare]);
+    const w = join(root, 'writer');
+    git(root, ['clone', '-q', bare, w]);
+    mkdirSync(join(w, 'boxes/x/commands'), { recursive: true });
+    writeFileSync(join(w, 'boxes/x/commands/big.json'), 'x'.repeat(70000));
+    git(w, ['add', '-A']);
+    git(w, ['commit', '-q', '-m', 'big']);
+    git(w, ['push', '-q', 'origin', 'HEAD:refs/heads/main']);
+    const t = gitTransport({ url: bare, dir: join(root, 'reader') });
+    expect(await t.list('boxes/x/commands')).toEqual(['big.json']);
+    expect(await t.get('boxes/x/commands/big.json')).toBeUndefined();
   });
   test('an unreachable repo says so in words', async () => {
     const t = gitTransport({ url: join(root, 'missing.git'), dir: join(root, 'w') });

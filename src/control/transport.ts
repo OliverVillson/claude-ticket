@@ -119,7 +119,9 @@ export function gitTransport(opts: { url: string; sshKey?: string; dir: string }
   const readLocal = (p: string): string | undefined => {
     const full = inside(p);
     try {
-      if (lstatSync(full).isSymbolicLink() || !lstatSync(full).isFile()) return undefined;
+      const st = lstatSync(full);
+      // Check the size before reading: a huge file in the repo must never be loaded into memory.
+      if (st.isSymbolicLink() || !st.isFile() || st.size > MAX_FILE_BYTES) return undefined;
       return readFileSync(full, 'utf8');
     } catch {
       return undefined;
