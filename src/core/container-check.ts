@@ -2,7 +2,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { podmanCwd, CREDENTIAL_ENV, createArgs, engine, imageExists, runtime, WORKDIR } from './container.ts';
+import { podmanCwd, CREDENTIAL_ENV, claudeAuthEnv, containerAuthEnv, createArgs, engine, imageExists, runtime, WORKDIR } from './container.ts';
+import { API_PLACEHOLDER, API_SOCKET_IN, kernelAuthMode, startApiProxy } from './apiproxy.ts';
 import { startEgress } from './egress.ts';
 import type { Probe } from './sandbox-check.ts';
 
@@ -41,6 +42,8 @@ export interface ContainerFacts {
   envText: string;
   hostSecrets: string[];
   mountPoints: string[];
+  /** socket mode only: the kernel login must not be in the environment a ticket's Claude Code gets (placeholder only) */
+  authSocket?: { spawnEnvHasToken: boolean; placeholderOnly: boolean; apiStatus: number };
 }
 
 /** Decide the probes from the facts. Pure, so it is tested without Podman. */
@@ -60,7 +63,13 @@ export function judgeContainer(f: ContainerFacts): Probe[] {
       { name: 'container: only the kernel folder and the egress socket are mounted from the host', ok: extra.length === 0, detail: extra.length ? `unexpected mounts: ${extra.join(', ')}` : 'nothing else from this machine is visible' },
     ];
   }
+  const a = f.authSocket;
+  const authProbes: Probe[] = a ? [
+    { name: 'container: the Claude login stays on the host (socket mode)', ok: !a.spawnEnvHasToken && a.placeholderOnly, detail: !a.spawnEnvHasToken && a.placeholderOnly ? 'the container environment holds only the placeholder' : 'the real token would be inside the container' },
+    { name: 'container: the API socket only passes model calls', ok: a.apiStatus === 403 || a.apiStatus === 405, detail: a.apiStatus === 403 || a.apiStatus === 405 ? 'other paths are refused by the host' : `unexpected answer from the API socket (${a.apiStatus || 'none'})` },
+  ] : [];
   return [
+    ...authProbes,
     { name: 'container: the egress filter refuses private, loopback and cloud-metadata addresses', ok: open.length === 0, detail: open.length ? `not refused: ${open.map(([t, c]) => `${t} (${c || 'no answer'})`).join(', ')}` : `${Object.keys(f.egress).length} spellings all refused` },
     { name: 'container: only web ports (80, 443) are open', ok: portsOpen.length === 0 && Object.keys(f.ports).length > 0, detail: portsOpen.length ? `not refused: ${portsOpen.map(([t, code]) => `${t} (${code || 'no answer'})`).join(', ')}` : `${Object.keys(f.ports).length} non-web ports all refused` },
     { name: 'container: no network of its own', ok: f.directExit !== 0, detail: f.directExit !== 0 ? 'a request that skips the filter cannot connect' : 'the container reached the internet around the filter' },
@@ -106,6 +115,9 @@ export async function runContainerCheck(o: { bin?: string | null } = {}): Promis
   let stop: (() => void) | null = null;
   try {
     stop = await startEgress({ path: socket });
+    const stopApi = kernelAuthMode() === 'socket' ? await startApiProxy({ path: join(sockDir, 'api.sock') }) : null;
+    const stopEgress = stop;
+    stop = () => (stopEgress(), stopApi?.());
     const c = sh(bin, createArgs({ name, project: 'doctor', dir: work, runtime: runtime().name, socket, disk: null }));
     if (c.status !== 0) return [{ name: 'container kernel proof', ok: false, detail: `could not create the test container: ${(c.stderr || c.stdout).trim().split('\n').pop()}` }];
     const s = sh(bin, ['start', name]);
@@ -127,7 +139,16 @@ export async function runContainerCheck(o: { bin?: string | null } = {}): Promis
     const envText = (await inside(['sh', '-c', 'env; cat /proc/1/environ | tr "\\0" "\\n"'])).stdout;
     const mounts = (await inside(['cat', '/proc/self/mountinfo'])).stdout.split('\n').map((l) => l.split(' ')[4] ?? '').filter(Boolean);
     const hostSecrets = Object.entries(process.env).filter(([k, v]) => CREDENTIAL_ENV.test(k) && v && v.length > 8).map(([, v]) => v!);
-    return judgeContainer({ egress, ports, control, diagnostics, directExit: direct.status ?? 1, envText, hostSecrets, mountPoints: mounts });
+    let authSocket: ContainerFacts['authSocket'];
+    if (kernelAuthMode() === 'socket') {
+      const real = claudeAuthEnv();
+      const spawnEnv = containerAuthEnv(real);
+      const tok = Object.values(real)[0] ?? '';
+      const apiStatus = Number((await inside(['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '10', '--unix-socket', API_SOCKET_IN, 'http://localhost/v1/models'])).stdout.trim()) || 0;
+      authSocket = { spawnEnvHasToken: !!tok && Object.values(spawnEnv).some((v) => v.includes(tok)), placeholderOnly: Object.values(spawnEnv).includes(API_PLACEHOLDER), apiStatus };
+      if (tok) hostSecrets.push(tok);
+    }
+    return judgeContainer({ egress, ports, control, diagnostics, directExit: direct.status ?? 1, envText, hostSecrets, mountPoints: mounts, authSocket });
   } finally {
     sh(bin, ['rm', '-f', name]);
     stop?.();

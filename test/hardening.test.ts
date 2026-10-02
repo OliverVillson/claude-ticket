@@ -115,3 +115,12 @@ describe('the sandbox check says why a ticket did not run', () => {
     expect(t).not.toContain('bunfs');
   });
 });
+
+import { loginSummary } from '../src/cli/commands/doctor.ts';
+describe('doctor login line', () => {
+  test('JSON from `claude auth status` is summarised, plain text is kept', () => {
+    expect(loginSummary('{\n  "loggedIn": true,\n  "authMethod": "oauth_token",\n  "email": "a@b.c"\n}')).toBe('(a@b.c, oauth_token)');
+    expect(loginSummary('{"loggedIn": true}')).toBe('');
+    expect(loginSummary('Logged in as a@b.c\nextra')).toBe('Logged in as a@b.c');
+  });
+});

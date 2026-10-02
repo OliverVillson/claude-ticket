@@ -4,9 +4,10 @@ import { homedir, tmpdir, totalmem } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { SpawnedProcess, SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
 import { CliError } from './errors.ts';
-import { egressSocketPath } from './egress.ts';
+import { projectSocketDir } from './egress.ts';
 import { folderSlug } from './resolve.ts';
 import { ticketHome } from './paths.ts';
+import { kernelAuthMode, placeholderEnv } from './apiproxy.ts';
 
 /**
  * The container kernel: one rootless Podman container per project, run with gVisor (`runsc`) when it is
@@ -21,7 +22,7 @@ export const WORKDIR = '/work';
 const EGRESS_IN = '/run/salu/egress.sock';
 const EGRESS_DIR_IN = '/run/salu';
 /** Bumped when what a container mounts changes, so containers made the old way are recreated. */
-const MOUNTS_VERSION = '2';
+const MOUNTS_VERSION = '3';
 
 export const containerOn = (env: NodeJS.ProcessEnv = process.env) => !['off', '0', 'no', 'false'].includes((env.SALU_CONTAINER ?? '').toLowerCase());
 
@@ -75,7 +76,7 @@ export function createArgs(o: CreateOpts): string[] {
     '-v', `${o.dir}:${WORKDIR}:rw`,
     // The socket's folder, not the socket file: a file mount keeps the inode it had at create time, and the filter
     // makes a new socket (new inode) every time it starts, which would leave a running container talking to a dead one.
-    '-v', `${dirname(o.socket ?? egressSocketPath())}:${EGRESS_DIR_IN}:rw`,
+    '-v', `${dirname(o.socket ?? join(projectSocketDir(o.project), 'egress.sock'))}:${EGRESS_DIR_IN}:rw`,
     ...Object.entries(env).flatMap(([k, v]) => ['--env', `${k}=${v}`]),
     o.image ?? KERNEL_IMAGE,
   ];
@@ -103,6 +104,11 @@ export function claudeAuthEnv(_env: NodeJS.ProcessEnv = process.env, file = toke
   const t = readFileSync(file, 'utf8').trim();
   if (!t) return {};
   return /^sk-ant-api/.test(t) ? { ANTHROPIC_API_KEY: t } : { CLAUDE_CODE_OAUTH_TOKEN: t };
+}
+
+/** What goes into the container for the login: the token itself (env mode) or only a placeholder (socket mode). */
+export function containerAuthEnv(auth: Record<string, string>, mode = kernelAuthMode()): Record<string, string> {
+  return mode === 'socket' ? placeholderEnv(auth) : auth;
 }
 
 /** The container's login, or a refusal that says how to get one. Never falls back to the orchestrator's login. */
@@ -286,7 +292,7 @@ export function containerSpawner(project: string, dir: string, o: { bin?: string
     const keep = /^(CLAUDE_|ANTHROPIC_|SALU_TICKET|SALU_KERNEL_WORKER|LANG$|LC_|TERM$)/;
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(opts.env)) if (v !== undefined && keep.test(k) && !CREDENTIAL_ENV.test(k)) env[k] = v;
-    Object.assign(env, auth);
+    Object.assign(env, containerAuthEnv(auth));
     const tmp = mkdtempSync(join(tmpdir(), 'salu-env-'));
     const file = join(tmp, 'env');
     writeFileSync(file, Object.entries(env).map(([k, v]) => `${k}=${v.replace(/\n/g, ' ')}`).join('\n') + '\n', { mode: 0o600 });
@@ -311,6 +317,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
       build-essential pkg-config cmake make python3 python3-pip python3-venv python3-dev golang-go default-jdk-headless \\
       sqlite3 libsqlite3-dev libssl-dev nodejs npm sudo vim-tiny procps bubblewrap \\
     && rm -rf /var/lib/apt/lists/*
+# Agent commands run inside bubblewrap's one-id user namespace (the token scrub), where apt cannot switch to its
+# _apt download user (setgroups/setegid fail), and root there has no rights over files the unmapped _apt owns.
+# Download as the container's root instead (gVisor confines that root) into a root-owned partial folder.
+RUN printf 'APT::Sandbox::User "root";\\n' > /etc/apt/apt.conf.d/99salu-sandbox-user && chown root:root /var/cache/apt/archives/partial
 RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash && npm install -g @anthropic-ai/claude-code
 RUN printf '#!/bin/sh\\nsocat TCP-LISTEN:3128,bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:${EGRESS_IN} >/tmp/salu-init.log 2>&1 &\\nexec sleep infinity\\n' > /usr/local/bin/salu-kernel-init && chmod +x /usr/local/bin/salu-kernel-init
 WORKDIR ${WORKDIR}

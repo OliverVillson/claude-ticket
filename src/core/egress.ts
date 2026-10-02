@@ -3,6 +3,7 @@ import { lookup as dnsLookup } from 'node:dns/promises';
 import { chmodSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { ticketHome } from './paths.ts';
+import { folderSlug } from './resolve.ts';
 
 /**
  * The egress filter for kernel containers. A container has no network of its own (`--network none`); its
@@ -14,6 +15,14 @@ import { ticketHome } from './paths.ts';
 
 export function egressSocketPath(): string {
   return process.env.SALU_EGRESS_SOCKET || join(ticketHome(), 'run', 'egress', 'egress.sock');
+}
+
+/**
+ * Each project's container is given its own socket folder, so an agent that replaces or deletes a socket in its
+ * folder only affects its own project: it cannot sit in the middle of another project's traffic.
+ */
+export function projectSocketDir(project: string): string {
+  return join(dirname(egressSocketPath()), 'p', folderSlug(project));
 }
 
 const v4 = (ip: string) => ip.split('.').map(Number);

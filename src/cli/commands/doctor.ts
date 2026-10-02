@@ -24,13 +24,14 @@ logged in (it sends one tiny test request to check the login really works), and 
   --sandbox   also prove the kernel sandbox holds on this machine: one small ticket tries to read, write and hard-link
               canary files in your home folder and salu checks the files (uses a few haiku requests)`;
 
-async function run(cmd: string[]): Promise<{ ok: boolean; out: string }> {
+async function run(cmd: string[], o: { full?: boolean } = {}): Promise<{ ok: boolean; out: string }> {
   try {
     const p = Bun.spawn(cmd, { stdout: 'pipe', stderr: 'pipe', env: process.env });
     const timer = setTimeout(() => p.kill(), 8000);
     const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
     clearTimeout(timer);
-    return { ok: (await p.exited) === 0, out: (out || err).trim().split('\n')[0] ?? '' };
+    const text = (out || err).trim();
+    return { ok: (await p.exited) === 0, out: o.full ? text : (text.split('\n')[0] ?? '') };
   } catch (e: any) {
     return { ok: false, out: String(e?.message ?? e) };
   }
@@ -139,10 +140,10 @@ export async function doctor(p: Parsed): Promise<number> {
     if (!v.ok) no(`${c.path} does not run: ${v.out}`, 'Reinstall Claude Code: curl -fsSL https://claude.ai/install.sh | bash');
     else {
       ok(`Claude Code ${v.out} at ${c.path} ${dim(`(${c.source})`)}`);
-      const a = await run([c.path!, 'auth', 'status']);
+      const a = await run([c.path!, 'auth', 'status'], { full: true }); // all of it: newer versions print JSON over several lines
       const out = await loginProblem(c.path!);
       if (out) no('Claude Code is logged out', out);
-      else if (a.ok) ok(`logged in ${dim(a.out)}`.trimEnd());
+      else if (a.ok) ok(`logged in ${dim(loginSummary(a.out))}`.trimEnd());
       else console.log(`${dim('·')} could not confirm the login (${a.out || 'no answer'}).`);
       // The status command can say "logged in" for a login that has since expired: ask Claude for real.
       if (!out && process.env.SALU_WORKER !== 'fake') {
@@ -174,4 +175,15 @@ export async function doctor(p: Parsed): Promise<number> {
   if (p.flags.sandbox) bad += await sandboxProof(canary);
   console.log(bad ? `\n${bad} problem${bad === 1 ? '' : 's'} to fix.` : '\nAll good.');
   return bad ? 1 : 0;
+}
+
+/** `claude auth status` prints JSON in newer versions: show who and how, not its first brace. */
+export function loginSummary(out: string): string {
+  try {
+    const j = JSON.parse(out);
+    const bits = [j.email, j.orgName ?? j.organization, j.authMethod ?? j.loginMethod ?? j.method, j.subscriptionType].filter((x) => typeof x === 'string' && x);
+    return bits.length ? `(${bits.join(', ')})` : '';
+  } catch {
+    return out.split('\n')[0].trim();
+  }
 }

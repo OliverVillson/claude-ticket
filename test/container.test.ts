@@ -16,6 +16,11 @@ beforeAll(() => {
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 describe('container arguments', () => {
+  test('each project mounts its own socket folder, never the shared run folder', () => {
+    const mount = (project: string) => createArgs({ name: 'n', project, dir: '/d' }).filter((x, i, a) => a[i - 1] === '-v' && x.endsWith(':/run/salu:rw'))[0]!;
+    expect(mount('web')).not.toBe(mount('api'));
+    expect(mount('web')).toMatch(/\/run\/egress\/p\/web:\/run\/salu:rw$/);
+  });
   test('the container gets only its kernel folder and the egress socket, no network, no extra rights', () => {
     const a = createArgs({ name: 'salu-k-web', project: 'web', dir: '/home/u/.salu/kernel/web', runtime: 'runsc', socket: '/home/u/.salu/run/egress.sock' });
     const joined = a.join(' ');
@@ -109,7 +114,9 @@ exit 0
     expect(calls).toContain('salu-k-web claude --output-format stream-json'); // the host script path was dropped
     expect(calls).not.toContain('secret-token'); // never on a command line
     const env = readFileSync(join(root, 'seen-env'), 'utf8');
-    expect(env).toContain('CLAUDE_CODE_OAUTH_TOKEN=secret-token');
+    expect(env).toContain('CLAUDE_CODE_OAUTH_TOKEN=ssh-placeholder'); // socket mode (default): the real token stays on the host
+    expect(env).toContain('ANTHROPIC_UNIX_SOCKET=/run/salu/api.sock');
+    expect(env).not.toContain('secret-token');
     expect(env).toContain('ANTHROPIC_MODEL=m');
     expect(env).not.toMatch(/GITHUB_TOKEN|DATABASE_URL|PATH/);
     expect(env).not.toMatch(/main-orchestrator-login|main-key/); // the box's own login never goes in
@@ -131,6 +138,8 @@ exit 0
     expect(o.env?.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB).toBe('1');
     for (const tool of ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash']) expect(o.allowedTools).toContain(tool);
     expect(DOCKERFILE).toContain('bubblewrap');
+    expect(DOCKERFILE).toContain('APT::Sandbox::User "root"');
+    expect(DOCKERFILE).toContain('chown root:root /var/cache/apt/archives/partial');
     expect(createArgs({ name: 'n', project: 'p', dir: '/d' }).join(' ')).toContain('SETFCAP');
   });
 });
@@ -417,7 +426,7 @@ describe('unloading idle containers', () => {
     writeFileSync(fake, `#!/bin/sh
 echo "$@" >> ${root}/calls2.log
 case "$1" in
-  inspect) s=$(cat ${state}); echo "$s 2"; [ "$s" = stopping ] && echo exited > ${state}; exit 0 ;;
+  inspect) s=$(cat ${state}); echo "$s 3"; [ "$s" = stopping ] && echo exited > ${state}; exit 0 ;;
   start) echo running > ${state}; exit 0 ;;
 esac
 exit 0
@@ -452,7 +461,7 @@ exit 0
     ensureContainer('web', join(root, 'k'), fake);
     const calls = readFileSync(join(root, 'calls3.log'), 'utf8');
     expect(calls).toContain('rm -f salu-k-web');
-    expect(calls).toMatch(/create .*salu\.mounts=2/);
+    expect(calls).toMatch(/create .*salu\.mounts=3/);
   });
 });
 
