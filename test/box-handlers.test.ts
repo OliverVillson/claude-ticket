@@ -6,7 +6,7 @@ import { createHandlers } from '../src/box/handlers/index.ts';
 import type { BoxDeps } from '../src/box/handlers/types.ts';
 import { boxLoginEnvFile, boxLoginFile, readBoxLogin } from '../src/box/login.ts';
 import { GITHUB_HOST_KEY, gitSshCommand } from '../src/box/hosts.ts';
-import { canonicalJson, heartbeatBody } from '../src/box/heartbeat.ts';
+import { heartbeatSource } from '../src/box/heartbeat-data.ts';
 
 let d: string;
 const saved = process.env.SALU_RUNNER_ROOT;
@@ -171,14 +171,16 @@ describe('status, ping and the heartbeat', () => {
     expect(s.data.doctor).toEqual(['✓ podman', '✗ gVisor missing']);
   });
 
-  test('the heartbeat is signed over the canonical JSON and carries no secrets', async () => {
-    const f = fake();
-    const key = Buffer.alloc(32, 7);
-    const body = JSON.parse(await heartbeatBody(f.deps, 'salubox', key));
-    const { sig, ...rest } = body;
-    expect(sig).toBe(new Bun.CryptoHasher('sha256', key).update(canonicalJson(rest)).digest('hex'));
-    expect(body).toMatchObject({ v: 1, box: 'salubox', at: 1_759_413_000_000, version: '1.2.0' });
-    expect(canonicalJson({ b: 1, a: [2, { d: 1, c: 2 }] })).toBe('{"a":[2,{"c":2,"d":1}],"b":1}');
+  test('the heartbeat data answers at once with the version, then carries disk, tickets and projects', async () => {
+    const list = JSON.stringify([{ project: 'web', service: 'active', sync: 'active', todo: 1, running: 1, blocked: 0, done: 4 }]);
+    const f = fake((c) => (c[2] === 'list' ? { ok: true, out: list } : { ok: true, out: '' }));
+    const beat = heartbeatSource(f.deps);
+    expect(beat()).toEqual({ version: '1.2.0' });
+    await new Promise((r) => setTimeout(r, 50));
+    const next: any = beat();
+    expect(next.tickets).toEqual({ todo: 1, running: 1, blocked: 0, done: 4 });
+    expect(next.projects).toEqual([{ project: 'web', service: 'active', running: 1, todo: 1 }]);
+    expect(JSON.stringify(next)).not.toContain('sk-ant');
   });
 });
 
