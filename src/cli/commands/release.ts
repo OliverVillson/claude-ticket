@@ -12,12 +12,13 @@ import { generateReleaseKey, publicOfSeed, SIG, signSums, SUMS, verifyDir, verif
 import { RELEASE_PUBKEYS } from '../../release/key.ts';
 import { confirm, helpIf } from './_shared.ts';
 
-const HELP = `salu release keygen | sign <tag|folder> | verify <folder>
+const HELP = `salu release keygen | pubkey | sign <tag|folder> | verify <folder>
 
 Signed releases: a release carries SHA256SUMS and SHA256SUMS.sig. The public key is built into salu, so a box checks
 what it downloads before it runs anything.
 
   salu release keygen             once: make the signing key (~/.salu/release.key) and print its public half
+  salu release pubkey             print the public half of your signing key, and say whether this salu trusts it
   salu release sign v1.2.0        download the release, check its files, sign SHA256SUMS, upload SHA256SUMS.sig (needs gh)
         --quick                   sign what SHA256SUMS says without downloading every file first
   salu release sign <folder>      sign the SHA256SUMS in a folder (a release workflow can do this when SALU_RELEASE_KEY is set; not used today)
@@ -66,6 +67,12 @@ export async function release(p: Parsed): Promise<number> {
       console.log(`${green('✓')} signing key saved to ${out} ${dim('(back it up; anyone with it can sign releases)')}`);
       console.log(`\npublic key (goes into src/release/key.ts):\n  ${k.pub}\n`);
       console.log(dim('Sign each release with:   salu release sign <tag>'));
+      return 0;
+    }
+    case 'pubkey': {
+      const pub = publicOfSeed(loadSeed(p)); // the public half only; safe to print and to compare with src/release/key.ts
+      console.log(pub);
+      console.log(dim(RELEASE_PUBKEYS.includes(pub) ? 'this is the key built into this salu' : 'this key is NOT built into this salu: releases it signs will not verify'));
       return 0;
     }
     case 'sign': {

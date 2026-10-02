@@ -58,3 +58,12 @@ describe('release signing', () => {
     expect(parseSums(`${h('x')}  a\n`).get('a')).toBe(h('x'));
   });
 });
+
+describe('the pinned key', () => {
+  test('is a 32 byte ed25519 public key and is used when no key is passed', () => {
+    expect(RELEASE_PUBKEYS.length).toBeGreaterThan(0);
+    for (const k of RELEASE_PUBKEYS) expect(Buffer.from(k, 'base64').length).toBe(32);
+    const d = release({ a: '1' }); // signed by a throwaway key, so the pinned one must refuse it
+    expect(verifyDir(d).ok).toBe(false);
+  });
+});
