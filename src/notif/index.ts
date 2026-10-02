@@ -163,21 +163,36 @@ export function hasClientRemote(db: Database): boolean {
   return listRemotes(db).some((r) => r.role === 'client');
 }
 
+/** How often an open window asks the git transport for new messages (a sync that finds nothing is one cheap git fetch). */
+export const FETCH_MS = 4_000;
+
 let fetching: ChildProcess | null = null;
+let again = false;
 
 /**
  * Ask the git transport for new messages without waiting for it: runs `salu remote sync` in the
  * background (the window's own poll picks up what it stores). At most one at a time; returns false
- * when there is nothing to fetch from or one is already running.
+ * when there is nothing to fetch from or one is already running. `now` is for something that must
+ * reach the box right away (a ticket just added): when a sync is already running, one more starts as
+ * soon as it ends, so the new file is never left waiting for the next timer.
  */
-export async function fetchInBackground(db: Database): Promise<boolean> {
-  if (fetching || !hasClientRemote(db) || process.env.SALU_NO_FETCH) return false;
+export async function fetchInBackground(db: Database, o: { now?: boolean } = {}): Promise<boolean> {
+  if (!hasClientRemote(db) || process.env.SALU_NO_FETCH) return false;
+  if (fetching) {
+    if (o.now) again = true;
+    return false;
+  }
   const { selfCommand } = await import('../orchestrator/index.ts');
   const [cmd, ...rest] = selfCommand(['remote', 'sync']);
   const child = spawn(cmd!, rest, { stdio: 'ignore', env: process.env });
   fetching = child;
   const done = () => {
-    if (fetching === child) fetching = null;
+    if (fetching !== child) return;
+    fetching = null;
+    if (again) {
+      again = false;
+      void fetchInBackground(db);
+    }
   };
   child.on('exit', done);
   child.on('error', done);

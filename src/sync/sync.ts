@@ -12,7 +12,7 @@ import * as core from '../db/queries.ts';
 import { announceAllSpawned } from './events.ts';
 import { addDecision, addOutput, answerDecision, getDecision, setChecklist } from '../threads/store.ts';
 import { answerFromReply, answerOpenWithText } from '../threads/decide.ts';
-import { ACTIONS_DIR, parseActionFile, type ActionFile, MESSAGES_DIR, remoteForbiddenTags, requireKey, signFile, signatureOk, REPLIES_DIR, TICKETS_DIR, newId, parseMessageFile, parseReplyFile, parseTicketFile, type MessageFile, type ReplyFile, type TicketFile } from './format.ts';
+import { ACTIONS_DIR, parseActionFile, type ActionFile, MESSAGES_DIR, byLabel, remoteForbiddenTags, requireKey, whoAmI, signFile, signatureOk, REPLIES_DIR, TICKETS_DIR, newId, parseMessageFile, parseReplyFile, parseTicketFile, type MessageFile, type ReplyFile, type TicketFile } from './format.ts';
 import {
   addOutAction,
   localDecisionFor,
@@ -149,7 +149,7 @@ function ticketFile(db: Database, project: Project, uuid: string): TicketFile | 
   const rt = remoteTicketByUuid(db, uuid);
   const t = rt?.ticket_id ? getTicketById(db, rt.ticket_id) : null;
   if (!rt || !t) return null;
-  return { v: 1, id: uuid, project: project.name, name: t.name, query: t.query, tags: ticketTags(t), labels: ticketLabels(t), priority: t.priority, queue: !!rt.queue, at: t.created_at };
+  return { v: 1, id: uuid, project: project.name, name: t.name, query: t.query, tags: ticketTags(t), labels: ticketLabels(t), priority: t.priority, queue: !!rt.queue, by: whoAmI(), at: t.created_at };
 }
 
 /** Box: make a ticket that arrived from a client. Returns the local ticket, or null when it is not valid here. */
@@ -157,9 +157,10 @@ function acceptTicket(db: Database, project: Project, f: TicketFile): TicketView
   const tags = { ...f.tags };
   for (const k of remoteForbiddenTags()) delete tags[k];
   let name = f.name;
+  const labels = f.by && !f.labels.includes(byLabel(f.by)) ? [...f.labels, byLabel(f.by)] : f.labels;
   for (let n = 2; ; n++) {
     try {
-      const t = createTicket(db, { project_id: project.id, name, query: f.query, tags, labels: f.labels, priority: f.priority, status: f.queue ? 'todo' : 'backlog' });
+      const t = createTicket(db, { project_id: project.id, name, query: f.query, tags, labels, priority: f.priority, status: f.queue ? 'todo' : 'backlog' });
       addRemoteTicket(db, { uuid: f.id, project_id: project.id, ticket_id: t.id, direction: 'in', queue: f.queue, sent: true });
       return t;
     } catch (e) {
@@ -189,10 +190,29 @@ function applySpawned(db: Database, m: MessageFile, projectId: number): void {
   }
 }
 
+/** Client: show a ticket a teammate added to this project, so everybody sees the same list. */
+function applyTeammateTicket(db: Database, m: MessageFile, projectId: number): void {
+  const ref = m.ticket?.ref;
+  if (!ref || !m.ticket) return;
+  let name = m.ticket.name;
+  for (let n = 2; ; n++) {
+    try {
+      const t = createTicket(db, { project_id: projectId, name, query: m.body ?? m.title, labels: m.by ? [byLabel(m.by)] : [], status: /queued to run/.test(m.title) ? 'todo' : 'backlog' });
+      addRemoteTicket(db, { uuid: ref, project_id: projectId, ticket_id: t.id, direction: 'out', queue: true, sent: true });
+      return;
+    } catch (e) {
+      if (!(e instanceof CliError) || !/already exists/.test(e.message) || n > 50) throw e;
+      name = `${m.ticket.name} (${n})`;
+    }
+  }
+}
+
 /** Client: what a message from the box does to the local copy of the ticket. */
 function applyMessage(db: Database, m: MessageFile, projectId: number): void {
   if (m.type === 'ticket.spawned') return void applySpawned(db, m, projectId);
   const ref = m.ticket?.ref;
+  // Co-working: a teammate's ticket (one this computer did not send) becomes a local copy marked with their name.
+  if (m.type === 'ticket.accepted' && ref && m.ticket && !knownRemoteTicket(db, ref)) return void applyTeammateTicket(db, m, projectId);
   const rt = ref ? remoteTicketByUuid(db, ref) : null;
   if (!rt || rt.direction !== 'out' || !rt.ticket_id || !getTicketById(db, rt.ticket_id)) return;
   // The worker's whole reply is what a follow-up answers: keep it as the ticket's latest turn.
@@ -292,7 +312,9 @@ export function syncProject(db: Database, project: Project, remote: Remote = get
         enqueueMessage(db, project.id, project.name, boxName(), {
           type: 'ticket.accepted',
           level: 'info',
-          title: `Got "${t.name}"${f.queue ? ', queued to run' : ', saved in the backlog'}`,
+          title: `Got "${t.name}"${f.by ? ` from ${f.by}` : ''}${f.queue ? ', queued to run' : ', saved in the backlog'}`,
+          body: f.query.slice(0, 4000),
+          ...(f.by ? { by: f.by } : {}),
           ticket: { ref: f.id, name: t.name, id: t.id },
         });
       }
