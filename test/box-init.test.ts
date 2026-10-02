@@ -32,3 +32,12 @@ describe('salu box init', () => {
     expect(defaultBoxName('x'.repeat(40))).toHaveLength(32);
   });
 });
+
+describe('salu box connect arguments', () => {
+  test('a lone - is a value (--mac-key -), not a positional', async () => {
+    const { parseArgs } = await import('../src/cli/args.ts');
+    const p = parseArgs(['box', 'connect', '--url', 'u', '--mac-key', '-']);
+    expect(p.flags['mac-key']).toBe('-');
+    expect(p.positional).toEqual(['box', 'connect']);
+  });
+});
