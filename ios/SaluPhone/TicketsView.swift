@@ -436,6 +436,12 @@ struct DecisionCard: View {
     @State private var sending: Int?
     @State private var failure: String?
 
+    private func hint(picked: Int?) -> String {
+        if picked != nil { return "Picked. Another option goes to the worker as a reply." }
+        if decision.recommended == nil { return "Your pick goes to the worker as a reply." }
+        return "It carries on with the recommended option unless you pick another."
+    }
+
     var body: some View {
         let picked = store.pick(ticket, decision)
         Card(title: "decision", tint: Salu.warn) {
@@ -447,11 +453,7 @@ struct DecisionCard: View {
                 ForEach(Array(decision.options.enumerated()), id: \.offset) { item in
                     option(item.offset, item.element, picked: picked)
                 }
-                Text(picked != nil
-                     ? "Picked. Another option goes to the worker as a reply."
-                     : decision.recommended == nil
-                        ? "Your pick goes to the worker as a reply."
-                        : "It carries on with the recommended option unless you pick another.")
+                Text(hint(picked: picked))
                     .font(Salu.mono(.caption2))
                     .foregroundStyle(Salu.chrome)
                 if let failure {

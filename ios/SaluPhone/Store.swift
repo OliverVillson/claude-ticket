@@ -100,8 +100,9 @@ final class Store: ObservableObject {
 
     /// Needs all three: the box ignores unsigned tickets and replies, so nothing is sent without the key.
     private var client: GitHubClient? {
-        guard let r = GitHubClient.parseRepo(repo), !token.isEmpty, !Self.keyTooShort(signingKey), let key = Signing.key(signingKey) else { return nil }
-        return GitHubClient(owner: r.owner, repo: r.repo, token: token, key: key)
+        let tok = token.trimmed  // a pasted token often brings a space or newline along
+        guard let r = GitHubClient.parseRepo(repo), !tok.isEmpty, !Self.keyTooShort(signingKey), let key = Signing.key(signingKey) else { return nil }
+        return GitHubClient(owner: r.owner, repo: r.repo, token: tok, key: key)
     }
     private var repoKey: String {
         if demo { return "demo" }
@@ -120,6 +121,16 @@ final class Store: ObservableObject {
     func ticket(for m: SaluMessage) -> TicketSummary? {
         guard let t = m.ticket else { return nil }
         return tickets.first { s in s.messages.contains { $0.id == m.id } || (s.number == t.id && s.project == m.project) }
+    }
+
+    /// How often to check the inbox: often while something this phone sent waits for the box, or a
+    /// ticket is queued or working (so a demo shows the answer quickly), else every 30 seconds.
+    var pollSeconds: Int {
+        if demo { return 30 }
+        let t = tickets
+        if t.contains(where: { $0.lastSent != nil || $0.resolvePending }) { return 5 }
+        if t.contains(where: { $0.state == .running || $0.state == .queued }) { return 10 }
+        return 30
     }
 
     /// The box's latest pause, while it lasts (usage window full).
@@ -273,7 +284,7 @@ final class Store: ObservableObject {
     /// Settings' "Test connection".
     func checkConnection() async -> Check {
         guard GitHubClient.parseRepo(repo) != nil else { return Check(ok: false, inbox: false, message: SaluError.badRepo.localizedDescription) }
-        guard !token.isEmpty else { return Check(ok: false, inbox: false, message: "Add a GitHub token.") }
+        guard !token.trimmed.isEmpty else { return Check(ok: false, inbox: false, message: "Add a GitHub token.") }
         guard let c = client else {
             return Check(ok: false, inbox: false, message: signingKey.trimmed.isEmpty
                 ? "Add the signing key: run `salu remote key` on the box and paste what it prints."
