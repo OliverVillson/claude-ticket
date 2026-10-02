@@ -41,6 +41,7 @@ Usage   (salu ?  |  salu help  |  salu --help  shows this list; quote the ? in z
   salu log "name" [--follow] [--raw]
   salu plan "name"                           split a ticket into sub-tickets with Claude
   salu runner <command>                      run salu unattended on an always-on Linux box (salu runner --help)
+  salu control watch                         (box) listen for commands from your Mac through the control repo
   salu doctor                                check that Claude Code is found and you are logged in
   salu update [version] [--check]            update salu to the latest release (or a given version)
 
@@ -131,6 +132,8 @@ export async function dispatch(argv: string[]): Promise<number> {
       return (await import('./commands/log.ts')).log(sub);
     case 'plan':
       return (await import('./commands/plan.ts')).plan(sub);
+    case 'control':
+      return (await import('./commands/control.ts')).control(sub);
     case 'runner':
       return (await import('./commands/runner.ts')).runner(sub);
     case 'doctor':
