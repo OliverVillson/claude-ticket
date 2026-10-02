@@ -33,8 +33,8 @@ async function salu(args: string[], e: Record<string, string>) {
   const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
   return { code: await p.exited, out, err };
 }
-/** doctor also reports on the sandbox (off in these tests, or unsupported on the host); these tests are about Claude Code, so only other problems count. */
-const claudeProblems = (out: string) => out.split('\n').filter((l) => l.startsWith('✗') && !/sandbox/i.test(l));
+/** doctor also reports on the sandbox and the container kernel (off in these tests, or not installed on the host); these tests are about Claude Code, so only other problems count. */
+const claudeProblems = (out: string) => out.split('\n').filter((l) => l.startsWith('✗') && !/sandbox|weaker fence|kernel/i.test(l));
 
 const tickets = async (e: Record<string, string>) => JSON.parse((await salu(['list', '--json'], e)).out) as any[];
 
