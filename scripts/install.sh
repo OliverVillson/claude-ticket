@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # salu installer — macOS and Linux.
 #
-#   curl -fsSL https://raw.githubusercontent.com/OliverVillson/salu/main/scripts/install.sh | bash
+#   U=https://olivervillson.github.io/salu
+#   curl -fsSL $U/i | bash
+#   (the long form, same script: https://raw.githubusercontent.com/OliverVillson/salu/main/scripts/install.sh)
 #
 # Usage (pass args after `bash -s --` when piping):
 #   install.sh                 install or update to the latest release
@@ -144,8 +146,35 @@ if [ -z "$on_path" ] && [ "${SALU_NO_MODIFY_PATH:-}" != 1 ]; then
   say "Open a new terminal, or run:  ${G}export PATH=\"$INSTALL_DIR:\$PATH\"${Z}"
 fi
 
+# --- what the next steps need ---------------------------------------------
+# Not fatal: salu itself runs without these, but `salu box add` and `salu new` need them.
+missing=0
+if ! have claude && [ ! -x "$HOME/.local/bin/claude" ] && [ ! -x "$HOME/.claude/local/claude" ]; then
+  missing=1
+  say ""
+  say "${R}!${Z} Claude Code is not installed (the agents run on it). Fix:"
+  say "    curl -fsSL https://claude.ai/install.sh | bash"
+  say "    claude                  # once, to log in"
+fi
+if ! have gh; then
+  missing=1
+  say ""
+  say "${R}!${Z} The GitHub CLI (gh) is not installed (needed by salu new and salu box add). Fix:"
+  if [ "$os" = darwin ]; then say "    brew install gh"; say "    gh auth login"; else say "    https://github.com/cli/cli#installation"; say "    gh auth login"; fi
+elif ! gh auth status >/dev/null 2>&1; then
+  missing=1
+  say ""
+  say "${R}!${Z} gh is installed but not logged in. Fix:"
+  say "    gh auth login"
+fi
+if [ "$os" = darwin ] && ! have brew && ! have gh; then
+  say "    (no Homebrew? get it at https://brew.sh, or use https://cli.github.com)"
+fi
+[ "$missing" = 0 ] && ok "gh and Claude Code found"
+
 say ""
 say "${G}Hackermode ready.${Z} Start with:"
 say "  ${G}salu${Z}                     open the TUI"
 say "  ${G}salu add \"fix login\" \"…\"${Z}  queue a ticket"
+say "  ${G}salu box add user@host${Z}   connect an always-on box (docs/quickstart.md)"
 say "${D}update: re-run this installer · uninstall: curl -fsSL <install-url> | bash -s -- --uninstall${Z}"
