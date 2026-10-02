@@ -15,6 +15,7 @@ The box side of pairing with a Mac (docs/control-channel.md).
 
   salu box init     make the box's keys (deploy, seal, box) in ${'/var/lib/salu/box'}, once; run again it changes nothing
                     --json prints one line: {"box","deployPub","sealPub","boxKey","version"}
+                    --no-secret leaves the box's secret key out of the JSON (safe to print)
                     --name sets the box name (default: the host name)
   salu box connect  save the control repo url and the Mac's signing key (base64, from stdin), then start salu-control.service`;
 
@@ -25,7 +26,9 @@ export async function box(p: Parsed): Promise<number> {
     case 'init': {
       const r = boxInit({ name: flagStr(p, 'name'), version: VERSION });
       if (flagBool(p, 'json')) {
-        console.log(JSON.stringify(r));
+        // --no-secret leaves boxKey out: for anything printed to a terminal or a log (the installer). Only `salu box add` asks for the key, over its own ssh channel.
+        const { boxKey, ...pub } = r;
+        console.log(JSON.stringify(p.flags.secret === false ? pub : r));
         return 0;
       }
       console.log(`${green('✓')} box "${r.box}" has its keys in ${boxDir()} ${dim(`(salu ${r.version})`)}`);
