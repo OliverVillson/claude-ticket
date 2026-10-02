@@ -6,6 +6,7 @@ struct SettingsView: View {
     @State private var check: Store.Check?
     @State private var checking = false
     @State private var showToken = false
+    @State private var pasteProblem: String?
     @State private var keyDraft = ""  // saved on return or when leaving, not on every keystroke
 
     var body: some View {
@@ -47,14 +48,29 @@ struct SettingsView: View {
                         .accessibilityLabel(showToken ? "Hide token" : "Show token")
                     }
                     Button("Paste token") {
-                        if let s = UIPasteboard.general.string { store.token = s.trimmed }
+                        if let s = UIPasteboard.general.string?.trimmed, !s.isEmpty {
+                            store.token = s
+                            pasteProblem = nil
+                        } else {
+                            pasteProblem = "Nothing to paste. Copy it again, then press ⌘V in the field."
+                        }
+                    }
+                    if let pasteProblem {
+                        Text("✗ " + pasteProblem).font(Salu.mono(.footnote)).foregroundStyle(Salu.error)
+                    } else if !store.token.trimmed.isEmpty {
+                        // which token is in use, without showing it: the start says its kind, the end tells two apart
+                        LabeledContent("token set") {
+                            Text(verbatim: String(store.token.trimmed.prefix(4)) + "…" + String(store.token.trimmed.suffix(4)))
+                                .foregroundStyle(Salu.chrome)
+                        }
                     }
                 } header: {
                     label("github token")
                 } footer: {
-                    note("A fine-grained token with Contents read and write on this repo only. It stays in the iOS Keychain.")
+                    note("A fine-grained token with Contents read and write on this repo only (or `gh auth token` on your Mac). It stays in the iOS Keychain.")
                 }
                 .listRowBackground(Salu.surface)
+                .onChange(of: store.token) { pasteProblem = nil }
 
                 Section {
                     SecureField("", text: $keyDraft, prompt: Text("salu remote key, on your Mac").foregroundStyle(Salu.chrome))
