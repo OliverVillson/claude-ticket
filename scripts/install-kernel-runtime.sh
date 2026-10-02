@@ -119,25 +119,39 @@ if [ "$GVISOR" -eq 1 ]; then
 P="\${SALU_GVISOR_PLATFORM:-}"
 [ -z "\$P" ] && [ -r "\${XDG_CONFIG_HOME:-\$HOME/.config}/salu/gvisor-platform" ] && P="\$(cat "\${XDG_CONFIG_HOME:-\$HOME/.config}/salu/gvisor-platform")"
 case "\$P" in kvm|ptrace|systrap) set -- --platform="\$P" "\$@" ;; esac
-# Podman's empty network namespace has a loopback that is DOWN; crun/runc bring it up themselves but gVisor does not
-# and then gives the sandbox no network stack at all (no 127.0.0.1, so the egress forwarder cannot start). Bring it up
-# in the container's namespace before gVisor reads it. Best effort, logged to ~/.local/state/salu/runsc-wrapper.log.
-BUNDLE=""; CREATING=0; PREV=""
+# With --network none, rootless Podman leaves the spec's network namespace without a path (the runtime makes a fresh
+# one), and gVisor then builds a sandbox with no interfaces at all: no 127.0.0.1, so the egress forwarder cannot start.
+# So, at create, make a persistent empty network namespace here, bring its loopback up, and write its path into the
+# spec: the container still has no route anywhere, but gVisor now has a loopback to import. Best effort, logged to
+# ~/.local/state/salu/runsc-wrapper.log. Removed again on delete.
+BUNDLE=""; CMD=""; PREV=""; ID=""
 for A in "\$@"; do
   [ "\$PREV" = "--bundle" ] && BUNDLE="\$A"
-  case "\$A" in --bundle=*) BUNDLE="\${A#--bundle=}" ;; create) CREATING=1 ;; esac
-  PREV="\$A"
+  case "\$A" in --bundle=*) BUNDLE="\${A#--bundle=}" ;; create|delete) CMD="\$A" ;; esac
+  PREV="\$A"; ID="\$A"
 done
-if [ "\$CREATING" = 1 ] && [ -r "\$BUNDLE/config.json" ]; then
+NSDIR="\${XDG_RUNTIME_DIR:-/tmp}/salu-netns"
+LOG="\${XDG_STATE_HOME:-\$HOME/.local/state}/salu/runsc-wrapper.log"
+mkdir -p "\$(dirname "\$LOG")" 2>/dev/null
+note() { echo "\$(date -u +%FT%TZ) \$*" >>"\$LOG" 2>/dev/null; }
+if [ "\$CMD" = delete ]; then
+  [ -n "\$ID" ] && { umount "\$NSDIR/\$ID" 2>/dev/null; rm -f "\$NSDIR/\$ID" 2>/dev/null; }
+elif [ "\$CMD" = create ] && [ -r "\$BUNDLE/config.json" ]; then
   NETNS="\$(python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(next((n.get("path","") for n in c.get("linux",{}).get("namespaces",[]) if n.get("type")=="network"),""))' "\$BUNDLE/config.json" 2>/dev/null)"
-  LOG="\${XDG_STATE_HOME:-\$HOME/.local/state}/salu/runsc-wrapper.log"; mkdir -p "\$(dirname "\$LOG")" 2>/dev/null
+  if [ -z "\$NETNS" ]; then
+    NETNS="\$NSDIR/\$ID"
+    if mkdir -p "\$NSDIR" && touch "\$NETNS" && unshare --net="\$NETNS" true 2>>"\$LOG" \
+       && python3 -c 'import json,sys; f=sys.argv[1]; c=json.load(open(f)); [n.__setitem__("path", sys.argv[2]) for n in c["linux"]["namespaces"] if n.get("type")=="network"]; json.dump(c, open(f,"w"))' "\$BUNDLE/config.json" "\$NETNS" 2>>"\$LOG"; then
+      note "made network namespace \$NETNS for \$ID"
+    else
+      note "could not make a network namespace for \$ID"; rm -f "\$NETNS"; NETNS=""
+    fi
+  fi
   if [ -n "\$NETNS" ]; then
-    nsenter --net="\$NETNS" ip link set lo up >>"\$LOG" 2>&1 && echo "\$(date -u +%FT%TZ) lo up in \$NETNS" >>"\$LOG" || echo "\$(date -u +%FT%TZ) could not bring lo up in \$NETNS" >>"\$LOG"
-  else
-    echo "\$(date -u +%FT%TZ) no network namespace path in the spec: nothing to bring up" >>"\$LOG"
+    nsenter --net="\$NETNS" ip link set lo up >>"\$LOG" 2>&1 && note "lo up in \$NETNS" || note "could not bring lo up in \$NETNS"
   fi
 fi
-exec /usr/local/bin/runsc --ignore-cgroups --host-uds=open "\$@"
+exec /usr/local/bin/runsc --ignore-cgroups --host-uds=open --network=sandbox "\$@"
 WRAP
   chmod 0755 "$RUNSC_WRAPPER"
   mkdir -p "$(dirname "$CONF")"
