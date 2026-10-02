@@ -90,7 +90,7 @@ export async function fakeBox(o: { handlers?: (calls: Call[]) => Handlers; inter
   const calls: Call[] = [];
   const handlers = o.handlers ? o.handlers(calls) : fakeHandlers(calls);
   const boxSide = control.gitTransport({ url: controlRepo, dir: join(boxHome, 'control') });
-  const watcher = control.runWatcher(boxSide, handlers, { box: BOX, macKey, boxKey, sealKey: seal.priv, intervalMs: o.intervalMs ?? 100 });
+  const watcher = control.runWatcher(boxSide, handlers, { box: BOX, macKey, boxKey, sealKey: seal.priv, intervalMs: o.intervalMs ?? 100, handledFile: join(boxHome, 'handled'), onError: () => {} });
   const mac = control.gitTransport({ url: controlRepo, dir: join(macHome, 'control') });
 
   return {

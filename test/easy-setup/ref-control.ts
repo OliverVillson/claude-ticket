@@ -4,7 +4,7 @@
  * to the letter, so a real piece that disagrees with it fails the same tests.
  */
 import { createCipheriv, createDecipheriv, createHash, createHmac, createPrivateKey, createPublicKey, diffieHellman, generateKeyPairSync, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { newId } from '../../src/sync/format.ts';
@@ -134,8 +134,9 @@ export function gitTransport(opts: { url: string; sshKey?: string; dir: string }
 export type Handlers = Record<Verb, (a: { args: any; secret(field: string): Buffer }) => Promise<{ ok: boolean; message: string; data?: unknown }>>;
 const VERBS = new Set<string>(['ping', 'status', 'login.set', 'project.create', 'project.remove', 'update']);
 export const MAX_AGE_MS = 24 * 3600 * 1000;
-export function runWatcher(t: ControlTransport, h: Handlers, o: { box: string; macKey: Buffer; boxKey: Buffer; sealKey: Buffer; intervalMs?: number; handled?: Set<string> }): { stop(): void } {
-  const handled = o.handled ?? new Set<string>();
+export function runWatcher(t: ControlTransport, h: Handlers, o: { box: string; macKey: Buffer; boxKey: Buffer; sealKey: Buffer; intervalMs?: number; handledFile?: string; onError?: (e: unknown) => void }): { stop(): void } {
+  const handled = new Set<string>();
+  if (o.handledFile && existsSync(o.handledFile)) for (const l of readFileSync(o.handledFile, 'utf8').split('\n')) if (l) handled.add(l);
   let stopped = false;
   let busy = false;
   const answer = async (id: string, ok: boolean, message: string, data?: unknown) => {
@@ -150,6 +151,7 @@ export function runWatcher(t: ControlTransport, h: Handlers, o: { box: string; m
         const id = name.replace(/\.json$/, '');
         if (handled.has(id)) continue;
         handled.add(id);
+        if (o.handledFile) appendFileSync(o.handledFile, `${id}\n`);
         let m: any;
         try {
           m = JSON.parse((await t.get(`boxes/${o.box}/commands/${name}`)) ?? '');

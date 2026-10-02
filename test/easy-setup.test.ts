@@ -120,7 +120,9 @@ describe('what the box refuses', () => {
   test('a command older than 24 h is ignored', async () => {
     const id = mkId(3);
     await raw(control.signMessage(base(id, { at: Date.now() - 25 * 3600 * 1000 }) as any, fb.cfg.macKey), id);
-    await expect(control.waitReply(fb.mac, fb.cfg, id, { timeoutMs: 1200 })).rejects.toThrow();
+    // Ignored (no answer) or refused (ok:false); either way nothing runs.
+    const r = await control.waitReply(fb.mac, fb.cfg, id, { timeoutMs: 1500 }).catch(() => null);
+    expect(r?.ok ?? false).toBe(false);
     expect(fb.calls.length).toBe(0);
   });
 
@@ -134,10 +136,10 @@ describe('what the box refuses', () => {
 
   test('a repeated id runs once (replay)', async () => {
     fb.stop();
-    const handled = new Set<string>();
+    const handledFile = join(fb.boxHome, 'handled');
     const mk = (calls: any[]) => (control as any).runWatcher(control.gitTransport({ url: fb.controlRepo, dir: join(fb.boxHome, 'control2') }), {
       ping: async () => (calls.push(1), { ok: true, message: 'pong' }),
-    }, { box: BOX, macKey: fb.cfg.macKey, boxKey: fb.cfg.boxKey, sealKey: Buffer.alloc(32), intervalMs: 50, handled });
+    }, { box: BOX, macKey: fb.cfg.macKey, boxKey: fb.cfg.boxKey, sealKey: Buffer.alloc(32), intervalMs: 50, handledFile, onError: () => {} });
     const calls: any[] = [];
     const w = mk(calls);
     const id = await control.sendCommand(fb.mac, fb.cfg, 'ping', {});
@@ -154,7 +156,7 @@ describe('what the box refuses', () => {
     const id = mkId(5);
     const forged = control.signMessage({ v: 1, id, box: BOX, ok: true, message: 'fine', at: Date.now() } as any, Buffer.alloc(32, 9));
     await fb.mac.put(`boxes/${BOX}/replies/${id}.json`, JSON.stringify(forged));
-    await expect(control.waitReply(fb.mac, fb.cfg, id)).rejects.toThrow();
+    await expect(control.waitReply(fb.mac, fb.cfg, id, { timeoutMs: 1500 })).rejects.toThrow();
   });
 
   test('a file over 64 KiB is refused by the transport', async () => {
@@ -167,15 +169,21 @@ describe('project.create and a ticket round trip', () => {
     const repo = fb.newProjectRepo('web');
     const key = '-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA' + 'k'.repeat(40) + '\n-----END OPENSSH PRIVATE KEY-----\n';
     const signing = generateKey();
-    const r = await fb.send('project.create', { name: 'web', repo: `file://${repo}` }, { deployKey: Buffer.from(key), signingKey: Buffer.from(signing) });
+    const r = await fb.send('project.create', { name: 'web', repo: 'git@github.com:test/web.git' }, { deployKey: Buffer.from(key), signingKey: Buffer.from(signing) });
     expect(r.ok).toBe(true);
     expect(fb.calls.at(-1)!.secrets.signingKey).toBe(signing);
     expect(everythingInControlRepo()).not.toContain(signing);
     expect(everythingInControlRepo()).not.toContain('AAAA' + 'k'.repeat(40));
 
-    const bad = await fb.send('project.create', { name: 'Web; rm -rf /', repo: 'git@github.com:a/b.git' }, { deployKey: Buffer.from('x'), signingKey: Buffer.from('y') });
+    // The Mac refuses to send it; a hand-made signed command is refused by the box.
+    const evil = { name: 'Web; rm -rf /', repo: 'git@github.com:a/b.git' };
+    await expect(fb.send('project.create', evil, { deployKey: Buffer.from('x'), signingKey: Buffer.from('y') })).rejects.toThrow();
+    const id = '1759413000000-0000000a';
+    await fb.mac.put(`boxes/${BOX}/commands/${id}.json`, JSON.stringify(control.signMessage({ v: 1, id, box: BOX, verb: 'project.create', at: Date.now(), args: evil, sealed: {} } as any, fb.cfg.macKey)));
+    const bad = await control.waitReply(fb.mac, fb.cfg, id);
     expect(bad.ok).toBe(false);
     expect(bad.message.length).toBeGreaterThan(0);
+    expect(fb.calls.filter((c) => c.verb === 'project.create').length).toBe(1);
   });
 
   test('a ticket added on the Mac runs on the box and the result comes back', async () => {
@@ -187,7 +195,7 @@ describe('project.create and a ticket round trip', () => {
       const repo = fb.newProjectRepo('web');
       const signing = generateKey();
       process.env.SALU_REMOTE_KEY = signing; // both sides hold the signing key the Mac sent sealed
-      const r = await fb.send('project.create', { name: 'web', repo: `file://${repo}` }, { deployKey: Buffer.from('k'), signingKey: Buffer.from(signing) });
+      const r = await fb.send('project.create', { name: 'web', repo: 'git@github.com:test/web.git' }, { deployKey: Buffer.from('k'), signingKey: Buffer.from(signing) });
       expect(r.ok).toBe(true);
 
       // What the real handler does on the box, and `salu new` on the Mac: a project each, joined by the repo.
