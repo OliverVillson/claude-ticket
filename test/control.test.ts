@@ -208,3 +208,27 @@ describe('git transport', () => {
     await expect(t.list('boxes/x/commands')).rejects.toThrow(/could not reach the control repo/);
   });
 });
+
+describe('salu control watch', () => {
+  test('stays running after several rounds and answers a command', async () => {
+    const bare = join(root, 'ctl.git');
+    git(root, ['init', '-q', '--bare', '-b', 'main', bare]);
+    const dir = join(root, 'box');
+    const { ensureBoxKeys, saveConnection } = await import('../src/control/keys.ts');
+    const { sealPub, boxKey } = ensureBoxKeys(dir);
+    const macKey = randomBytes(32);
+    saveConnection(bare, 'salubox', macKey, dir);
+    const proc = Bun.spawn(['bun', join(import.meta.dir, '../src/index.ts'), 'control', 'watch', '--interval', '1'], { env: { ...process.env, SALU_BOX_DIR: dir }, stdout: 'pipe', stderr: 'pipe' });
+    try {
+      await new Promise((r) => setTimeout(r, 3500)); // several rounds
+      expect(proc.exitCode).toBeNull();
+      const t = gitTransport({ url: bare, dir: join(root, 'mac') });
+      const cfg: BoxConfig = { box: 'salubox', macKey, boxKey, sealPub };
+      const id = await sendCommand(t, cfg, 'ping');
+      expect((await waitReply(t, cfg, id, { timeoutMs: 15000, pollMs: 500 })).ok).toBe(true);
+      expect(proc.exitCode).toBeNull();
+    } finally {
+      proc.kill();
+    }
+  }, 40000);
+});
