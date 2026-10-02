@@ -12,7 +12,7 @@ function run(args: string[], salu: string) {
   const bin = join(dir, 'salu');
   writeFileSync(bin, salu);
   chmodSync(bin, 0o755);
-  const r = Bun.spawnSync(['bash', script, ...args], { env: { ...process.env, SALU: bin, HOME: dir, SALU_BOX_TESTS_REPORT: join(dir, 'report.txt') }, stdout: 'pipe', stderr: 'pipe' });
+  const r = Bun.spawnSync(['bash', script, ...args], { env: { ...process.env, SALU: bin, SALU_BOX_USER: 'no-such-user-for-tests', HOME: dir, SALU_BOX_TESTS_REPORT: join(dir, 'report.txt') }, stdout: 'pipe', stderr: 'pipe' });
   rmSync(dir, { recursive: true, force: true });
   return { out: r.stdout.toString(), code: r.exitCode };
 }

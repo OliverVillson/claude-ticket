@@ -9,14 +9,19 @@
 #   scripts/box-tests.sh --only 2.3,4.2  run just these tests (ids as in the "Salu server architecture tests" doc)
 #   scripts/box-tests.sh --list          print the tests and which ones are automated
 #
+# Run it as yourself (for example `oliver`): it runs the tests as the salu user with `sudo -u salu -H` (set SALU_BOX_USER to
+# change the name), after doing the two --sudo installer checks itself. If you are already that user it just runs.
+# The image must be built (`salu kernel setup`) and the token saved (`salu kernel login`) first; both need an interactive terminal.
+#
 # Every test prints PASS, FAIL, SKIP (could not run here, with why) or MANUAL (needs you), with the evidence.
 # A summary is printed at the end and saved to ~/salu-box-tests-<time>.txt: paste it back.
 # Exit status is 1 if anything FAILed.
 set -uo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HERE="${SALU_BOX_TESTS_HERE:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 SALU="${SALU:-salu}"
 PODMAN="${SALU_CONTAINER_ENGINE:-podman}"
+ORIG_ARGS=("$@")
 WITH_TICKETS=0; WITH_SUDO=0; ONLY=""; LIST=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -24,7 +29,7 @@ while [ $# -gt 0 ]; do
     --sudo) WITH_SUDO=1; shift ;;
     --only) ONLY=",$2,"; shift 2 ;;
     --list) LIST=1; shift ;;
-    -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
 done
@@ -44,7 +49,7 @@ record() { # status id title evidence
     SKIP) printf '%s SKIP%s   %-4s %s\n' "$D" "$N" "$id" "$title" ;;
     MANUAL) printf '%s MANUAL%s %-4s %s\n' "$D" "$N" "$id" "$title" ;;
   esac
-  [ -n "$ev" ] && printf '%s' "$ev" | head -n 12 | sed "s/^/         $D/;s/\$/$N/"
+  [ -n "$ev" ] && printf '%s\n' "$ev" | head -n 12 | sed "s/^/         $D/;s/\$/$N/"
   return 0
 }
 selected() { [ -z "$ONLY" ] || case "$ONLY" in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
@@ -94,6 +99,7 @@ title_of() { printf '%s\n' "$TESTS" | awk -F'|' -v id="$1" '$1==id{print $3}'; }
 run_ok() { # id: should this test run now? records SKIP/MANUAL itself when not
   local id="$1" k; k="$(kind_of "$id")"
   selected "$id" || return 1
+  if [ -n "${SALU_BOX_TESTS_REEXEC:-}" ]; then case "$id" in 1.1|2.1) return 1 ;; esac; fi # done before the switch to the salu user
   case "$k" in
     manual) manual "$id" "$(title_of "$id")"; return 1 ;;
     tickets) [ "$WITH_TICKETS" = 1 ] || { skip "$id" "$(title_of "$id")" "run with --tickets"; return 1; } ;;
@@ -101,6 +107,39 @@ run_ok() { # id: should this test run now? records SKIP/MANUAL itself when not
   esac
   return 0
 }
+
+# --- run as the salu user -------------------------------------------------------------------------------------
+# On the box you log in as yourself (for example `oliver`) and salu runs as the `salu` user, with its own home,
+# data folder and rootless Podman. The tests must see what salu sees, so unless this already is that user the
+# script copies itself to /tmp and runs again as `salu` (`sudo -u salu -H`). The two installer checks (1.1, 2.1)
+# need root, which salu does not have, so they run first, here, and their results are handed over.
+SALU_USER="${SALU_BOX_USER:-salu}"
+PRE="${SALU_BOX_TESTS_PRE:-}"
+if [ -z "${SALU_BOX_TESTS_REEXEC:-}" ] && [ "$LIST" = 0 ] && [ "$(id -un)" != "$SALU_USER" ] && getent passwd "$SALU_USER" >/dev/null 2>&1; then
+  PRE="$(mktemp /tmp/salu-box-tests-pre.XXXXXX)"
+  enc() { printf '%s' "$1" | tr '\n' '\037'; }
+  pre_check() { # id script
+    selected "$1" || return 0
+    [ "$WITH_SUDO" = 1 ] || return 0
+    local out rc title; title="$(title_of "$1")"
+    if [ -x "$HERE/$2" ]; then
+      out="$(sudo "$HERE/$2" --check 2>&1)"; rc=$?
+      if [ $rc -eq 0 ]; then printf 'PASS|%s|%s|%s\n' "$1" "$title" "$(enc "$(printf '%s' "$out" | tail -n 8)")" >>"$PRE"
+      else printf 'FAIL|%s|%s|%s\n' "$1" "$title" "$(enc "exit $rc"$'\n'"$(printf '%s' "$out" | grep -v '^ok' | tail -n 10)")" >>"$PRE"; fi
+    else printf 'SKIP|%s|%s|%s\n' "$1" "$title" "scripts/$2 is not in this checkout" >>"$PRE"; fi
+  }
+fi
+if [ -n "${PRE:-}" ] && [ -z "${SALU_BOX_TESTS_REEXEC:-}" ]; then
+  pre_check 1.1 install-box.sh; pre_check 2.1 install-kernel-runtime.sh
+  chmod 644 "$PRE"
+  COPY="$(mktemp /tmp/salu-box-tests-run.XXXXXX)"; cp "${BASH_SOURCE[0]}" "$COPY"; chmod 755 "$COPY"
+  echo "running the tests as the $SALU_USER user (sudo -u $SALU_USER -H)"
+  sudo -u "$SALU_USER" -H env SALU="$SALU" SALU_CONTAINER_ENGINE="${SALU_CONTAINER_ENGINE:-}" SALU_BOX_TESTS_REEXEC=1 SALU_BOX_TESTS_PRE="$PRE" SALU_BOX_TESTS_HERE="$HERE" bash "$COPY" "${ORIG_ARGS[@]}"
+  rc=$?; rm -f "$COPY" "$PRE"; exit $rc
+fi
+if [ -n "${SALU_BOX_TESTS_REEXEC:-}" ] && [ -s "${PRE:-/nonexistent}" ]; then
+  while IFS='|' read -r st id title ev; do record "$st" "$id" "$title" "$(printf '%s' "$ev" | tr '\037' '\n')"; done <"$PRE"
+fi
 
 echo "salu box tests  $(date -u +%FT%TZ)  host $(hostname)  $(uname -sr)"
 have "$SALU" || { echo "salu is not installed or not on PATH (set SALU=/path/to/salu)" >&2; exit 2; }
@@ -355,7 +394,7 @@ fi
 # --- anything selected but not covered above: not run ---------------------------------------------------------------
 for id in $(printf '%s\n' "$TESTS" | cut -d'|' -f1); do
   selected "$id" || continue
-  have_result=0; for r in "${RESULTS[@]}"; do [ "$(printf '%s' "$r" | cut -d'|' -f2)" = "$id" ] && have_result=1; done
+  have_result=0; for r in "${RESULTS[@]}"; do rest="${r#*|}"; [ "${rest%%|*}" = "$id" ] && have_result=1; done
   [ $have_result = 1 ] && continue
   case "$(kind_of "$id")" in
     manual) manual "$id" "$(title_of "$id")" ;;
