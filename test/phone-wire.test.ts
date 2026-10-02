@@ -143,12 +143,14 @@ describe('the iPhone app and the box', () => {
     syncBox();
     expect(phoneMessages().map((m) => m.type)).toEqual(['ticket.accepted', 'ticket.started', 'ticket.done']);
 
-    // keep chatting: Store.reply -> SaluReply with flat ref/name and the nested ticket
+    // keep chatting: Store.reply -> SaluReply with flat ref/name and the nested ticket. Like SentReply,
+    // the answer is whatever comes after the newest message the phone had (not the phone's clock).
+    const after = phoneMessages().at(-1)!.id;
     const rid = phoneId();
     phonePut(`salu-inbox/replies/${rid}.json`, phoneEncode({ v: 1, id: rid, project: 'e2e-first', ref: id, name: 'add dark mode', ticket: { ref: id, id: onBox.id, name: 'add dark mode' }, body: 'Also remember the choice', now: false, at: Number(rid.slice(0, 13)) }));
     expect(syncBox().repliesReceived).toBe(1);
     expect(listTickets(box.db)[0]!.status).toBe('todo');
-    const answers = phoneMessages().filter((m) => m.id > rid);
+    const answers = phoneMessages().filter((m) => m.id > after);
     expect(answers.map((m) => m.type)).toEqual(['ticket.accepted']); // SentReply.answered(by:)
   });
 
