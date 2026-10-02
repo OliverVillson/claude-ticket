@@ -7,6 +7,8 @@ import { realExec } from '../../boxmac/exec.ts';
 import { controlApi } from '../../boxmac/control.ts';
 import { addBox, loginViaControl, makeTokenReader, statusLines, type Deps } from '../../boxmac/pair.ts';
 import { listBoxes, pickBox, removeBoxFile } from '../../boxmac/state.ts';
+import { boxDir, boxInit } from '../../box/init.ts';
+import { VERSION } from '../dispatch.ts';
 import { helpIf } from './_shared.ts';
 
 const HELP = `salu box add <user@host> [--name box] [--repo owner/name] [--token-file f] [--fresh]
@@ -15,6 +17,7 @@ salu box update [version] [--on box]
 salu box login [--on box] [--token-file f]
 salu box list
 salu box remove <box> [--yes]
+salu box init [--json] [--name box]          (on the box; the installer runs it)
 
 Set up an always-on computer (a salu box) from this one.
 add       pairs with the box over ssh once: installs salu there, makes a private repo
@@ -23,6 +26,7 @@ add       pairs with the box over ssh once: installs salu there, makes a private
 status    asks the box how it is doing (version, disk, tickets, the safety check).
 update    updates salu on the box to the latest release (or a given version).
 login     gives the box a fresh Claude login (when the old one ran out).
+init      the box's own side of pairing: makes its keys, once. --json prints them on one line.
 After pairing, \`salu new <name>\` makes a project that runs on the box.
 
 --on picks the box when you have more than one. Pairing keys are kept in ~/.salu/boxes (readable by you only).`;
@@ -83,6 +87,16 @@ export async function box(p: Parsed, deps: Deps = realDeps()): Promise<number> {
       const tokenFile = flagStr(p, 'token-file');
       const read = makeTokenReader(deps, tokenFile, readFile);
       await addBox(deps, { host: rest[0], name: flagStr(p, 'name'), repo: flagStr(p, 'repo'), tokenFile, fresh: flagBool(p, 'fresh') }, read);
+      return 0;
+    }
+    case 'init': {
+      const r = boxInit({ name: flagStr(p, 'name'), version: VERSION });
+      if (flagBool(p, 'json')) {
+        console.log(JSON.stringify(r));
+        return 0;
+      }
+      console.log(`${green('✓')} box "${r.box}" has its keys in ${boxDir()} ${dim(`(salu ${r.version})`)}`);
+      console.log(dim('pair a Mac with: salu box add <user@host>   (on the Mac)'));
       return 0;
     }
     case 'status': {

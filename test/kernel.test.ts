@@ -186,11 +186,22 @@ describe('kernel', () => {
     }
   });
 
+  test('--yes lets kernel setup run without a terminal, but only for a person', () => {
+    setHumanTty(() => false);
+    try {
+      expect(() => requireHuman('kernel setup')).toThrow('not for agents');
+      expect(() => requireHuman('kernel setup', { yes: true })).not.toThrow();
+    } finally {
+      setHumanTty(() => true);
+    }
+  });
+
   test('every worker is marked, and push/export refuse to run for them', async () => {
     expect(workerEnv().SALU_KERNEL_WORKER).toBe('1');
     process.env.SALU_KERNEL_WORKER = '1';
     try {
       expect(() => requireHuman('push')).toThrow('not for agents');
+      expect(() => requireHuman('kernel setup', { yes: true })).toThrow('not for agents'); // --yes is for ssh scripts, never for a worker
       await expect(dispatch(['push'])).rejects.toThrow('not for agents');
       await expect(dispatch(['export', join(root, 'out')])).rejects.toThrow('not for agents');
     } finally {
