@@ -107,5 +107,10 @@ describe('the sandbox check says why a ticket did not run', () => {
     expect(failureTail(log)).toContain('Invalid API key');
     expect(failureTail(log)).toContain('exited with code 1');
     expect(failureTail('')).toBe('');
+    // a crash dump of bundled source followed by the real error: only the error survives
+    const dump = JSON.stringify({ type: 'stderr', text: '// (c) Anthropic PBC\nimport{Le,gs}from"/$bunfs/root/chunk-51c5swn7.js";' + 'x'.repeat(400) + '\nerror: EACCES: permission denied, mkdir \'/root/.claude\'\nBun v1.3' });
+    const t = failureTail(dump);
+    expect(t).toContain('EACCES');
+    expect(t).not.toContain('bunfs');
   });
 });

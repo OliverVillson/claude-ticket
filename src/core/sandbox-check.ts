@@ -77,15 +77,20 @@ export function ticketText(c: Canaries, orchestratorPid: number): string {
 export function failureTail(log: string): string {
   const lines: string[] = [];
   for (const l of log.split('\n')) {
+    let text = l;
     try {
       const m = JSON.parse(l);
-      if (m?.type === 'stderr' && m.text) lines.push(String(m.text));
+      text = m?.type === 'stderr' && m.text ? String(m.text) : '';
     } catch {
-      if (l.trim()) lines.push(l.trim());
+      /* not a JSON line: the error text that ended the run */
     }
+    lines.push(...text.split('\n'));
   }
-  const tail = lines.slice(-4).join(' | ').slice(0, 600);
-  return tail ? `. What the worker said: ${tail}` : '';
+  // A crashing compiled claude prints a dump of its own bundled source before the real error: keep the short
+  // human lines from the END of the output only.
+  const real = lines.map((x) => x.trim()).filter((x) => x && x.length < 240 && !/\$bunfs|\(c\) Anthropic|import\{|function\(|=>\{/.test(x));
+  const tail = real.slice(-6).join(' | ').slice(-700);
+  return tail ? `. What the worker said (last lines): ${tail}` : '';
 }
 
 export function judge(c: Canaries, log: string, o: { kernelHasLink: boolean; ran: boolean; envChecked?: boolean }): Probe[] {
