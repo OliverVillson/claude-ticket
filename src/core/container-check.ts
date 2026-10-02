@@ -113,9 +113,9 @@ export async function runContainerCheck(o: { bin?: string | null } = {}): Promis
     await new Promise((r) => setTimeout(r, 1500)); // the proxy forwarder inside starts with the container
     const inside = (cmd: string[]) => shAsync(bin, ['exec', '--workdir', WORKDIR, name, ...cmd]);
     const egress: Record<string, number> = {};
-    for (const t of EGRESS_TARGETS) egress[t] = Number((await inside(['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '10', `http://${t}/`])).stdout.trim()) || 0;
+    for (const t of EGRESS_TARGETS) egress[t] = Number((await inside(['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '10', '--proxy', 'http://127.0.0.1:3128', '--noproxy', '', `http://${t}/`])).stdout.trim()) || 0;
     const ports: Record<string, number> = {};
-    for (const t of NON_WEB_TARGETS) ports[t] = Number((await inside(['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '10', `http://${t}/`])).stdout.trim()) || 0;
+    for (const t of NON_WEB_TARGETS) ports[t] = Number((await inside(['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '10', '--proxy', 'http://127.0.0.1:3128', '--noproxy', '', `http://${t}/`])).stdout.trim()) || 0;
     const probe = async (url: string) => Number((await inside(['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '10', url])).stdout.trim()) || 0;
     const control = await probe('http://example.com/');
     let diagnostics: string | undefined;

@@ -3,7 +3,7 @@ import { linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { auditKernel, orchestratorEnvToScrub } from '../src/core/kernel.ts';
-import { judge, plantCanaries, ticketText } from '../src/core/sandbox-check.ts';
+import { failureTail, judge, plantCanaries, ticketText } from '../src/core/sandbox-check.ts';
 
 let root: string;
 beforeAll(() => {
@@ -98,5 +98,14 @@ else await execReplace([process.execPath, '${script}'], { PATH: process.env.PATH
     expect(out.pid).toBe(Number(out.parent));
     expect(out.token).toBe(false);
     expect(out.environ).toBe(false);
+  });
+});
+
+describe('the sandbox check says why a ticket did not run', () => {
+  test('the worker\'s stderr and error go into the failing probe', () => {
+    const log = JSON.stringify({ type: 'stderr', text: 'Invalid API key' }) + '\nClaude Code process exited with code 1';
+    expect(failureTail(log)).toContain('Invalid API key');
+    expect(failureTail(log)).toContain('exited with code 1');
+    expect(failureTail('')).toBe('');
   });
 });
