@@ -135,28 +135,27 @@ if [ -n "${PRE:-}" ] && [ -z "${SALU_BOX_TESTS_REEXEC:-}" ]; then
   pre_runner() {
     selected 5.4 || return 0
     [ "$WITH_SUDO" = 1 ] && [ "$WITH_TICKETS" = 1 ] || return 0
-    local title P=boxtest-runner SP TF live out n st proof end
+    local title P=boxtest-runner SP TF out n st proof end KT=/var/lib/salu/kernel-token
     title="$(title_of 5.4)"
     rec() { printf '%s|5.4|%s|%s\n' "$1" "$title" "$(enc "$2")" >>"$PRE"; }
     asalu() { sudo -u "$SALU_USER" -H "$@"; }
     SP="$(asalu sh -c 'command -v salu' 2>/dev/null)"
     [ -n "$SP" ] || { rec SKIP "salu was not found on $SALU_USER's PATH"; return 0; }
     have jq || { rec SKIP "jq is not installed (sudo apt install jq)"; return 0; }
-    live="$(asalu "$PODMAN" ps --filter label=salu.kernel=1 --format '{{.Names}}' 2>/dev/null | grep -vE '^salu-k-(boxtest|doctor)' | tr '\n' ' ')"
-    if [ -n "$live" ] && [ "${SALU_BOX_TESTS_ALLOW_SWEEP:-}" != 1 ]; then
-      rec SKIP "live runner containers are running ($live): the stale-container sweep when a new orchestrator starts can stop them mid-ticket. Set SALU_BOX_TESTS_ALLOW_SWEEP=1 to run anyway (or wait for the sweep fix in #74)."; return 0
-    fi
     # the Claude login the runner uses: SALU_BOX_RUNNER_TOKEN_FILE, else the token of an existing runner project
     TF="$(mktemp /tmp/salu-box-runner-token.XXXXXX)"; chmod 600 "$TF"
     if [ -n "${SALU_BOX_RUNNER_TOKEN_FILE:-}" ]; then cat "$SALU_BOX_RUNNER_TOKEN_FILE" >"$TF"
     else sudo sh -c 'cat /etc/salu/*.env 2>/dev/null' | sed -n 's/^CLAUDE_CODE_OAUTH_TOKEN=//p' | head -n 1 >"$TF"; fi
     [ -s "$TF" ] || { rm -f "$TF"; rec SKIP "no Claude token for the runner: set SALU_BOX_RUNNER_TOKEN_FILE, or add a runner project first so its token can be reused"; return 0; }
+    # runner projects read one box-wide container login: /var/lib/salu/kernel-token (salu kernel login --box)
+    if [ ! -f "$KT" ] && [ "${SALU_BOX_RUNNER_KERNEL_TOKEN:-}" = copy ] && [ -f "$(getent passwd "$SALU_USER" | cut -d: -f6)/.salu/kernel-token" ]; then
+      sudo install -o "$SALU_USER" -m 600 "$(getent passwd "$SALU_USER" | cut -d: -f6)/.salu/kernel-token" "$KT" # test shortcut: reuse this user's container login
+    fi
+    if [ ! -f "$KT" ]; then rm -f "$TF"; rec FAIL "$KT is missing, so runner tickets have no container login. Run: sudo -u $SALU_USER salu kernel login --box"; return 0; fi
     sudo env SALU_RUNNER_USER="$SALU_USER" "$SP" runner remove "$P" --purge --yes >/dev/null 2>&1 # a leftover from an earlier run
     out="$(sudo env SALU_RUNNER_USER="$SALU_USER" "$SP" runner add "$P" --token-file "$TF" --no-sync 2>&1)"; rc=$?
     rm -f "$TF"
     if [ $rc -ne 0 ]; then rec FAIL "salu runner add failed (exit $rc):"$'\n'"$(printf '%s' "$out" | tail -n 6)"; return 0; fi
-    # optional: put the container login where the runner reads it, to test the unit apart from the login location
-    [ "${SALU_BOX_RUNNER_KERNEL_TOKEN:-}" = copy ] && [ -f "$(getent passwd "$SALU_USER" | cut -d: -f6)/.salu/kernel-token" ] && sudo install -o "$SALU_USER" -m 600 "$(getent passwd "$SALU_USER" | cut -d: -f6)/.salu/kernel-token" "/var/lib/salu/$P/kernel-token"
     asalu env SALU_HOME="/var/lib/salu/$P" "$SP" add "runner kernel check" "In /work, run: id -u; hostname; uname -r and write their output unchanged to proof.txt, then stop." "model=haiku effort=low" --project "$P" >/dev/null 2>&1
     end=$((SECONDS + 420)); st=""
     while [ $SECONDS -lt $end ]; do
@@ -326,8 +325,6 @@ if ticket_tests_wanted; then
   echo; echo "${D}ticket tests: isolated home, small haiku tickets, projects boxtest-a/b/c${N}"
   if ! have jq; then
     for id in 2.2 2.5 2.6 2.7 3.1 4.1 4.3 4.4 4.5 4.6 4.8; do selected "$id" && skip "$id" "$(title_of $id)" "jq is not installed (sudo apt install jq)"; done
-  elif [ -n "$("$PODMAN" ps --filter label=salu.kernel=1 --format '{{.Names}}' 2>/dev/null | grep -vE '^salu-k-(boxtest|doctor)')" ] && [ "${SALU_BOX_TESTS_ALLOW_SWEEP:-}" != 1 ]; then
-    for id in 2.2 2.5 2.6 2.7 3.1 4.1 4.3 4.4 4.5 4.6 4.8; do selected "$id" && skip "$id" "$(title_of $id)" "live runner containers are running; the test orchestrator's stale-container sweep can stop them mid-ticket. Set SALU_BOX_TESTS_ALLOW_SWEEP=1 to run anyway."; done
   elif [ $CONTAINER_READY != 1 ]; then
     for id in 2.2 2.5 2.6 2.7 3.1 4.1 4.3 4.4 4.5 4.6 4.8; do selected "$id" && need_container "$id"; done
   else
