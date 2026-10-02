@@ -34,9 +34,22 @@ describe('runner files', () => {
     const sync = renderSyncUnit(o);
 
     test('both units confine the service to its own project folder and an empty home', () => {
-      for (const u of [unit, sync]) {
+      const tight = renderUnit({ ...o, kernel: false });
+      for (const u of [tight, sync]) {
         for (const d of ['NoNewPrivileges=yes', 'ProtectSystem=strict', 'ProtectHome=tmpfs', 'TemporaryFileSystem=/var/lib/salu:ro', 'BindPaths=/var/lib/salu/%i', 'ReadWritePaths=/var/lib/salu/%i', 'PrivateTmp=yes', 'CapabilityBoundingSet=\n', 'RestrictSUIDSGID=yes', 'UMask=0077']) expect(u).toContain(d);
       }
+    });
+
+    test('the orchestrator unit lets rootless Podman work and gives it the kernel login, nothing more', () => {
+      expect(unit).not.toMatch(/^NoNewPrivileges=yes/m);
+      expect(unit).toContain('CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_DAC_OVERRIDE CAP_SYS_ADMIN\n');
+      expect(unit).toMatch(/^AmbientCapabilities=$/m);
+      expect(unit).toContain('Environment=XDG_RUNTIME_DIR=/run/user/%U');
+      expect(unit).toContain('Environment=SALU_KERNEL_TOKEN_FILE=/var/lib/salu/kernel-token');
+      expect(unit).toContain('/home/salu/.local/share/containers');
+      expect(unit).toContain('BindReadOnlyPaths=-/home/salu/.local/bin -/home/salu/.local/share/claude -/var/lib/salu/kernel-token');
+      expect(unit).not.toContain('.ssh');
+      expect(sync).toContain('NoNewPrivileges=yes'); // the sync unit never runs containers
     });
 
     test('least privilege: the orchestrator gets the Claude login but no ssh keys, sync the reverse', () => {

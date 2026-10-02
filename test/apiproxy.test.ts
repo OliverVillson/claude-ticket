@@ -68,3 +68,30 @@ describe('api proxy', () => {
     }
   });
 });
+
+describe('runner homes', () => {
+  test('containers and the kernel login are per home; the sweep only touches this home', async () => {
+    const { containerName, tokenFile, sweepStaleContainers, createArgs } = await import('../src/core/container.ts');
+    const keep = { h: process.env.SALU_HOME, t: process.env.SALU_KERNEL_TOKEN_FILE };
+    try {
+      delete process.env.SALU_HOME;
+      delete process.env.SALU_KERNEL_TOKEN_FILE;
+      expect(containerName('web')).toBe('salu-k-web');
+      process.env.SALU_HOME = '/var/lib/salu/a';
+      const a = containerName('web');
+      process.env.SALU_HOME = '/var/lib/salu/b';
+      expect(containerName('web')).not.toBe(a);
+      expect(createArgs({ name: 'n', project: 'web', dir: '/d' }).join(' ')).toContain('salu.home=/var/lib/salu/b');
+      process.env.SALU_KERNEL_TOKEN_FILE = '/var/lib/salu/kernel-token';
+      expect(tokenFile()).toBe('/var/lib/salu/kernel-token');
+      const fake = join(mkdtempSync(join(tmpdir(), 'salu-sw-')), 'podman');
+      const { writeFileSync, chmodSync, readFileSync } = await import('node:fs');
+      writeFileSync(fake, `#!/bin/sh\necho "$@" >> ${fake}.log\n`);
+      chmodSync(fake, 0o755);
+      sweepStaleContainers(fake);
+      expect(readFileSync(fake + '.log', 'utf8')).toContain('--filter label=salu.home=/var/lib/salu/b');
+    } finally {
+      for (const [k, v] of [['SALU_HOME', keep.h], ['SALU_KERNEL_TOKEN_FILE', keep.t]] as const) v === undefined ? delete process.env[k] : (process.env[k] = v);
+    }
+  });
+});

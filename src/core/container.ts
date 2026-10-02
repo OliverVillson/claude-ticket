@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { accessSync, appendFileSync, chmodSync, constants, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir, totalmem } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -39,7 +40,12 @@ export function runtime(env: NodeJS.ProcessEnv = process.env, which: (c: string)
 }
 
 export function containerName(project: string): string {
-  return `salu-k-${folderSlug(project)}`;
+  return `salu-k-${folderSlug(project)}${homeTag()}`;
+}
+
+/** Nothing for the usual ~/.salu; a short hash of SALU_HOME otherwise, so two homes with a project of the same name never share a container. */
+export function homeTag(): string {
+  return process.env.SALU_HOME ? `-${createHash('sha256').update(ticketHome()).digest('hex').slice(0, 6)}` : '';
 }
 
 export interface CreateOpts {
@@ -72,7 +78,7 @@ export function createArgs(o: CreateOpts): string[] {
     '--ulimit', 'nofile=4096:8192', '--shm-size', '256m',
     ...(o.disk ? ['--storage-opt', `size=${o.disk}`] : []),
     '--hostname', 'salu-kernel', '--workdir', WORKDIR,
-    '--label', 'salu.kernel=1', '--label', `salu.project=${o.project}`, '--label', `salu.mounts=${MOUNTS_VERSION}`,
+    '--label', 'salu.kernel=1', '--label', `salu.project=${o.project}`, '--label', `salu.home=${ticketHome()}`, '--label', `salu.mounts=${MOUNTS_VERSION}`,
     '-v', `${o.dir}:${WORKDIR}:rw`,
     // The socket's folder, not the socket file: a file mount keeps the inode it had at create time, and the filter
     // makes a new socket (new inode) every time it starts, which would leave a running container talking to a dead one.
@@ -90,7 +96,7 @@ export function execArgs(name: string, envFile: string, cmd: string[]): string[]
 // ---- Claude credentials for the container --------------------------------------------------------------
 
 export function tokenFile(): string {
-  return join(ticketHome(), 'kernel-token');
+  return process.env.SALU_KERNEL_TOKEN_FILE || join(ticketHome(), 'kernel-token');
 }
 
 /**
@@ -274,7 +280,8 @@ export function holdContainer(project: string, bin: string, o: { env?: NodeJS.Pr
 
 /** Stop salu's containers that nothing here is using: leftovers from a crashed or restarted orchestrator. */
 export function sweepStaleContainers(bin: string): void {
-  const r = podman(bin, ['ps', '--filter', 'label=salu.kernel=1', '--format', '{{.Names}}']);
+  // only this home's containers: other orchestrators on the box (one per project) are using theirs
+  const r = podman(bin, ['ps', '--filter', 'label=salu.kernel=1', '--filter', `label=salu.home=${ticketHome()}`, '--format', '{{.Names}}']);
   for (const n of (r.stdout ?? '').split('\n').map((x) => x.trim()).filter(Boolean)) if (!inUse.has(n) && !n.startsWith('salu-k-doctor')) podman(bin, ['stop', '-t', '5', n]);
 }
 

@@ -1,3 +1,5 @@
+import { join } from 'node:path';
+import { runnerRoot } from '../../core/runner.ts';
 import { spawnSync } from 'node:child_process';
 import type { Parsed } from '../args.ts';
 import { flagStr } from '../args.ts';
@@ -16,7 +18,7 @@ has only the project's kernel folder, no logins and no home network. Installs pe
 
   salu kernel                 what is ready and what is missing
   salu kernel setup           build the kernel image (a large download, once)
-  salu kernel login [token]   save the Claude token agents use inside the container (get one with \`claude setup-token\`);
+  salu kernel login [--box] [token]   save the Claude token agents use inside the container; --box saves it where runner projects read it (get one with \`claude setup-token\`);
                               without an argument it is read from the terminal, or from stdin when piped
   salu kernel reset [project] delete a project's container (installed packages go; the kernel folder stays)
   salu kernel shell [project] open a shell in a project's container, for you to look around
@@ -93,10 +95,17 @@ export async function kernel(p: Parsed): Promise<number> {
     }
     case 'login': {
       requireHuman('kernel login');
-      const token = (rest[0] ?? (await readToken())).trim();
+      const box = rest.includes('--box'); // the one login runner projects read (/var/lib/salu/kernel-token)
+      const args = rest.filter((a) => a !== '--box');
+      const token = (args[0] ?? (await readToken())).trim();
       if (!token) throw new CliError('no token given. Run `claude setup-token` and paste the result.');
-      saveToken(token);
-      console.log(`${green('✓')} saved to ${tokenFile()} ${dim('(only you can read it; agents inside the container can, so use a token you can revoke)')}`);
+      const file = box ? join(runnerRoot(), 'kernel-token') : tokenFile();
+      try {
+        saveToken(token, file);
+      } catch (e: any) {
+        throw new CliError(`could not write ${file}: ${e.message}${box ? ' (run it as the user that owns the runner folder: sudo -u salu salu kernel login --box)' : ''}`);
+      }
+      console.log(`${green('✓')} saved to ${file} ${dim('(only you can read it; agents inside the container can, so use a token you can revoke)')}`);
       return 0;
     }
     case 'platform': {

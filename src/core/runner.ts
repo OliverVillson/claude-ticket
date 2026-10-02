@@ -53,6 +53,11 @@ export interface UnitOptions {
   etc: string;
   /** Add the sandboxing directives below (default true). `salu runner setup --no-harden` turns them off. */
   harden?: boolean;
+  /**
+   * The orchestrator runs tickets in the container kernel (default true). Rootless Podman cannot start under the
+   * strictest settings, so the orchestrator unit gets the smallest set that works: see hardening().
+   */
+  kernel?: boolean;
 }
 
 /**
@@ -73,14 +78,18 @@ export function hardening(o: UnitOptions, kind: 'orchestrator' | 'sync'): string
   if (o.harden === false) return '';
   for (const v of [o.home, o.root]) if (/\s/.test(v)) throw new CliError(`cannot harden a unit with whitespace in a path: ${v}`);
   const h = o.home;
+  const kernel = kind === 'orchestrator' && o.kernel !== false;
+  // What rootless Podman needs (reproduced with emulated systemd): newuidmap is setuid root, so NoNewPrivileges must be
+  // off; it needs SETUID SETGID DAC_OVERRIDE SYS_ADMIN in the bounding set (nothing is ambient); its image store, state
+  // and runtime directory must be writable. The agents are not in this process: they run inside gVisor containers.
   const binds =
     kind === 'orchestrator'
-      ? { rw: [`${h}/.claude`, `${h}/.claude.json`], ro: [`${h}/.local/bin`, `${h}/.local/share/claude`] }
+      ? { rw: [`${h}/.claude`, `${h}/.claude.json`, ...(kernel ? [`${h}/.local/share/containers`, `${h}/.local/state/salu`, '/run/user/%U'] : [])], ro: [`${h}/.local/bin`, `${h}/.local/share/claude`, ...(kernel ? [`${o.root}/kernel-token`] : [])] }
       : { rw: [`${h}/.ssh`], ro: [`${h}/.gitconfig`, `${h}/.config/git`] };
   return `
 # Confinement of the service itself (see hardening() in src/core/runner.ts).
-NoNewPrivileges=yes
-ProtectSystem=strict
+${kernel ? '# NoNewPrivileges is off: rootless Podman starts containers through setuid newuidmap.' : 'NoNewPrivileges=yes'}
+${kernel ? `Environment=XDG_RUNTIME_DIR=/run/user/%U\nEnvironment=SALU_KERNEL_TOKEN_FILE=${o.root}/kernel-token\n` : ''}ProtectSystem=strict
 ProtectHome=tmpfs
 TemporaryFileSystem=${o.root}:ro
 BindPaths=${o.root}/%i ${binds.rw.map((x) => '-' + x).join(' ')}
@@ -93,9 +102,8 @@ ProtectClock=yes
 ProtectHostname=yes
 LockPersonality=yes
 RestrictRealtime=yes
-RestrictSUIDSGID=yes
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
-CapabilityBoundingSet=
+${kernel ? '' : 'RestrictSUIDSGID=yes\n'}RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+CapabilityBoundingSet=${kernel ? 'CAP_SETUID CAP_SETGID CAP_DAC_OVERRIDE CAP_SYS_ADMIN' : ''}
 AmbientCapabilities=
 RemoveIPC=yes
 UMask=0077
