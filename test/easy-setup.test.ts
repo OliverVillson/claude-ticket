@@ -74,7 +74,7 @@ describe('login.set', () => {
   });
 
   test('only the box can open a sealed field', () => {
-    const wrong = control.newSealKeys ? (control as any).newSealKeys() : null;
+    const wrong = (control as any).newSealKeys ? (control as any).newSealKeys() : null;
     const sealed = control.sealTo(fb.cfg.sealPub, Buffer.from('secret'));
     if (wrong) expect(() => control.openSealed(wrong.priv, sealed)).toThrow();
   });

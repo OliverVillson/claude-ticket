@@ -78,7 +78,7 @@ beforeAll(() => {
   writeFileSync(gitcfg, '[user]\n\temail = a@b.c\n\tname = x\n');
   const script = (n: string, body: string) => (writeFileSync(join(bin, n), `#!/bin/sh\n${body}\n`), chmodSync(join(bin, n), 0o755));
   script('sudo', 'exec "$@"');
-  script('salu', `exec ${process.execPath} ${SRC} "$@"`);
+  script('salu', process.env.SALU_TEST_BIN ? `exec ${process.env.SALU_TEST_BIN} "$@"` : `exec ${process.execPath} ${SRC} "$@"`); // SALU_TEST_BIN=dist/salu tests the compiled binary
   // systemctl enable --now salu-control.service: start the real listener in the background
   script('systemctl', `[ "$1" = enable ] && { nohup sh -c 'while :; do ${join(bin, 'salu')} control watch --interval 1; echo "watch exited $?"; sleep 1; done' > ${join(root, 'watch.log')} 2>&1 & echo $! > ${join(root, 'watch.pid')}; }; exit 0`); // looped like the unit's Restart=always
   boxEnv = { PATH: `${bin}:${process.env.PATH}`, SALU_HOME: join(boxHome, '.salu'), SALU_BOX_DIR: join(root, 'boxdir'), SALU_RUNNER_ROOT: join(root, 'rr'), GIT_CONFIG_GLOBAL: gitcfg, GIT_TERMINAL_PROMPT: '0' };
