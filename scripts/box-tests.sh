@@ -312,11 +312,11 @@ if ticket_tests_wanted; then
     # 2.6: a second project must not see the first one's files or packages
     if selected 2.6; then
       echo secret-from-a > "$(kdir boxtest-a)/only-in-a.txt" 2>/dev/null
-      add_ticket boxtest-b "isolation check" "In /work, write to proof.txt the output of: ls -la /work; ls /work/../ ; dpkg -s $PKG 2>&1 | head -n 1; find / -name only-in-a.txt -not -path '/proc/*' 2>/dev/null | head. Then stop."
+      add_ticket boxtest-b "isolation check" "In /work, write to proof.txt the output of: ls -la /work; ls /work/../ ; dpkg -s $PKG 2>&1 | grep -E '^Status|not installed'; find / -name only-in-a.txt -not -path '/proc/*' 2>/dev/null | head. Put each command's output under a header line, and write 'none' where a command prints nothing. Then stop."
       wait_idle 420 || true
       Pb="$(kdir boxtest-b)/proof.txt"
-      if [ -s "$Pb" ] && ! grep -q 'only-in-a' "$Pb" && ! grep -q 'install ok installed' "$Pb"; then pass 2.6 "$(title_of 2.6)" "project b saw neither project a's file nor its installed package"
-      else fail 2.6 "$(title_of 2.6)" "$(head -n 8 "$Pb" 2>/dev/null || echo 'no proof.txt')"; fi
+      if [ -s "$Pb" ] && ! grep -qE '^/[^ ]*only-in-a\.txt$' "$Pb" && ! grep -q '^Status: install ok installed' "$Pb"; then pass 2.6 "$(title_of 2.6)" "project b saw neither project a's file nor its installed package"
+      else fail 2.6 "$(title_of 2.6)" "$( [ -s "$Pb" ] && { grep -nE 'only-in-a|install ok' "$Pb" | head -n 8; } || echo 'no proof.txt')"; fi
     fi
 
     # 4.3 / 4.4 / 4.5 / 4.6: idle unload with SALU_KERNEL_IDLE_MINUTES=0 (set above): stop right after the ticket, restart on the next
