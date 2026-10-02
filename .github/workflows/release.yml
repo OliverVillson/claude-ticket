@@ -48,8 +48,15 @@ jobs:
           # the Containerfile is written by the binary, so each bundle takes it from the x64 build (it does not depend on the CPU)
           dist/salu-linux-x64 kernel containerfile > dist/Containerfile
           for a in x64 arm64; do SALU_BUNDLE_VERSION="$TAG" scripts/build-box-bundle.sh "dist/salu-linux-$a" "$a" dist --containerfile dist/Containerfile; done
+          rm dist/Containerfile   # only needed to build the bundles
           cp scripts/install-box.sh dist/install-box.sh
           ls -lh dist/salu-box-*
+      - name: Checksums of everything in the release, signed when the SALU_RELEASE_KEY secret is set (else sign by hand: salu release sign <tag>)
+        env:
+          SALU_RELEASE_KEY: ${{ secrets.SALU_RELEASE_KEY }}
+        run: |
+          (cd dist && sha256sum salu-* install-box.sh > SHA256SUMS)
+          if [ -n "$SALU_RELEASE_KEY" ]; then dist/salu-linux-x64 release sign dist; fi
       - name: Test the compiled linux-x64 binary end to end (stub claude on PATH, and none)
         run: SALU_E2E_BIN=dist/salu-linux-x64 bun test test/e2e
       - name: Publish release
@@ -61,4 +68,5 @@ jobs:
               gh release create "$TAG" --title "$TAG" --generate-notes
             fi
           fi
-          gh release upload "$TAG" dist/salu-* dist/install-box.sh --clobber
+          gh release upload "$TAG" dist/salu-* dist/install-box.sh dist/SHA256SUMS --clobber
+          for f in dist/SHA256SUMS.sig dist/install-box.sh.sig; do [ -f "$f" ] && gh release upload "$TAG" "$f" --clobber || true; done
