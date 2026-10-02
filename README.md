@@ -56,7 +56,7 @@ files to a GitHub release:
 git tag v0.1.0 && git push --tags
 ```
 
-Releases are signed, and the box's installer and `salu box update` check the signature. Once: `salu release keygen`. For each release: `salu release sign <tag>`; anyone can check one with `salu release verify`.
+Releases are signed, and the box's installer and `salu box update` check the signature. The signing key stays on the maintainer's Mac: run `salu release keygen` once, and back up `~/.salu/release.key`. After each release workflow finishes, run `salu release sign <tag>`. Anyone can check a release with `salu release verify`.
 
 ### From source
 
