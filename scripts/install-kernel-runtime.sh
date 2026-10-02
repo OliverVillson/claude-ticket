@@ -154,6 +154,11 @@ elif [ "\$CMD" = create ] && [ -r "\$BUNDLE/config.json" ]; then
     nsenter --net="\$NETNS" ip link set lo up >>"\$LOG" 2>&1 && note "lo up in \$NETNS" || note "could not bring lo up in \$NETNS"
   fi
 fi
+# "podman exec -t" hands the runtime a --tty flag that runsc's exec does not define ("flag provided but not defined:
+# -tty"); the terminal itself comes through --console-socket, so drop the flag.
+case " \$* " in *" exec "*)
+  for A in "\$@"; do shift; case "\$A" in --tty|--tty=*|-tty) ;; *) set -- "\$@" "\$A" ;; esac; done ;;
+esac
 exec /usr/local/bin/runsc --ignore-cgroups --host-uds=open --network=sandbox "\$@"
 WRAP
   chmod 0755 "$RUNSC_WRAPPER"
