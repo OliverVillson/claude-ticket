@@ -45,7 +45,7 @@ export function parseArgs(argv: string[]): Parsed {
     }
     if (value === undefined) {
       const next = argv[i + 1];
-      if (next !== undefined && (!next.startsWith('-') || /^-\d/.test(next))) {
+      if (next !== undefined && (!next.startsWith('-') || next === '-' || /^-\d/.test(next))) {
         value = next;
         i++;
       } else {

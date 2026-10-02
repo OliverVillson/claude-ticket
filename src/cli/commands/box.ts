@@ -7,7 +7,9 @@ import { realExec } from '../../boxmac/exec.ts';
 import { controlApi } from '../../boxmac/control.ts';
 import { addBox, loginViaControl, makeTokenReader, statusLines, type Deps } from '../../boxmac/pair.ts';
 import { listBoxes, pickBox, removeBoxFile } from '../../boxmac/state.ts';
-import { boxDir, boxInit } from '../../box/init.ts';
+import { spawnSync } from 'node:child_process';
+import { boxDir, boxInit, readBoxName } from '../../box/init.ts';
+import { saveConnection } from '../../control/keys.ts';
 import { VERSION } from '../dispatch.ts';
 import { helpIf } from './_shared.ts';
 
@@ -17,7 +19,8 @@ salu box update [version] [--on box]
 salu box login [--on box] [--token-file f]
 salu box list
 salu box remove <box> [--yes]
-salu box init [--json] [--name box]          (on the box; the installer runs it)
+salu box init [--json] [--name box]          (on the box; pairing runs these)
+salu box connect --url <ssh-url> --mac-key -
 
 Set up an always-on computer (a salu box) from this one.
 add       pairs with the box over ssh once: installs salu there, makes a private repo
@@ -27,6 +30,7 @@ status    asks the box how it is doing (version, disk, tickets, the safety check
 update    updates salu on the box to the latest release (or a given version).
 login     gives the box a fresh Claude login (when the old one ran out).
 init      the box's own side of pairing: makes its keys, once. --json prints them on one line.
+connect    the box's side of pairing: saves the control repo and the Mac's key (stdin), starts the service.
 After pairing, \`salu new <name>\` makes a project that runs on the box.
 
 --on picks the box when you have more than one. Pairing keys are kept in ~/.salu/boxes (readable by you only).`;
@@ -97,6 +101,21 @@ export async function box(p: Parsed, deps: Deps = realDeps()): Promise<number> {
       }
       console.log(`${green('✓')} box "${r.box}" has its keys in ${boxDir()} ${dim(`(salu ${r.version})`)}`);
       console.log(dim('pair a Mac with: salu box add <user@host>   (on the Mac)'));
+      return 0;
+    }
+    case 'connect': {
+      const url = flagStr(p, 'url');
+      if (!url || !/^git@github\.com:[\w.-]+\/[\w.-]+\.git$/.test(url)) throw new CliError('--url must look like git@github.com:<owner>/<repo>.git');
+      if (flagStr(p, 'mac-key') !== '-') throw new CliError('the Mac key is read from stdin: pass --mac-key -');
+      const key = Buffer.from((await new Response(Bun.stdin.stream()).text()).trim(), 'base64');
+      if (key.length !== 32) throw new CliError('the Mac key must be 32 bytes, base64 encoded, on stdin');
+      const name = readBoxName();
+      if (!name) throw new CliError('this box has no keys yet: run salu box init first');
+      saveConnection(url, name, key);
+      const r = spawnSync('systemctl', ['enable', '--now', 'salu-control.service'], { encoding: 'utf8' });
+      if (r.status !== 0) throw new CliError(`saved, but the control service did not start: ${(r.stderr || r.error?.message || '').trim()} (run as root; the installer sets the service up)`);
+      if (flagBool(p, 'json')) console.log(JSON.stringify({ ok: true, box: name }));
+      else console.log(`${green('✓')} connected "${name}" to ${url}; the control service is running`);
       return 0;
     }
     case 'status': {
