@@ -51,7 +51,7 @@ jobs:
           rm dist/Containerfile   # only needed to build the bundles
           cp scripts/install-box.sh dist/install-box.sh
           ls -lh dist/salu-box-*
-      - name: Checksums of everything in the release. Signed here only if a SALU_RELEASE_KEY secret exists (unused: the key lives on the owner's Mac, salu release sign <tag>)
+      - name: Checksums of everything in the release (signed here only if a SALU_RELEASE_KEY secret exists; unused, the key lives on the owner's Mac and salu release sign <tag> signs it)
         env:
           SALU_RELEASE_KEY: ${{ secrets.SALU_RELEASE_KEY }}
         run: |
