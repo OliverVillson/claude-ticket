@@ -7,7 +7,7 @@
  */
 import { safeText } from '../core/ansi.ts';
 import { appendFileSync, mkdirSync } from 'node:fs';
-import { basename, dirname } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import type { Project, TicketView } from '../db/types.ts';
 import { ticketTags } from '../db/types.ts';
@@ -18,7 +18,7 @@ import type { LimitHit } from '../usage/types.ts';
 import { CLAUDE_MISSING, EnvironmentError, claudeExecutableOption, environmentProblem, runningCompiled } from '../core/claude-bin.ts';
 import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../core/tags.ts';
 import { checkDisk, containerReady, containerRequired, containerSpawner, engine, requireKernelAuth, sweepStaleContainers, WORKDIR } from '../core/container.ts';
-import { startEgress } from '../core/egress.ts';
+import { projectSocketDir, startEgress } from '../core/egress.ts';
 import { kernelAuthMode, startApiProxy } from '../core/apiproxy.ts';
 import { allowedDomains, auditKernel, cleanScrubStubs, confinementFor, kernelOptions, prepareKernel, sandboxSupport, scrubSecrets } from '../core/kernel.ts';
 import { DEFAULT_TOOLS, denialsFrom, toolsToSdk } from '../core/tools.ts';
@@ -238,18 +238,22 @@ export function promptFor(input: WorkerInput): string {
 // The real runner
 // -------------------------------------------------------------------------------------------------
 
-let egressStop: Promise<() => void> | null = null;
-/** The egress filter every container goes through; started once per process, the first time a container ticket runs. */
-function ensureEgressProxy(): Promise<() => void> {
+let egressSweep = false;
+const egressStops = new Map<string, Promise<() => void>>();
+/** The egress filter (and the login proxy) a project's container goes through; started once per project per process, in the project's own socket folder. */
+function ensureEgressProxy(project: string): Promise<() => void> {
   const bin = engine();
-  if (bin && !egressStop) sweepStaleContainers(bin); // first container ticket of this process: nothing here uses them yet
+  if (bin && !egressSweep) sweepStaleContainers(bin); // first container ticket of this process: nothing here uses them yet
+  egressSweep = true;
   const log = (l: string) => process.env.SALU_DEBUG && console.error(`salu egress: ${l}`);
-  egressStop ??= (async () => {
-    const stops = [await startEgress({ allowedDomains: allowedDomains(), log })];
-    if (kernelAuthMode() === 'socket') stops.push(await startApiProxy({ log })); // the login stays on this side
-    return () => stops.forEach((f) => f());
-  })();
-  return egressStop;
+  if (!egressStops.has(project))
+    egressStops.set(project, (async () => {
+      const dir = projectSocketDir(project);
+      const stops = [await startEgress({ path: join(dir, 'egress.sock'), allowedDomains: allowedDomains(), log })];
+      if (kernelAuthMode() === 'socket') stops.push(await startApiProxy({ path: join(dir, 'api.sock'), log })); // the login stays on this side
+      return () => stops.forEach((f) => f());
+    })());
+  return egressStops.get(project)!;
 }
 
 export const sdkRunner: WorkerRunner = {
@@ -271,7 +275,7 @@ export const sdkRunner: WorkerRunner = {
     const ticket = kernel ? { ...input.ticket, project_path: inContainer ? WORKDIR : kernel } : input.ticket;
     if (inContainer) {
       checkDisk(kernel!);
-      await ensureEgressProxy();
+      await ensureEgressProxy(input.ticket.project);
     }
     // Without the OS sandbox (a Linux machine lacking bubblewrap) a fenced worker keeps the file-tool fence and the
     // old narrow shell rules, so it never gets more than it can be held to.

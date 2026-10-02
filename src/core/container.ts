@@ -4,7 +4,7 @@ import { homedir, tmpdir, totalmem } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { SpawnedProcess, SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
 import { CliError } from './errors.ts';
-import { egressSocketPath } from './egress.ts';
+import { projectSocketDir } from './egress.ts';
 import { folderSlug } from './resolve.ts';
 import { ticketHome } from './paths.ts';
 import { kernelAuthMode, placeholderEnv } from './apiproxy.ts';
@@ -22,7 +22,7 @@ export const WORKDIR = '/work';
 const EGRESS_IN = '/run/salu/egress.sock';
 const EGRESS_DIR_IN = '/run/salu';
 /** Bumped when what a container mounts changes, so containers made the old way are recreated. */
-const MOUNTS_VERSION = '2';
+const MOUNTS_VERSION = '3';
 
 export const containerOn = (env: NodeJS.ProcessEnv = process.env) => !['off', '0', 'no', 'false'].includes((env.SALU_CONTAINER ?? '').toLowerCase());
 
@@ -76,7 +76,7 @@ export function createArgs(o: CreateOpts): string[] {
     '-v', `${o.dir}:${WORKDIR}:rw`,
     // The socket's folder, not the socket file: a file mount keeps the inode it had at create time, and the filter
     // makes a new socket (new inode) every time it starts, which would leave a running container talking to a dead one.
-    '-v', `${dirname(o.socket ?? egressSocketPath())}:${EGRESS_DIR_IN}:rw`,
+    '-v', `${dirname(o.socket ?? join(projectSocketDir(o.project), 'egress.sock'))}:${EGRESS_DIR_IN}:rw`,
     ...Object.entries(env).flatMap(([k, v]) => ['--env', `${k}=${v}`]),
     o.image ?? KERNEL_IMAGE,
   ];

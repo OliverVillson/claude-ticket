@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { createServer } from 'node:http';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { API_PLACEHOLDER, apiPathAllowed, kernelAuthMode, placeholderEnv, startApiProxy, upstreamHeaders } from '../src/core/apiproxy.ts';
+import { dirname, join } from 'node:path';
+import { API_PLACEHOLDER, apiPathAllowed, cleanApiPath, apiSocketPath, kernelAuthMode, placeholderEnv, startApiProxy, upstreamHeaders } from '../src/core/apiproxy.ts';
 import { containerAuthEnv } from '../src/core/container.ts';
 
 describe('api proxy', () => {
@@ -14,6 +14,13 @@ describe('api proxy', () => {
     expect(apiPathAllowed('/v1/messages/../models')).toBe(false);
     expect(apiPathAllowed('/v1/models')).toBe(false);
     expect(apiPathAllowed('/api/oauth/profile')).toBe(false);
+  });
+  test('the path that is checked is the path that is sent; each project has its own socket folder', () => {
+    expect(cleanApiPath('/v1/messages#/../models')).toBe('/v1/messages');
+    expect(cleanApiPath('/v1/messages?beta=true#x')).toBe('/v1/messages?beta=true');
+    expect(cleanApiPath('http://evil/v1/messages')).toBeNull();
+    expect(dirname(apiSocketPath('web'))).not.toBe(dirname(apiSocketPath('api')));
+    expect(apiSocketPath('web')).toContain('/p/');
   });
   test('client auth is replaced by the real token', () => {
     const h = upstreamHeaders({ authorization: 'Bearer ' + API_PLACEHOLDER, 'x-api-key': 'x', 'anthropic-beta': 'a' }, 'sk-ant-oat-real');

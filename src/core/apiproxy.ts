@@ -2,7 +2,7 @@ import { createServer, type Server, type IncomingHttpHeaders } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { egressSocketPath } from './egress.ts';
+import { projectSocketDir } from './egress.ts';
 import { tokenFile } from './container.ts';
 
 /**
@@ -17,14 +17,20 @@ export const API_PLACEHOLDER = 'ssh-placeholder';
 export const API_SOCKET_IN = '/run/salu/api.sock';
 export const API_HOST = 'api.anthropic.com';
 
-export function apiSocketPath(): string {
-  return process.env.SALU_API_SOCKET || join(dirname(egressSocketPath()), 'api.sock');
+export function apiSocketPath(project: string): string {
+  return join(projectSocketDir(project), 'api.sock');
 }
 
 export type KernelAuthMode = 'env' | 'socket';
 /** How the container logs in. `socket` (default): the token never enters it. `env` (SALU_KERNEL_AUTH=env): the kernel token is in its environment. */
 export function kernelAuthMode(env: NodeJS.ProcessEnv = process.env): KernelAuthMode {
   return env.SALU_KERNEL_AUTH === 'env' ? 'env' : 'socket';
+}
+
+/** The path that was checked is the path that is sent: the fragment is cut, the query kept. */
+export function cleanApiPath(url: string | undefined): string | null {
+  const u = (url ?? '').split('#')[0]!;
+  return u.startsWith('/') ? u : null;
 }
 
 /** Is this a call the container may make? (path only, no query games: "?" and fragments are cut before matching) */
@@ -71,11 +77,12 @@ export function createApiProxy(o: ApiProxyOptions = {}): Server {
       res.writeHead(code, { 'content-type': 'application/json' }).end(JSON.stringify({ type: 'error', error: { type: 'permission_error', message: `salu: ${why}` } }));
     };
     if (req.method !== 'POST') return deny(405, 'only POST');
-    if (!apiPathAllowed(req.url)) return deny(403, 'only the model calls are allowed through');
+    const path = cleanApiPath(req.url);
+    if (!path || !apiPathAllowed(path)) return deny(403, 'only the model calls are allowed through');
     const t = token();
     if (!t) return deny(401, 'no kernel token: run `salu kernel login`');
     const send = o.plain ? (await import('node:http')).request : httpsRequest;
-    const up = send({ host: o.host ?? API_HOST, port: o.port ?? 443, method: 'POST', path: req.url, headers: upstreamHeaders(req.headers, t) }, (r) => {
+    const up = send({ host: o.host ?? API_HOST, port: o.port ?? 443, method: 'POST', path, headers: upstreamHeaders(req.headers, t) }, (r) => {
       res.writeHead(r.statusCode ?? 502, r.headers);
       r.pipe(res);
     });
@@ -86,7 +93,8 @@ export function createApiProxy(o: ApiProxyOptions = {}): Server {
 }
 
 export function startApiProxy(o: ApiProxyOptions & { path?: string } = {}): Promise<() => void> {
-  const path = o.path ?? apiSocketPath();
+  if (!o.path) throw new Error('startApiProxy needs a socket path');
+  const path = o.path;
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   if (existsSync(path)) unlinkSync(path);
   const server = createApiProxy(o);
