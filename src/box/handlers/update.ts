@@ -1,26 +1,31 @@
-import { restartIdleProjects } from './projects.ts';
 import { bad, firstProblem } from './common.ts';
 import type { BoxDeps, Handler } from './types.ts';
 
 const VERSION_RE = /^v?\d+\.\d+\.\d+(\.\d+)?$/;
+const REPO = 'OliverVillson/salu';
+
+/** The release's installer script: the latest, or a given version. Built here from a validated version, never from a message string. */
+export function installerUrl(version?: string): string {
+  const base = `https://github.com/${process.env.SALU_REPO || REPO}/releases`;
+  if (!version) return `${base}/latest/download/install-box.sh`;
+  return `${base}/download/${version.startsWith('v') ? version : 'v' + version}/install-box.sh`;
+}
 
 /**
- * `update`: install the release (the latest unless `version`), rebuild the kernel image only when its recipe
- * changed, and restart idle runner projects so they run the new binary. The control service itself is restarted by
- * the box's own unit (Restart=always after an exit; see the installer), never from inside this handler.
+ * `update`: hand off to the box installer from the release. It installs the binary, rebuilds the kernel image only when
+ * its recipe changed, recycles old containers and restarts salu-control itself. So it must not run inside this process
+ * (it would kill the handler mid-update): it starts in its own transient systemd unit and this answers at once.
+ * The installer holds a lock and logs to /var/log/salu-install.log; a second update while one runs just waits for it.
  */
 export const update = (deps: BoxDeps): Handler => async ({ args }) => {
   const want = args?.version === undefined ? undefined : String(args.version);
   if (want !== undefined && !VERSION_RE.test(want)) return bad('the version looks like v1.2.3');
-  const up = await deps.run([deps.salu, 'update', ...(want ? [want] : [])]);
-  if (!up.ok) return bad(`the update did not install: ${firstProblem(up.out)}`);
-  const upToDate = /already|up to date|latest/i.test(up.out) && !want;
-  // The new binary decides whether the image recipe changed. Podman is rootless, so it runs as the runner user.
-  const img = await deps.run([deps.salu, 'kernel', 'setup', '--unattended', '--if-changed'], { as: deps.user, timeoutMs: 60 * 60_000 });
-  if (!img.ok) return bad(`salu updated, but the kernel image did not rebuild: ${firstProblem(img.out)}. Projects keep using the old image; send update again`);
-  const rebuilt = !/already current/.test(img.out);
-  const r = await restartIdleProjects(deps);
-  const parts = [upToDate ? 'salu is already the latest' : 'salu is updated', rebuilt ? 'the kernel image was rebuilt' : 'the kernel image did not change'];
-  if (r.busy.length) parts.push(`${r.busy.join(', ')} still run the old version until they next restart`);
-  return { ok: true, message: parts.join('; '), data: { rebuilt, restarted: r.restarted, busy: r.busy } };
+  const unit = `salu-update-${Math.floor(deps.now() / 1000)}`;
+  const r = await deps.run([
+    'systemd-run', '--no-block', '--collect', `--unit=${unit}`, `--setenv=SALU_INSTALL_URL=${installerUrl(want)}`,
+    ...(want ? [`--setenv=SALU_VERSION=${want.startsWith('v') ? want : 'v' + want}`] : []),
+    'bash', '-c', 'curl -fsSL --retry 3 "$SALU_INSTALL_URL" | bash',
+  ]);
+  if (!r.ok) return bad(`could not start the update: ${firstProblem(r.out)}`);
+  return { ok: true, message: `the update to ${want ?? 'the latest release'} is running on the box (log: /var/log/salu-install.log); it restarts the control service when it is done, so ask for status in a few minutes`, data: { unit, version: want ?? 'latest' } };
 };

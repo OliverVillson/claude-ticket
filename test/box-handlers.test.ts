@@ -138,24 +138,27 @@ describe('project.remove', () => {
 });
 
 describe('update', () => {
-  test('installs, rebuilds the image only when changed (as the runner user), restarts idle projects', async () => {
-    const f = fake((c) => (c[2] === 'setup' ? { ok: true, out: 'built localhost/salu-kernel:1' } : { ok: true, out: '' }));
+  test('hands off to the release installer in its own transient unit and answers at once', async () => {
+    const f = fake();
     const r = await call(f.handlers.update, { version: 'v1.2.0' });
     expect(r.ok).toBe(true);
-    expect(f.calls[0]!.cmd.slice(1)).toEqual(['update', 'v1.2.0']);
-    expect(f.calls[1]!.cmd.slice(1)).toEqual(['kernel', 'setup', '--unattended', '--if-changed']);
-    expect(f.calls[1]!.as).toBe('salu');
-    expect(r.message).toContain('rebuilt');
-    const same = fake((c) => (c[2] === 'setup' ? { ok: true, out: 'kernel image already current' } : { ok: true, out: '' }));
-    expect((await call(same.handlers.update, {})).message).toContain('did not change');
+    expect(f.calls).toHaveLength(1); // nothing else: no binary swap, no image build, no restarts from inside the handler
+    const c = f.calls[0]!.cmd;
+    expect(c.slice(0, 3)).toEqual(['systemd-run', '--no-block', '--collect']);
+    expect(c).toContain('--setenv=SALU_INSTALL_URL=https://github.com/OliverVillson/salu/releases/download/v1.2.0/install-box.sh');
+    expect(c).toContain('--setenv=SALU_VERSION=v1.2.0');
+    expect(c.slice(-3)).toEqual(['bash', '-c', 'curl -fsSL --retry 3 "$SALU_INSTALL_URL" | bash']); // a fixed script; the URL is data
+    const latest = fake();
+    await call(latest.handlers.update, {});
+    expect(latest.calls[0]!.cmd.join(' ')).toContain('releases/latest/download/install-box.sh');
+    expect(latest.calls[0]!.cmd.join(' ')).not.toContain('SALU_VERSION');
   });
 
-  test('a bad version or a failed install is refused with a reason; a failed rebuild says the old image stays', async () => {
-    expect((await call(fake().handlers.update, { version: 'latest; reboot' })).ok).toBe(false);
-    const f = fake(() => ({ ok: false, out: 'download failed: 404' }));
-    expect((await call(f.handlers.update, {})).message).toContain('did not install');
-    const g = fake((c) => (c[2] === 'setup' ? { ok: false, out: 'building the kernel image failed' } : { ok: true, out: '' }));
-    expect((await call(g.handlers.update, {})).message).toContain('old image');
+  test('a bad version never reaches a command; a failed start says so', async () => {
+    const f = fake();
+    for (const v of ['latest; reboot', '$(id)', '1.2', 'v1.2.0/../x']) expect((await call(f.handlers.update, { version: v })).ok).toBe(false);
+    expect(f.calls).toEqual([]);
+    expect((await call(fake(() => ({ ok: false, out: 'Failed to connect to bus' })).handlers.update, {})).message).toContain('could not start the update');
   });
 });
 

@@ -1,7 +1,6 @@
 import { join } from 'node:path';
 import { runnerRoot } from '../../core/runner.ts';
 import { saveBoxLogin } from '../../box/login.ts';
-import { imageStampChanged, saveImageStamp } from '../../box/image.ts';
 import { spawnSync } from 'node:child_process';
 import type { Parsed } from '../args.ts';
 import { flagBool, flagStr } from '../args.ts';
@@ -10,7 +9,7 @@ import { resolveProject } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
 import { dim, green, red } from '../../core/ansi.ts';
 import { podmanCwd, boxAdmit, idleMinutes, startStats, startsLog, buildImage, containerName, engine, ensureContainer, GVISOR_PLATFORMS, gvisorPlatform, imageExists, kernelStatus, KERNEL_IMAGE, kvmUsable, resetContainerReadyCache, runtime, saveToken, setGvisorPlatform, tokenFile, type GvisorPlatform } from '../../core/container.ts';
-import { insideWorker, kernelPath, prepareKernel, requireHuman } from '../../core/kernel.ts';
+import { kernelPath, prepareKernel, requireHuman } from '../../core/kernel.ts';
 import { helpIf } from './_shared.ts';
 
 const HELP = `salu kernel [status|setup|login|reset|shell|platform|bench]
@@ -19,8 +18,7 @@ The container kernel: every ticket runs inside a rootless Podman container (with
 has only the project's kernel folder, no logins and no home network. Installs persist per project.
 
   salu kernel                 what is ready and what is missing
-  salu kernel setup [--unattended --if-changed]   build the kernel image (a large download, once); the box's own
-                              update runs it without a terminal, and only when the image recipe changed
+  salu kernel setup           build the kernel image (a large download, once)
   salu kernel login [--box] [token]   save the Claude token agents use inside the container; --box saves the one box login (kernel and every runner project; get one with \`claude setup-token\`);
                               without an argument it is read from the terminal, or from stdin when piped
   salu kernel reset [project] delete a project's container (installed packages go; the kernel folder stays)
@@ -87,19 +85,11 @@ export async function kernel(p: Parsed): Promise<number> {
       return s.mode !== 'container' ? 1 : 0;
     }
     case 'setup': {
-      const unattended = flagBool(p, 'unattended'); // the box's own update (src/box/handlers/update.ts): no terminal, still never from an agent
-      if (unattended) {
-        if (insideWorker()) throw new CliError('salu kernel setup is for you, not for agents.');
-      } else requireHuman('kernel setup');
-      if (flagBool(p, 'if-changed') && imageExists(engine() ?? '') && !imageStampChanged()) {
-        console.log(dim('kernel image already current'));
-        return 0;
-      }
+      requireHuman('kernel setup');
       const bin = engine();
       if (!bin) throw new CliError('Podman was not found. On Linux run: sudo scripts/install-kernel-runtime.sh');
       if (process.platform !== 'linux') throw new CliError('the container kernel runs on Linux for now (home server or VPS). On a Mac, workers use the fenced mode.');
       buildImage(bin, (l) => console.log(dim(l)));
-      saveImageStamp();
       resetContainerReadyCache();
       console.log(`${green('✓')} kernel image ready. Next: salu kernel login`);
       return 0;
