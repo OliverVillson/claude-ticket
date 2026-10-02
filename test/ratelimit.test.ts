@@ -66,9 +66,11 @@ describe('parseLimitText', () => {
 
 describe('limitFromSdkInfo', () => {
   test('rejected five_hour', () => {
-    const h = limitFromSdkInfo({ status: 'rejected', rateLimitType: 'five_hour', resetsAt: 1790800000 })!;
+    // limitFromSdkInfo reads the real clock and drops a reset time more than a day old, so ask for one a few hours ahead
+    const resetsAt = Math.floor(Date.now() / 1000) + 3 * 3600;
+    const h = limitFromSdkInfo({ status: 'rejected', rateLimitType: 'five_hour', resetsAt })!;
     expect(h.kind).toBe('session');
-    expect(h.resetsAt).toBe(1790800000_000);
+    expect(h.resetsAt).toBe(resetsAt * 1000);
   });
   test('rejected seven_day_opus', () => {
     expect(limitFromSdkInfo({ status: 'rejected', rateLimitType: 'seven_day_opus' })!.models).toContain('opus');
