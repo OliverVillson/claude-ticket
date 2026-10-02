@@ -122,6 +122,16 @@ final class Store: ObservableObject {
         return tickets.first { s in s.messages.contains { $0.id == m.id } || (s.number == t.id && s.project == m.project) }
     }
 
+    /// How often to check the inbox: often while something this phone sent waits for the box, or a
+    /// ticket is queued or working (so a demo shows the answer quickly), else every 30 seconds.
+    var pollSeconds: Int {
+        if demo { return 30 }
+        let t = tickets
+        if t.contains(where: { $0.lastSent != nil || $0.resolvePending }) { return 5 }
+        if t.contains(where: { $0.state == .running || $0.state == .queued }) { return 10 }
+        return 30
+    }
+
     /// The box's latest pause, while it lasts (usage window full).
     var pause: SaluMessage? {
         guard let last = messages.first(where: { $0.type == "orchestrator.paused" || $0.type == "orchestrator.resumed" }),
