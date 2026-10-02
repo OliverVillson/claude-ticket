@@ -195,3 +195,24 @@ describe('github.com host key', () => {
     expect(GITHUB_HOST_KEY.startsWith('AAAAC3NzaC1lZDI1NTE5')).toBe(true);
   });
 });
+
+describe('salu box login --stdin', () => {
+  const run = async (input: string, args: string[] = ['box', 'login', '--stdin']) => {
+    const p = Bun.spawn([process.execPath, join(import.meta.dir, '..', 'src', 'index.ts'), ...args], { stdin: new Response(input), stdout: 'pipe', stderr: 'pipe', env: { ...process.env, NO_COLOR: '1' } });
+    const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
+    return { code: await p.exited, out, err };
+  };
+  test('reads the token from stdin with no terminal and saves the one login', async () => {
+    const r = await run('sk-ant-oat01-fromssh\n');
+    expect(r.code).toBe(0);
+    expect(readBoxLogin()).toBe('sk-ant-oat01-fromssh');
+    expect(readFileSync(boxLoginEnvFile(), 'utf8')).toContain('CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-fromssh');
+    expect(r.out + r.err).not.toContain('fromssh');
+  });
+  test('refuses an empty stdin, a bad token and a missing --stdin', async () => {
+    expect((await run('\n')).err).toContain('no token on stdin');
+    expect((await run('not a token')).code).toBe(1);
+    expect((await run('sk-ant-oat01-x', ['box', 'login'])).err).toContain('--stdin');
+    expect(readBoxLogin()).toBeNull();
+  });
+});

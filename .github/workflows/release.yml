@@ -1,7 +1,8 @@
 name: Release
 
 # Tag a version (git tag v0.1.0 && git push --tags) to build salu for every platform and
-# attach the binaries to a GitHub release. scripts/install.sh downloads from there.
+# attach the binaries to a GitHub release. scripts/install.sh downloads from there; the box installer
+# (install-box.sh) downloads salu-box-linux-<arch>.tar.gz, one bundle with everything a box needs.
 on:
   push:
     tags: ['v*']
@@ -42,6 +43,13 @@ jobs:
             (cd dist && sha256sum "salu-$t" > "salu-$t.sha256")
           done
           ls -lh dist
+      - name: Build the box bundles (salu + installer scripts + kernel Containerfile; the installer downloads one of these)
+        run: |
+          # the Containerfile is written by the binary, so each bundle takes it from the x64 build (it does not depend on the CPU)
+          dist/salu-linux-x64 kernel containerfile > dist/Containerfile
+          for a in x64 arm64; do SALU_BUNDLE_VERSION="$TAG" scripts/build-box-bundle.sh "dist/salu-linux-$a" "$a" dist --containerfile dist/Containerfile; done
+          cp scripts/install-box.sh dist/install-box.sh
+          ls -lh dist/salu-box-*
       - name: Test the compiled linux-x64 binary end to end (stub claude on PATH, and none)
         run: SALU_E2E_BIN=dist/salu-linux-x64 bun test test/e2e
       - name: Publish release
@@ -53,4 +61,4 @@ jobs:
               gh release create "$TAG" --title "$TAG" --generate-notes
             fi
           fi
-          gh release upload "$TAG" dist/salu-* --clobber
+          gh release upload "$TAG" dist/salu-* dist/install-box.sh --clobber
