@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { createServer, connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { boxAdmit, boxConcurrency, boxRunning, memAvailable, memoryPressure, releaseBoxSlot, takeBoxSlot, ensureContainer, holdContainer, idleMinutes, recordStart, startStats, GVISOR_PLATFORMS, gvisorPlatform, memoryConcurrency, parseMemory, setGvisorPlatform, DOCKERFILE, checkDisk, claudeAuthEnv, requireKernelAuth, containerName, containerReady, containerSpawner, createArgs, engine, execArgs, runtime, saveToken } from '../src/core/container.ts';
+import { boxAdmit, boxConcurrency, boxRunning, memAvailable, memoryPressure, releaseBoxSlot, takeBoxSlot, ensureContainer, holdContainer, idleMinutes, recordStart, startStats, GVISOR_PLATFORMS, gvisorPlatform, memoryConcurrency, parseMemory, setGvisorPlatform, DOCKERFILE, KERNEL_IMAGE, KERNEL_IMAGE_VERSION, ensureImage, checkDisk, claudeAuthEnv, requireKernelAuth, containerName, containerReady, containerSpawner, createArgs, engine, execArgs, runtime, saveToken } from '../src/core/container.ts';
 import { EGRESS_TARGETS, NON_WEB_TARGETS, judgeContainer } from '../src/core/container-check.ts';
 import { createEgressServer, domainAllowed, isBlockedAddress, WEB_PORTS } from '../src/core/egress.ts';
 import { workerSdkOptions } from '../src/orchestrator/worker.ts';
@@ -34,7 +34,7 @@ describe('container arguments', () => {
     expect(joined).not.toMatch(/--privileged|--network host|--pid host|--userns host|docker\.sock|--cap-add[^ ]* (ALL|SYS_ADMIN|NET_ADMIN|SYS_PTRACE)/);
     expect(a).toContain('--memory');
     expect(a).toContain('--pids-limit');
-    expect(a.at(-1)).toBe('localhost/salu-kernel:1');
+    expect(a.at(-1)).toBe(`localhost/salu-kernel:${KERNEL_IMAGE_VERSION}`);
     expect(joined).toContain('HTTPS_PROXY=http://127.0.0.1:3128');
   });
 
@@ -419,6 +419,29 @@ describe('unloading idle containers', () => {
     expect(st.maxMs).toBe(9000);
   });
 
+  test('ensureImage builds only a missing image, then recycles containers and images of another version', () => {
+    const fake = join(root, 'podman3');
+    const log = join(root, 'calls3.log');
+    writeFileSync(fake, `#!/bin/sh
+echo "$@" >> ${log}
+case "$1" in
+  image) exit 0 ;;
+  ps) echo "salu-k-old localhost/salu-kernel:1"; echo "salu-k-new ${KERNEL_IMAGE}"; echo "salu-k-none "; exit 0 ;;
+  images) echo "localhost/salu-kernel:1"; echo "${KERNEL_IMAGE}"; exit 0 ;;
+esac
+exit 0
+`);
+    chmodSync(fake, 0o755);
+    const r = ensureImage(fake);
+    const calls = readFileSync(log, 'utf8');
+    expect(r.built).toBe(false);
+    expect(calls).not.toContain('build');
+    expect(r.recycled.sort()).toEqual(['salu-k-none', 'salu-k-old']);
+    expect(r.pruned).toBe(1);
+    expect(calls).toContain('rmi localhost/salu-kernel:1');
+    expect(calls).not.toContain(`rmi ${KERNEL_IMAGE}`);
+  });
+
   test('a stopped container is started again by the next ticket, and the start is reported; a stopping one is waited for', () => {
     const fake = join(root, 'podman2');
     const state = join(root, 'state');
@@ -426,7 +449,7 @@ describe('unloading idle containers', () => {
     writeFileSync(fake, `#!/bin/sh
 echo "$@" >> ${root}/calls2.log
 case "$1" in
-  inspect) s=$(cat ${state}); echo "$s 3"; [ "$s" = stopping ] && echo exited > ${state}; exit 0 ;;
+  inspect) s=$(cat ${state}); echo "$s 3 ${KERNEL_IMAGE}"; [ "$s" = stopping ] && echo exited > ${state}; exit 0 ;;
   start) echo running > ${state}; exit 0 ;;
 esac
 exit 0

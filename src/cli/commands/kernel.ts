@@ -7,7 +7,7 @@ import { openDb } from '../../db/db.ts';
 import { resolveProject } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
 import { dim, green, red } from '../../core/ansi.ts';
-import { podmanCwd, boxAdmit, idleMinutes, startStats, startsLog, buildImage, containerName, engine, ensureContainer, GVISOR_PLATFORMS, gvisorPlatform, imageExists, kernelStatus, KERNEL_IMAGE, kvmUsable, resetContainerReadyCache, runtime, saveToken, setGvisorPlatform, tokenFile, type GvisorPlatform } from '../../core/container.ts';
+import { DOCKERFILE, podmanCwd, boxAdmit, idleMinutes, startStats, startsLog, ensureImage, containerName, engine, ensureContainer, GVISOR_PLATFORMS, gvisorPlatform, imageExists, kernelStatus, KERNEL_IMAGE, kvmUsable, resetContainerReadyCache, runtime, saveToken, setGvisorPlatform, tokenFile, type GvisorPlatform } from '../../core/container.ts';
 import { kernelPath, prepareKernel, requireHuman } from '../../core/kernel.ts';
 import { helpIf } from './_shared.ts';
 
@@ -17,7 +17,8 @@ The container kernel: every ticket runs inside a rootless Podman container (with
 has only the project's kernel folder, no logins and no home network. Installs persist per project.
 
   salu kernel                 what is ready and what is missing
-  salu kernel setup           build the kernel image (a large download, once)
+  salu kernel setup [--yes] [--force]   build the kernel image (a large download) when its version is new, and recreate
+                              containers made from an older one; --yes lets it run over ssh with no terminal
   salu kernel login [--box] [token]   save the Claude token agents use inside the container; --box saves it where runner projects read it (get one with \`claude setup-token\`);
                               without an argument it is read from the terminal, or from stdin when piped
   salu kernel reset [project] delete a project's container (installed packages go; the kernel folder stays)
@@ -84,13 +85,15 @@ export async function kernel(p: Parsed): Promise<number> {
       return s.mode !== 'container' ? 1 : 0;
     }
     case 'setup': {
-      requireHuman('kernel setup');
+      requireHuman('kernel setup', { yes: flagBool(p, 'yes') });
       const bin = engine();
       if (!bin) throw new CliError('Podman was not found. On Linux run: sudo scripts/install-kernel-runtime.sh');
       if (process.platform !== 'linux') throw new CliError('the container kernel runs on Linux for now (home server or VPS). On a Mac, workers use the fenced mode.');
-      buildImage(bin, (l) => console.log(dim(l)));
+      const r = ensureImage(bin, { force: flagBool(p, 'force'), log: (l) => console.log(dim(l)) });
       resetContainerReadyCache();
-      console.log(`${green('✓')} kernel image ready. Next: salu kernel login`);
+      if (r.recycled.length) console.log(dim(`removed ${r.recycled.length} container(s) from an older image; they start again with the next ticket`));
+      if (r.pruned) console.log(dim(`removed ${r.pruned} older kernel image(s)`));
+      console.log(`${green('✓')} kernel image ${r.built ? 'built' : 'already current'} (${KERNEL_IMAGE}). Next: salu kernel login`);
       return 0;
     }
     case 'login': {
@@ -107,6 +110,9 @@ export async function kernel(p: Parsed): Promise<number> {
       console.log(`${green('✓')} saved to ${file} ${dim('(only you can read it; agents inside the container can, so use a token you can revoke)')}`);
       return 0;
     }
+    case 'containerfile':
+      process.stdout.write(DOCKERFILE); // what `setup` builds, for the release bundle and for reading
+      return 0;
     case 'platform': {
       const want = rest[0];
       const cur = gvisorPlatform();
