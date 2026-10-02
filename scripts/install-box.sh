@@ -10,7 +10,7 @@
 # needs no git, no bun and no branch merges. The work runs detached, logged to /var/log/salu-install.log, so an ssh
 # drop does not stop it; run the installer again and it shows the log and carries on. Every step is safe to repeat.
 # It ends by building the container kernel (salu kernel setup --yes) and making the box's keys (salu box init --json);
-# the last line it prints is that JSON.
+# the last line it prints is that JSON (public values only: the box's secret key is never printed; `salu box add` asks for it over its own ssh session).
 #
 # Options:
 #   --check          report only
@@ -90,6 +90,16 @@ if [ "$CHECK" = 0 ] && [ "${SALU_INSTALL_CHILD:-}" != 1 ]; then
     curl -fsSL --retry 3 -o "$T/b.tar.gz" "$BASE/salu-box-linux-$A.tar.gz" || { echo "could not download $BASE/salu-box-linux-$A.tar.gz (is there a release yet?)" >&2; exit 1; }
     curl -fsSL --retry 3 -o "$T/b.sha256" "$BASE/salu-box-linux-$A.tar.gz.sha256" || { echo "could not download the checksum" >&2; exit 1; }
     [ "$(sha256sum "$T/b.tar.gz" | cut -d' ' -f1)" = "$(cut -d' ' -f1 "$T/b.sha256")" ] || { echo "the download does not match its checksum: not installing it" >&2; exit 1; }
+    # A salu that is already installed knows the release signing key: use it to check this download (an update). The very
+    # first install has nothing to check with, so it relies on the sha256 and on the https download; say so.
+    if command -v salu >/dev/null 2>&1 && salu release --help >/dev/null 2>&1; then
+      mkdir "$T/v"; cp "$T/b.tar.gz" "$T/v/salu-box-linux-$A.tar.gz"
+      curl -fsSL --retry 3 -o "$T/v/SHA256SUMS" "$BASE/SHA256SUMS" && curl -fsSL --retry 3 -o "$T/v/SHA256SUMS.sig" "$BASE/SHA256SUMS.sig" \
+        || { echo "this release is not signed (no SHA256SUMS.sig): not installing it" >&2; exit 1; }
+      salu release verify "$T/v" --require "salu-box-linux-$A.tar.gz" || { echo "the release signature check failed: not installing it" >&2; exit 1; }
+    else
+      echo "first install: checked the sha256 only. Later updates are checked against the release signature."
+    fi
     rm -rf "$INSTALLER_DIR.new"; mkdir -p "$INSTALLER_DIR.new"
     tar -xzf "$T/b.tar.gz" -C "$INSTALLER_DIR.new" --strip-components=1
     rm -rf "$INSTALLER_DIR"; mv "$INSTALLER_DIR.new" "$INSTALLER_DIR"
@@ -261,7 +271,7 @@ fi
 INIT_JSON=""
 if [ "$INIT" = 1 ]; then
   NAME_ARGS=(); [ -n "$BOXNAME" ] && NAME_ARGS=(--name "$BOXNAME")
-  if INIT_JSON="$(cd / && salu box init --json ${NAME_ARGS[@]+"${NAME_ARGS[@]}"})"; then ok "box keys"
+  if INIT_JSON="$(cd / && salu box init --json --no-secret ${NAME_ARGS[@]+"${NAME_ARGS[@]}"})"; then ok "box keys"
   else bad "salu box init failed: run this script again"; INIT_JSON=""; fi
 fi
 

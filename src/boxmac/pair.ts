@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { appendFileSync, mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { ticketHome } from '../core/paths.ts';
 import { CliError } from '../core/errors.ts';
 import type { Exec } from './exec.ts';
@@ -14,6 +15,8 @@ export interface Deps {
   say(line: string): void;
   /** Ask for a secret without echoing it. */
   askSecret(question: string): Promise<string>;
+  /** One yes/no question. Without a terminal it must answer false. */
+  confirm(question: string): Promise<boolean>;
 }
 
 const INSTALL_DEFAULT = 'curl -fsSL https://raw.githubusercontent.com/OliverVillson/salu/main/scripts/install-box.sh | sudo bash';
@@ -29,7 +32,7 @@ export function sshBase(host: string): string[] {
   const dir = join(ticketHome(), 'boxes');
   mkdirSync(dir, { recursive: true });
   // One connection is kept open for two minutes, so a password is typed once, not at every step.
-  return ['ssh', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ControlMaster=auto', '-o', `ControlPath=${join(dir, '%C')}`, '-o', 'ControlPersist=120', host];
+  return ['ssh', '-o', 'ControlMaster=auto', '-o', `ControlPath=${join(dir, '%C')}`, '-o', 'ControlPersist=120', host];
 }
 
 const sshProblem = (host: string, err: string): string => {
@@ -53,6 +56,35 @@ async function stage(d: Deps, host: string, file: string, secret: string): Promi
 
 const unstage = (d: Deps, host: string, files: string[]) => d.exec.capture([...sshBase(host), `rm -f ${files.join(' ')}`], { timeoutMs: 30_000 }).catch(() => undefined);
 
+const FP_RE = /^SHA256:[A-Za-z0-9+/]{43}$/;
+
+/**
+ * ssh's normal host-key check stays on. For a host it has never seen, the key is fetched, its
+ * fingerprint shown for one confirm (compare with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`
+ * on the box), and exactly that key is saved to known_hosts, so nobody can swap in another one later.
+ */
+export async function trustHostKey(d: Deps, host: string, expected?: string): Promise<void> {
+  const h = HOST_RE.exec(host)![2]!;
+  if ((await d.exec.capture(['ssh-keygen', '-F', h])).ok) return; // known: ssh checks it as usual
+  const scan = await d.exec.capture(['ssh-keyscan', '-t', 'ed25519', '-T', '10', h], { timeoutMs: 20_000 });
+  const line = scan.out.split('\n').find((l) => l.includes('ssh-ed25519'));
+  if (!line) throw new CliError(`could not read the host key of ${h}. Is the box on, and is it reachable from here?`);
+  const fp = await d.exec.capture(['ssh-keygen', '-lf', '-'], { stdin: line + '\n' });
+  const print = /(SHA256:\S+)/.exec(fp.out)?.[1];
+  if (!fp.ok || !print) throw new CliError('could not work out the box\'s host key fingerprint (is OpenSSH installed?)');
+  if (expected) {
+    if (!FP_RE.test(expected) || expected !== print) throw new CliError(`the host key of ${h} is ${print}, not the ${expected} you gave. Someone else may be answering; check the box's address.`);
+  } else {
+    d.say(`The box says its host key is:\n  ${print}`);
+    d.say('Compare it with the one on the box (run there):\n  ssh-keygen -lf \\\n    /etc/ssh/ssh_host_ed25519_key.pub');
+    if (!(await d.confirm('Is it the same? [y/N] '))) throw new CliError('stopped: the fingerprint was not confirmed. Nothing was sent to the box.');
+  }
+  const home = process.env.HOME || homedir();
+  const known = join(home, '.ssh', 'known_hosts');
+  mkdirSync(join(home, '.ssh'), { recursive: true, mode: 0o700 });
+  appendFileSync(known, line.endsWith('\n') ? line : line + '\n');
+}
+
 const need = (b: BoxConfig, ...f: (keyof BoxConfig)[]) => {
   for (const k of f) if (!b[k]) throw new CliError(`the saved state for box "${b.box}" is incomplete (${k}). Start over: salu box add ${b.host} --name ${b.box} --fresh`);
 };
@@ -63,6 +95,8 @@ export interface AddOpts {
   repo?: string; // owner/name of the control repo
   tokenFile?: string; // read the Claude token from here instead of asking
   fresh?: boolean;
+  /** Expected host key fingerprint (SHA256:...), for runs without a terminal. */
+  hostKey?: string;
 }
 
 export async function addBox(d: Deps, o: AddOpts, readToken: () => Promise<string>): Promise<BoxConfig> {
@@ -73,6 +107,8 @@ export async function addBox(d: Deps, o: AddOpts, readToken: () => Promise<strin
   if (cfg.host !== o.host) throw new CliError(`box "${name}" is already set up for ${cfg.host}. Pick another name with --name, or start over with --fresh`);
   const persist = () => saveBox(cfg);
   persist();
+
+  if (!cfg.sealPub) await trustHostKey(d, cfg.host, o.hostKey);
 
   // 1. salu on the box (installed if missing), and its keys. One terminal session: sudo asks once.
   if (!cfg.sealPub) {

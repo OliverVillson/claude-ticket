@@ -6,8 +6,10 @@
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const GITHUB_HOST_KEY = 'AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl';
-export const KNOWN_HOSTS = `github.com ssh-ed25519 ${GITHUB_HOST_KEY}\n`;
+import { GITHUB_HOST_KEY, GITHUB_KNOWN_HOSTS } from '../control/hosts.ts'; // the one place the key lives
+
+export { GITHUB_HOST_KEY };
+export const KNOWN_HOSTS = GITHUB_KNOWN_HOSTS;
 
 export function writeKnownHosts(file: string): void {
   mkdirSync(dirname(file), { recursive: true });

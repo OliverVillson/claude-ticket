@@ -6,6 +6,8 @@ import { createHandlers } from '../src/box/handlers/index.ts';
 import type { BoxDeps } from '../src/box/handlers/types.ts';
 import { boxLoginEnvFile, boxLoginFile, readBoxLogin } from '../src/box/login.ts';
 import { GITHUB_HOST_KEY, gitSshCommand } from '../src/box/hosts.ts';
+import { UPDATE_SCRIPT, updateStatusFile } from '../src/box/handlers/update.ts';
+import { chmodSync, writeFileSync } from 'node:fs';
 import { heartbeatSource } from '../src/box/heartbeat-data.ts';
 
 let d: string;
@@ -147,7 +149,8 @@ describe('update', () => {
     expect(c.slice(0, 3)).toEqual(['systemd-run', '--no-block', '--collect']);
     expect(c).toContain('--setenv=SALU_INSTALL_URL=https://github.com/OliverVillson/salu/releases/download/v1.2.0/install-box.sh');
     expect(c).toContain('--setenv=SALU_VERSION=v1.2.0');
-    expect(c.slice(-3)).toEqual(['bash', '-c', 'curl -fsSL --retry 3 "$SALU_INSTALL_URL" | bash']); // a fixed script; the URL is data
+    expect(c.slice(-3)).toEqual(['bash', '-c', UPDATE_SCRIPT]); // a fixed script; the URL, binary and status file are data
+    expect(c).toContain('--setenv=SALU_BIN=/usr/local/bin/salu');
     const latest = fake();
     await call(latest.handlers.update, {});
     expect(latest.calls[0]!.cmd.join(' ')).toContain('releases/latest/download/install-box.sh');
@@ -214,5 +217,45 @@ describe('salu box login --stdin', () => {
     expect((await run('not a token')).code).toBe(1);
     expect((await run('sk-ant-oat01-x', ['box', 'login'])).err).toContain('--stdin');
     expect(readBoxLogin()).toBeNull();
+  });
+});
+
+
+describe('update script: nothing runs unless the signature verifies', () => {
+  /** Run UPDATE_SCRIPT with a fake curl and a fake salu whose `release verify` exits as told. */
+  async function runScript(o: { sig: boolean; verify: number | 'missing' }) {
+    const bin = join(d, 'bin');
+    mkdirSync(bin, { recursive: true });
+    const marker = join(d, 'installer-ran');
+    const fakeCurl = `#!/bin/sh
+out=""; url=""
+while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift ;; http*) url="$1" ;; esac; shift; done
+case "$url" in
+  *.sig) ${o.sig ? 'echo SIG > "$out"' : 'exit 22'} ;;
+  *) printf 'touch %s\n' "${marker}" > "$out" ;;
+esac
+`;
+    writeFileSync(join(bin, 'curl'), fakeCurl);
+    writeFileSync(join(bin, 'salu'), o.verify === 'missing' ? '#!/bin/sh\necho "unknown release command" >&2\nexit 1\n' : `#!/bin/sh\n[ "$1 $2" = "release verify" ] || exit 2\n[ -s "$3" ] && [ -s "$4" ] || exit 3\nexit ${o.verify}\n`);
+    chmodSync(join(bin, 'curl'), 0o755);
+    chmodSync(join(bin, 'salu'), 0o755);
+    const p = Bun.spawn(['bash', '-c', UPDATE_SCRIPT], { stdout: 'pipe', stderr: 'pipe', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, SALU_INSTALL_URL: 'https://example.invalid/install-box.sh', SALU_BIN: join(bin, 'salu'), SALU_UPDATE_STATUS: updateStatusFile() } });
+    const code = await p.exited;
+    return { code, ran: existsSync(marker), status: readFileSync(updateStatusFile(), 'utf8').trim() };
+  }
+
+  test('a verified installer runs', async () => {
+    const r = await runScript({ sig: true, verify: 0 });
+    expect(r).toMatchObject({ code: 0, ran: true, status: 'update finished' });
+  });
+  test('a failing signature, a missing signature and a salu without the verify step all refuse, and say so', async () => {
+    expect(await runScript({ sig: true, verify: 1 })).toMatchObject({ code: 77, ran: false, status: expect.stringContaining('signature did not verify') });
+    expect(await runScript({ sig: false, verify: 0 })).toMatchObject({ code: 77, ran: false, status: expect.stringContaining('no signature') });
+    expect(await runScript({ sig: true, verify: 'missing' })).toMatchObject({ code: 77, ran: false });
+  });
+  test('the heartbeat carries how the last update ended', async () => {
+    await runScript({ sig: true, verify: 1 });
+    const f = fake();
+    expect((heartbeatSource(f.deps)() as any).update).toContain('update refused');
   });
 });
