@@ -46,11 +46,19 @@ struct RootView: View {
             ComposeView().environmentObject(store)
         }
         .task(id: phase) {
-            // Check the inbox while the app is on screen: at once, then every 30 seconds.
+            // Check the inbox while the app is on screen: at once, then every few seconds while the box
+            // owes an answer or works on something, else every 30 seconds.
             guard phase == .active else { return }
             while !Task.isCancelled {
                 await store.refresh()
-                try? await Task.sleep(for: .seconds(30))
+                // Asked again every 5 s, so a ticket just sent is checked on soon, not after the long wait.
+                var waited = 0
+                while !Task.isCancelled {
+                    let every = await store.pollSeconds  // read on the main actor, wherever this task runs
+                    if waited >= every { break }
+                    try? await Task.sleep(for: .seconds(5))
+                    waited += 5
+                }
             }
         }
     }

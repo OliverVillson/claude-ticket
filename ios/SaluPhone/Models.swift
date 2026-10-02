@@ -39,6 +39,9 @@ struct SaluMessage: Codable, Identifiable, Hashable {
     var untilDate: Date? { until.map { Date(timeIntervalSince1970: $0 / 1000) } }
 }
 
+/// Plain values only: safe to hand between tasks (GitHubClient fetches several at once).
+extension SaluMessage: @unchecked Sendable {}
+
 /// One line of a working ticket's checklist. `state`: todo, doing or done.
 struct ChecklistItem: Codable, Hashable {
     var text: String
