@@ -118,19 +118,19 @@ PRE="${SALU_BOX_TESTS_PRE:-}"
 if [ -z "${SALU_BOX_TESTS_REEXEC:-}" ] && [ "$LIST" = 0 ] && [ "$(id -un)" != "$SALU_USER" ] && getent passwd "$SALU_USER" >/dev/null 2>&1; then
   PRE="$(mktemp /tmp/salu-box-tests-pre.XXXXXX)"
   enc() { printf '%s' "$1" | tr '\n' '\037'; }
-  pre_check() { # id script
+  pre_check() { # id script [more args]: the installer's --check; install-box.sh --check exits 0 even when it finds a ✗
     selected "$1" || return 0
     [ "$WITH_SUDO" = 1 ] || return 0
     local out rc title; title="$(title_of "$1")"
     if [ -x "$HERE/$2" ]; then
-      out="$(sudo "$HERE/$2" --check 2>&1)"; rc=$?
-      if [ $rc -eq 0 ]; then printf 'PASS|%s|%s|%s\n' "$1" "$title" "$(enc "$(printf '%s' "$out" | tail -n 8)")" >>"$PRE"
+      out="$(sudo "$HERE/$2" --check "${@:3}" 2>&1)"; rc=$?
+      if [ $rc -eq 0 ] && ! printf '%s' "$out" | grep -q '✗'; then printf 'PASS|%s|%s|%s\n' "$1" "$title" "$(enc "$(printf '%s' "$out" | tail -n 8)")" >>"$PRE"
       else printf 'FAIL|%s|%s|%s\n' "$1" "$title" "$(enc "exit $rc"$'\n'"$(printf '%s' "$out" | grep -v '^ok' | tail -n 10)")" >>"$PRE"; fi
     else printf 'SKIP|%s|%s|%s\n' "$1" "$title" "scripts/$2 is not in this checkout" >>"$PRE"; fi
   }
 fi
 if [ -n "${PRE:-}" ] && [ -z "${SALU_BOX_TESTS_REEXEC:-}" ]; then
-  pre_check 1.1 install-box.sh; pre_check 2.1 install-kernel-runtime.sh
+  pre_check 1.1 install-box.sh; pre_check 2.1 install-kernel-runtime.sh --user "$SALU_USER" # else it checks the user who ran sudo
   chmod 644 "$PRE"
   COPY="$(mktemp /tmp/salu-box-tests-run.XXXXXX)"; cp "${BASH_SOURCE[0]}" "$COPY"; chmod 755 "$COPY"
   echo "running the tests as the $SALU_USER user (sudo -u $SALU_USER -H)"
@@ -149,7 +149,7 @@ echo "salu: $("$SALU" --version 2>&1 | head -1)"
 if run_ok 1.1; then
   if [ -x "$HERE/install-box.sh" ]; then
     out="$(sudo "$HERE/install-box.sh" --check 2>&1)"; rc=$?
-    if [ $rc -eq 0 ]; then pass 1.1 "$(title_of 1.1)" "$(printf '%s' "$out" | tail -n 6)"; else fail 1.1 "$(title_of 1.1)" "exit $rc"$'\n'"$(printf '%s' "$out" | grep -iv '^ok' | tail -n 10)"; fi
+    if [ $rc -eq 0 ] && ! printf '%s' "$out" | grep -q '✗'; then pass 1.1 "$(title_of 1.1)" "$(printf '%s' "$out" | tail -n 6)"; else fail 1.1 "$(title_of 1.1)" "exit $rc"$'\n'"$(printf '%s' "$out" | grep -iv '^ok' | tail -n 10)"; fi
   else skip 1.1 "$(title_of 1.1)" "scripts/install-box.sh is not in this checkout (PR #73 not merged here)"; fi
 fi
 if selected 1.3; then
@@ -169,7 +169,7 @@ fi
 # --- 2. kernel v2 ---------------------------------------------------------------------------------------------
 if run_ok 2.1; then
   if [ -x "$HERE/install-kernel-runtime.sh" ]; then
-    out="$(sudo "$HERE/install-kernel-runtime.sh" --check 2>&1)"; rc=$?
+    out="$(sudo "$HERE/install-kernel-runtime.sh" --check --user "$(id -un)" 2>&1)"; rc=$?
     if [ $rc -eq 0 ]; then pass 2.1 "$(title_of 2.1)" "$(printf '%s' "$out" | tail -n 8)"; else fail 2.1 "$(title_of 2.1)" "$(printf '%s' "$out" | grep -v '^ok' | tail -n 10)"; fi
   else skip 2.1 "$(title_of 2.1)" "scripts/install-kernel-runtime.sh not found"; fi
 fi
