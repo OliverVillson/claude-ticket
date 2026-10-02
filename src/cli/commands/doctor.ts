@@ -142,7 +142,7 @@ export async function doctor(p: Parsed): Promise<number> {
       const a = await run([c.path!, 'auth', 'status']);
       const out = await loginProblem(c.path!);
       if (out) no('Claude Code is logged out', out);
-      else if (a.ok) ok(`logged in ${dim(a.out)}`.trimEnd());
+      else if (a.ok) ok(`logged in ${dim(loginSummary(a.out))}`.trimEnd());
       else console.log(`${dim('·')} could not confirm the login (${a.out || 'no answer'}).`);
       // The status command can say "logged in" for a login that has since expired: ask Claude for real.
       if (!out && process.env.SALU_WORKER !== 'fake') {
@@ -174,4 +174,15 @@ export async function doctor(p: Parsed): Promise<number> {
   if (p.flags.sandbox) bad += await sandboxProof(canary);
   console.log(bad ? `\n${bad} problem${bad === 1 ? '' : 's'} to fix.` : '\nAll good.');
   return bad ? 1 : 0;
+}
+
+/** `claude auth status` prints JSON in newer versions: show who and how, not its first brace. */
+export function loginSummary(out: string): string {
+  try {
+    const j = JSON.parse(out);
+    const bits = [j.email, j.orgName ?? j.organization, j.authMethod ?? j.loginMethod ?? j.method, j.subscriptionType].filter((x) => typeof x === 'string' && x);
+    return bits.length ? `(${bits.join(', ')})` : '';
+  } catch {
+    return out.split('\n')[0].trim();
+  }
 }
