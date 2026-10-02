@@ -25,6 +25,7 @@ Usage   (salu ?  |  salu help  |  salu --help  shows this list; quote the ? in z
   salu run [project|"name"...] [--concurrency N] [--detach] [--plain]
                                              queue everything saved (or just the named tickets) and start
   salu kernel [status|setup|login|reset|shell]   the container every ticket runs in: set it up, check it, log agents in
+  salu release keygen|sign|verify            signed releases: make the key, sign a release, check a download (salu release --help)
   salu box init [--json]                     make this box's keys for pairing with a Mac (run by the installer)
   salu push [project] [--branch B] [--to url] [--dry-run]   send what agents made in the kernel to the project's git remote
   salu export <folder> [project] [--git] [--force]           copy what agents made in the kernel to a folder
@@ -107,6 +108,8 @@ export async function dispatch(argv: string[]): Promise<number> {
       return (await import('./commands/notif.ts')).notif(sub);
     case 'kernel':
       return (await import('./commands/kernel.ts')).kernel(sub);
+    case 'release':
+      return (await import('./commands/release.ts')).release(sub);
     case 'box':
       return (await import('./commands/box.ts')).box(sub);
     case 'push':
