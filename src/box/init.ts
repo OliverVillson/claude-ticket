@@ -70,3 +70,6 @@ export function boxInit(o: { name?: string; dir?: string; version: string }): Bo
 
   return { box: named, deployPub: read(join(dir, 'deploy.pub')), sealPub: read(join(dir, 'seal.pub')), boxKey: read(join(dir, 'box.key')), version: o.version };
 }
+
+/** The name chosen by `box init`, or '' before it ran. */
+export const readBoxName = (dir = boxDir()) => read(join(dir, 'name'));
