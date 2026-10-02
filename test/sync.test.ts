@@ -681,6 +681,51 @@ describe('untrusted remote', () => {
 void addRemoteTicket;
 void writeFileSync;
 
+describe('co-working: two people, one project', () => {
+  test('a ticket from one person shows up for the other, marked with their name', () => {
+    const friend = side('friend', 'client');
+    process.env.SALU_USER = 'Bob';
+    const { t } = sendTicket('fix login');
+    sync(client);
+    sync(box);
+    delete process.env.SALU_USER;
+    const onBox = listTickets(box.db, { projectId: box.project.id, recursive: false }).find((x) => x.name === 'fix login')!;
+    expect(onBox.labels).toContain('by-bob');
+    // the friend has never seen it: it arrives with the box's acknowledgement
+    process.env.SALU_SYNC_DIR = friend.sync;
+    const s = syncProject(friend.db, friend.project);
+    expect(s.messagesReceived).toBe(1);
+    const copy = listTickets(friend.db, { projectId: friend.project.id, recursive: false }).find((x) => x.name === 'fix login')!;
+    expect(copy.query).toBe('do fix login');
+    expect(copy.labels).toContain('by-bob');
+    expect(copy.status).toBe('todo');
+    // the sender keeps one ticket, not a duplicate
+    sync(client);
+    expect(listTickets(client.db, { projectId: client.project.id, recursive: false }).filter((x) => x.name === 'fix login')).toHaveLength(1);
+    expect(t.id).toBeGreaterThan(0);
+    friend.db.close();
+  });
+
+  test('the friend can add one too, and both see both', () => {
+    const friend = side('friend', 'client');
+    sendTicket('from alice');
+    sync(client);
+    sync(box);
+    const ft = createTicket(friend.db, { project_id: friend.project.id, name: 'from carol', query: 'do carol', status: 'todo' });
+    publishTicket(friend.db, friend.project, ft, { queue: true });
+    process.env.SALU_SYNC_DIR = friend.sync;
+    syncProject(friend.db, friend.project);
+    sync(box);
+    sync(client);
+    syncProject(friend.db, friend.project);
+    const names = (s: Side) => listTickets(s.db, { projectId: s.project.id, recursive: false }).map((x) => x.name).sort();
+    expect(names(box)).toEqual(['from alice', 'from carol']);
+    expect(names(client)).toEqual(['from alice', 'from carol']);
+    expect(names(friend)).toEqual(['from alice', 'from carol']);
+    friend.db.close();
+  });
+});
+
 describe('tickets added from the TUI', () => {
   test('a ticket for a box project goes to the box, like `salu add`', async () => {
     const { defaultActions } = await import('../src/tui/actions.ts');
