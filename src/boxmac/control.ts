@@ -1,5 +1,4 @@
 import type { BoxConfig } from './state.ts';
-import { CliError } from '../core/errors.ts';
 
 export type Verb = 'ping' | 'status' | 'login.set' | 'project.create' | 'project.remove' | 'update';
 export interface ControlReply {
@@ -18,12 +17,12 @@ export interface ControlApi {
 
 let current: ControlApi | null = null;
 
-/** Tests (and the integration with src/control once it lands) install the real implementation here. */
+/** Tests install a fake here. */
 export function setControlApi(api: ControlApi | null): void {
   current = api;
 }
 
+import { realControlApi } from './bridge.ts';
 export function controlApi(): ControlApi {
-  if (current) return current;
-  throw new CliError('this build cannot talk to a box yet (the control channel is not part of it). Update salu and try again: salu update');
+  return current ?? realControlApi;
 }
