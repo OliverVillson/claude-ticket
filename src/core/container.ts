@@ -311,6 +311,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
       build-essential pkg-config cmake make python3 python3-pip python3-venv python3-dev golang-go default-jdk-headless \\
       sqlite3 libsqlite3-dev libssl-dev nodejs npm sudo vim-tiny procps bubblewrap \\
     && rm -rf /var/lib/apt/lists/*
+# Agent commands run inside bubblewrap's one-id user namespace (the token scrub), where apt cannot switch to its
+# _apt download user (setgroups/setegid fail). Download as the container's root instead; gVisor confines that root.
+RUN printf 'APT::Sandbox::User "root";\\n' > /etc/apt/apt.conf.d/99salu-sandbox-user
 RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash && npm install -g @anthropic-ai/claude-code
 RUN printf '#!/bin/sh\\nsocat TCP-LISTEN:3128,bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:${EGRESS_IN} >/tmp/salu-init.log 2>&1 &\\nexec sleep infinity\\n' > /usr/local/bin/salu-kernel-init && chmod +x /usr/local/bin/salu-kernel-init
 WORKDIR ${WORKDIR}

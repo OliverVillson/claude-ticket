@@ -131,6 +131,7 @@ exit 0
     expect(o.env?.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB).toBe('1');
     for (const tool of ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash']) expect(o.allowedTools).toContain(tool);
     expect(DOCKERFILE).toContain('bubblewrap');
+    expect(DOCKERFILE).toContain('APT::Sandbox::User "root"');
     expect(createArgs({ name: 'n', project: 'p', dir: '/d' }).join(' ')).toContain('SETFCAP');
   });
 });
