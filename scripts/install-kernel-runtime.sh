@@ -52,8 +52,9 @@ if [ "$CHECK" -eq 1 ]; then
   if command -v podman >/dev/null 2>&1 && id "$USER_NAME" >/dev/null 2>&1; then
     IMG="${SALU_KERNEL_IMAGE:-localhost/salu-kernel:1}"
     if sudo -u "$USER_NAME" -H sh -c "cd ~ && podman image exists $IMG" 2>/dev/null; then
-      need "a container runs for $USER_NAME" "sudo -u $USER_NAME -H sh -c 'cd ~ && podman run --rm --network none $IMG true'"
-      [ "$GVISOR" -eq 1 ] && command -v runsc >/dev/null 2>&1 && need "a gVisor container runs for $USER_NAME" "sudo -u $USER_NAME -H sh -c 'cd ~ && podman run --rm --runtime runsc --network none $IMG true'"
+      # --entrypoint: the image's own entrypoint (salu-kernel-init) never exits; timeout: a check must not hang
+      need "a container runs for $USER_NAME" "sudo -u $USER_NAME -H sh -c 'cd ~ && timeout 120 podman run --rm --network none --entrypoint true $IMG'"
+      [ "$GVISOR" -eq 1 ] && command -v runsc >/dev/null 2>&1 && need "a gVisor container runs for $USER_NAME" "sudo -u $USER_NAME -H sh -c 'cd ~ && timeout 120 podman run --rm --runtime runsc --network none --entrypoint true $IMG'"
     else
       say "skipped: a real container run (the kernel image is not built yet: salu kernel setup, then run --check again)"
     fi
