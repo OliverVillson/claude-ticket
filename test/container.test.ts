@@ -109,7 +109,9 @@ exit 0
     expect(calls).toContain('salu-k-web claude --output-format stream-json'); // the host script path was dropped
     expect(calls).not.toContain('secret-token'); // never on a command line
     const env = readFileSync(join(root, 'seen-env'), 'utf8');
-    expect(env).toContain('CLAUDE_CODE_OAUTH_TOKEN=secret-token');
+    expect(env).toContain('CLAUDE_CODE_OAUTH_TOKEN=ssh-placeholder'); // socket mode (default): the real token stays on the host
+    expect(env).toContain('ANTHROPIC_UNIX_SOCKET=/run/salu/api.sock');
+    expect(env).not.toContain('secret-token');
     expect(env).toContain('ANTHROPIC_MODEL=m');
     expect(env).not.toMatch(/GITHUB_TOKEN|DATABASE_URL|PATH/);
     expect(env).not.toMatch(/main-orchestrator-login|main-key/); // the box's own login never goes in

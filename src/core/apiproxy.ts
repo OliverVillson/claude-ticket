@@ -6,14 +6,14 @@ import { egressSocketPath } from './egress.ts';
 import { tokenFile } from './container.ts';
 
 /**
- * The login stays on this side. In socket mode (SALU_KERNEL_AUTH=socket) the container's Claude Code gets only a
+ * The login stays on this side. In socket mode (the default) the container's Claude Code gets only a
  * placeholder token and talks to Anthropic through a unix socket mounted into it; this proxy swaps the real
  * kernel token in and forwards the call to api.anthropic.com over TLS. The token is never in the container's
  * environment, files or memory, so an agent (which has root there) has nothing to take or send out.
  * Only the model calls pass: /v1/messages and /v1/messages/count_tokens. Anything else is refused.
  */
 
-export const API_PLACEHOLDER = 'salu-placeholder-not-a-token';
+export const API_PLACEHOLDER = 'ssh-placeholder';
 export const API_SOCKET_IN = '/run/salu/api.sock';
 export const API_HOST = 'api.anthropic.com';
 
@@ -22,9 +22,9 @@ export function apiSocketPath(): string {
 }
 
 export type KernelAuthMode = 'env' | 'socket';
-/** How the container logs in. `env` (default until chosen): the kernel token is in its environment. `socket`: it never is. */
+/** How the container logs in. `socket` (default): the token never enters it. `env` (SALU_KERNEL_AUTH=env): the kernel token is in its environment. */
 export function kernelAuthMode(env: NodeJS.ProcessEnv = process.env): KernelAuthMode {
-  return env.SALU_KERNEL_AUTH === 'socket' ? 'socket' : 'env';
+  return env.SALU_KERNEL_AUTH === 'env' ? 'env' : 'socket';
 }
 
 /** Is this a call the container may make? (path only, no query games: "?" and fragments are cut before matching) */
@@ -38,7 +38,7 @@ export function upstreamHeaders(h: IncomingHttpHeaders, token: string): Record<s
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(h)) {
     const key = k.toLowerCase();
-    if (v === undefined || ['host', 'connection', 'authorization', 'x-api-key', 'proxy-authorization', 'content-length', 'transfer-encoding'].includes(key)) continue;
+    if (v === undefined || ['host', 'connection', 'authorization', 'x-api-key', 'proxy-authorization'].includes(key)) continue; // the body is piped unchanged, so its framing headers go with it
     out[key] = Array.isArray(v) ? v.join(', ') : v;
   }
   out.host = API_HOST;

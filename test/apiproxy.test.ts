@@ -32,8 +32,8 @@ describe('api proxy', () => {
     expect(s.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB).toBe('0');
     expect(containerAuthEnv(tok, 'env')).toEqual(tok);
     expect(placeholderEnv({ ANTHROPIC_API_KEY: 'k' }).ANTHROPIC_API_KEY).toBe(API_PLACEHOLDER);
-    expect(kernelAuthMode({} as any)).toBe('env');
-    expect(kernelAuthMode({ SALU_KERNEL_AUTH: 'socket' } as any)).toBe('socket');
+    expect(kernelAuthMode({} as any)).toBe('socket');
+    expect(kernelAuthMode({ SALU_KERNEL_AUTH: 'env' } as any)).toBe('env');
   });
   test('forwards a model call with the real token, refuses the rest', async () => {
     let seen: Record<string, any> = {};
@@ -51,6 +51,7 @@ describe('api proxy', () => {
       const ok = await post('/v1/messages');
       expect(await ok.text()).toBe('echo:hi');
       expect(seen.authorization).toBe('Bearer sk-ant-oat-real');
+      expect(seen['content-length']).toBe('2'); // framing is kept: a strict upstream must see the body
       expect((await post('/v1/models')).status).toBe(403);
       const get = await fetch('http://localhost/v1/messages', { unix: sock } as any);
       expect(get.status).toBe(405);
