@@ -21,7 +21,7 @@ salu box update [version] [--on box]
 salu box relogin [--on box] [--token-file f]
 salu box list
 salu box remove <box> [--yes]
-salu box init [--json] [--name box]          (on the box; pairing runs these)
+salu box init [--json] [--no-secret] [--name box]   (on the box)
 salu box connect --url <ssh-url> --mac-key -
 salu box login --stdin                       (on the box: the token comes in on stdin)
 
@@ -32,7 +32,8 @@ add       pairs with the box over ssh once: installs salu there, makes a private
 status    asks the box how it is doing (version, disk, tickets, the safety check).
 update    updates salu on the box to the latest release (or a given version).
 relogin   gives the box a fresh Claude login (when the old one ran out).
-init      the box's own side of pairing: makes its keys, once. --json prints them on one line.
+init      the box's own side of pairing: makes its keys, once. --json prints them on one line;
+          --no-secret leaves the box's secret key out of it (safe to print).
 connect    the box's side of pairing: saves the control repo and the Mac's key (stdin), starts the service.
 After pairing, \`salu new <name>\` makes a project that runs on the box.
 
@@ -107,7 +108,9 @@ export async function box(p: Parsed, deps: Deps = realDeps()): Promise<number> {
     case 'init': {
       const r = boxInit({ name: flagStr(p, 'name'), version: VERSION });
       if (flagBool(p, 'json')) {
-        console.log(JSON.stringify(r));
+        // --no-secret leaves boxKey out: for anything printed to a terminal or a log (the installer). Only `salu box add` asks for the key, over its own ssh channel.
+        const { boxKey, ...pub } = r;
+        console.log(JSON.stringify(p.flags.secret === false ? pub : r));
         return 0;
       }
       console.log(`${green('✓')} box "${r.box}" has its keys in ${boxDir()} ${dim(`(salu ${r.version})`)}`);

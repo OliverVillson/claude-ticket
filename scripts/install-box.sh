@@ -10,7 +10,7 @@
 # needs no git, no bun and no branch merges. The work runs detached, logged to /var/log/salu-install.log, so an ssh
 # drop does not stop it; run the installer again and it shows the log and carries on. Every step is safe to repeat.
 # It ends by building the container kernel (salu kernel setup --yes) and making the box's keys (salu box init --json);
-# the last line it prints is that JSON.
+# the last line it prints is that JSON (public values only: the box's secret key is never printed; `salu box add` asks for it over its own ssh session).
 #
 # Options:
 #   --check          report only
@@ -271,7 +271,7 @@ fi
 INIT_JSON=""
 if [ "$INIT" = 1 ]; then
   NAME_ARGS=(); [ -n "$BOXNAME" ] && NAME_ARGS=(--name "$BOXNAME")
-  if INIT_JSON="$(cd / && salu box init --json ${NAME_ARGS[@]+"${NAME_ARGS[@]}"})"; then ok "box keys"
+  if INIT_JSON="$(cd / && salu box init --json --no-secret ${NAME_ARGS[@]+"${NAME_ARGS[@]}"})"; then ok "box keys"
   else bad "salu box init failed: run this script again"; INIT_JSON=""; fi
 fi
 

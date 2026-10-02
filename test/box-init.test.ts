@@ -41,3 +41,15 @@ describe('salu box connect arguments', () => {
     expect(p.positional).toEqual(['box', 'connect']);
   });
 });
+
+describe('salu box init --json --no-secret', () => {
+  test('leaves the secret boxKey out, and the default keeps it for salu box add', () => {
+    const { mkdtempSync } = require('node:fs');
+    const { tmpdir } = require('node:os');
+    const env = { ...process.env, SALU_BOX_DIR: join(mkdtempSync(join(tmpdir(), 'salu-box-')), 'b') };
+    const run = (...a: string[]) => JSON.parse(Bun.spawnSync(['bun', join(import.meta.dir, '..', 'src', 'index.ts'), 'box', 'init', '--json', '--name', 'x', ...a], { env }).stdout.toString());
+    expect(run('--no-secret').boxKey).toBeUndefined();
+    expect(run('--no-secret').deployPub).toMatch(/^ssh-ed25519/);
+    expect(run().boxKey).toBeString();
+  });
+});
