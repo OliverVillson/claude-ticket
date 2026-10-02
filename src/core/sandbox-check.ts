@@ -3,6 +3,8 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Project, TicketView } from '../db/types.ts';
 import type { WorkerRunner } from '../orchestrator/types.ts';
+import { spawnSync } from 'node:child_process';
+import { containerName, engine, podmanCwd } from './container.ts';
 import { ticketHome } from './paths.ts';
 
 /**
@@ -126,6 +128,13 @@ export async function runSandboxCheck(runner: WorkerRunner, o: { home?: string; 
   const c = plantCanaries(o.home, o.canaryEnvValue);
   const prevKernel = process.env.SALU_KERNEL;
   process.env.SALU_KERNEL = join(scratch, 'kernel');
+  // The check always uses the same project name but a new scratch folder each run and deletes it afterwards, so a
+  // container left over from the last run would start with its /work gone (gVisor dies: "cannot create sandbox ... EOF").
+  const dropContainer = () => {
+    const bin = engine();
+    if (bin) spawnSync(bin, ['rm', '-f', '-t', '1', containerName('salu-sandbox-check')], { stdio: 'ignore', cwd: podmanCwd() });
+  };
+  dropContainer();
   try {
     const proj = join(scratch, 'project');
     mkdirSync(proj);
@@ -167,6 +176,7 @@ export async function runSandboxCheck(runner: WorkerRunner, o: { home?: string; 
     }
     return judge(c, log, { kernelHasLink, ran, envChecked: !!o.canaryEnvValue });
   } finally {
+    dropContainer();
     if (prevKernel === undefined) delete process.env.SALU_KERNEL;
     else process.env.SALU_KERNEL = prevKernel;
     rmSync(c.dir, { recursive: true, force: true });
