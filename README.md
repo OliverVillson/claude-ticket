@@ -56,6 +56,8 @@ files to a GitHub release:
 git tag v0.1.0 && git push --tags
 ```
 
+Releases are signed, and the box's installer and `salu box update` check the signature. Once: `salu release keygen`. For each release: `salu release sign <tag>`; anyone can check one with `salu release verify`.
+
 ### From source
 
 Requires [Bun](https://bun.sh) 1.3+.

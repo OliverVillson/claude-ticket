@@ -18,7 +18,9 @@ It tells you if the GitHub CLI (`gh`) or Claude Code is missing, and the one lin
 salu box add you@salubox
 ```
 
-It asks for the box's sudo password once, installs everything there, creates a private
+The first time it meets the box it shows the box's ssh fingerprint and the line to compare it with. Run that
+line on the box (it is a short `ssh-keygen -lf` command), check the two match, and answer yes. Then it asks
+for the box's sudo password once, installs everything there, creates a private
 `salu-control` repo on your GitHub, and checks that the box answers. Re-run it if your ssh drops:
 it continues where it stopped.
 
@@ -40,11 +42,11 @@ salu notif
 ```sh
 salu box status
 salu box update
-salu box login
+salu box relogin
 ```
 
 `salu box status` shows the last heartbeat, version, disk and running tickets. `salu box update`
-installs the newest release on the box. `salu box login` renews your Claude login on the box (it lasts a year). With more than one box, add `--on <name>` to `salu box status`, `update`, `login` and `salu new`. Everything runs from the Mac; you never type on the box again.
+installs the newest release on the box. `salu box relogin` renews your Claude login on the box (it lasts a year). With more than one box, add `--on <name>` to `salu box status`, `update`, `relogin` and `salu new`. Everything runs from the Mac; you never type on the box again.
 
 ## If something fails
 
