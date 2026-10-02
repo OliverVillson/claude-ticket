@@ -2,25 +2,42 @@
 # salu box installer: turns a fresh Ubuntu/Debian machine into an always-on salu box. The same script works on
 # a home laptop and on a rented VPS. It prepares the OS, then runs the runner installer.
 #
-#   curl -fsSL https://raw.githubusercontent.com/OliverVillson/salu/main/scripts/install-box.sh | sudo bash
+#   curl -fsSL <release>/install-box.sh | sudo bash     (the release page of OliverVillson/salu; see docs/home-server.md)
+#   sudo bash /var/lib/salu-installer/install-box.sh     run it again (an update, or after a dropped ssh session)
 #   sudo bash install-box.sh --check        # only report what is ready and what is not, change nothing
+#
+# Fetches ONE bundle from the release (the salu binary, the three installer scripts, the kernel Containerfile): the box
+# needs no git, no bun and no branch merges. The work runs detached, logged to /var/log/salu-install.log, so an ssh
+# drop does not stop it; run the installer again and it shows the log and carries on. Every step is safe to repeat.
+# It ends by building the container kernel (salu kernel setup --yes) and making the box's keys (salu box init --json);
+# the last line it prints is that JSON.
 #
 # Options:
 #   --check          report only
 #   --no-firewall    do not touch the firewall
 #   --no-runner      prepare the OS but skip scripts/install-runner.sh
+#   --no-image       do not build the container kernel image (salu kernel setup --yes)
+#   --no-init        do not make the box's keys (salu box init --json)
+#   --name NAME      the box's name for pairing (default: the host name)
+#   --foreground     do not detach; run here and stop when this shell stops
 #   --profile P      laptop | vps (default: laptop if a battery or a lid is found and this is bare metal, else vps)
-# Environment: SALU_VERSION, SALU_BINARY (a locally built salu, to run a branch before it is released), SALU_RUNNER_USER are passed to the runner installer. Safe to re-run.
+# Environment: SALU_VERSION (a release tag, default latest), SALU_REPO, SALU_DOWNLOAD_BASE (a mirror),
+# SALU_BINARY (a locally built salu, to run a branch before it is released), SALU_RUNNER_USER are passed on. Safe to re-run.
 set -euo pipefail
 
-CHECK=0; FIREWALL=1; RUNNER=1; PROFILE=""
+CHECK=0; FIREWALL=1; RUNNER=1; IMAGE=1; INIT=1; BOXNAME=""; FOREGROUND="${SALU_INSTALL_FOREGROUND:-0}"; PROFILE=""
+ARGS=("$@")
 while [ $# -gt 0 ]; do
   case "$1" in
     --check) CHECK=1 ;;
     --no-firewall) FIREWALL=0 ;;
     --no-runner) RUNNER=0 ;;
+    --no-image) IMAGE=0 ;;
+    --no-init) INIT=0 ;;
+    --foreground) FOREGROUND=1 ;;
+    --name) BOXNAME="${2:-}"; shift ;;
     --profile) PROFILE="${2:-}"; shift ;;
-    -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
   shift
@@ -34,8 +51,68 @@ PROBLEMS=0
 [ "$(uname -s)" = Linux ] || { echo "the box is for Linux" >&2; exit 1; }
 if [ "$CHECK" = 0 ]; then
   [ "$(id -u)" = 0 ] || { echo "run as root: sudo bash install-box.sh" >&2; exit 1; }
-  [ -d /run/systemd/system ] || { echo "systemd is required" >&2; exit 1; }
+  [ -d "${SALU_SYSTEMD_RUN:-/run/systemd/system}" ] || { echo "systemd is required" >&2; exit 1; }
   command -v apt-get >/dev/null 2>&1 || { echo "this installer supports Ubuntu and Debian (apt)" >&2; exit 1; }
+fi
+
+# --- 0. where are we running from? A bundle (release), a source checkout (scripts/), or piped from curl (fetch the bundle) ---
+SELF="$(readlink -f "${BASH_SOURCE[0]:-$0}" 2>/dev/null || true)"
+HERE=""; [ -f "$SELF" ] && HERE="$(dirname "$SELF")"
+BUNDLE=0; [ -n "$HERE" ] && [ -f "$HERE/SALU-BUNDLE" ] && BUNDLE=1
+SOURCE=0; [ -n "$HERE" ] && [ -f "$HERE/install-runner.sh" ] && SOURCE=1
+LOG="${SALU_INSTALL_LOG:-/var/log/salu-install.log}"; LOCK="${SALU_INSTALL_LOCK:-/run/salu-install.lock}"; RCFILE="$LOG.rc"
+INSTALLER_DIR="${SALU_INSTALLER_DIR:-/var/lib/salu-installer}"
+RUNNER_USER="${SALU_RUNNER_USER:-salu}"
+
+running() { ( flock -n 9 ) 9>"$LOCK" 2>/dev/null && return 1 || return 0; }
+# Show an install that is already running (or just ended), wait for it, and pass on how it ended.
+attach() {
+  echo "an install is already running: showing its log ($LOG). Ctrl+C stops watching, not the install."
+  tail -n 5 -f "$LOG" & local T=$!
+  flock "$LOCK" true
+  sleep 1; kill "$T" 2>/dev/null || true
+  exit "$(cat "$RCFILE" 2>/dev/null || echo 0)"
+}
+
+if [ "$CHECK" = 0 ] && [ "${SALU_INSTALL_CHILD:-}" != 1 ]; then
+  mkdir -p "$(dirname "$LOG")" "$(dirname "$LOCK")"; touch "$LOG"
+  running && attach
+  if [ "$BUNDLE" = 0 ] && [ "$SOURCE" = 0 ] && [ -z "${SALU_BINARY:-}" ]; then
+    # piped from curl: fetch the bundle for this machine, check it, and run its copy of this script
+    case "$(uname -m)" in x86_64|amd64) A=x64 ;; aarch64|arm64) A=arm64 ;; *) echo "unsupported CPU: $(uname -m)" >&2; exit 1 ;; esac
+    command -v curl >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null; }
+    REPO="${SALU_REPO:-OliverVillson/salu}"; V="${SALU_VERSION:-latest}"
+    if [ -n "${SALU_DOWNLOAD_BASE:-}" ]; then BASE="$SALU_DOWNLOAD_BASE"
+    elif [ "$V" = latest ]; then BASE="https://github.com/$REPO/releases/latest/download"
+    else BASE="https://github.com/$REPO/releases/download/$V"; fi
+    T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+    echo "downloading salu-box-linux-$A ($V)..."
+    curl -fsSL --retry 3 -o "$T/b.tar.gz" "$BASE/salu-box-linux-$A.tar.gz" || { echo "could not download $BASE/salu-box-linux-$A.tar.gz (is there a release yet?)" >&2; exit 1; }
+    curl -fsSL --retry 3 -o "$T/b.sha256" "$BASE/salu-box-linux-$A.tar.gz.sha256" || { echo "could not download the checksum" >&2; exit 1; }
+    [ "$(sha256sum "$T/b.tar.gz" | cut -d' ' -f1)" = "$(cut -d' ' -f1 "$T/b.sha256")" ] || { echo "the download does not match its checksum: not installing it" >&2; exit 1; }
+    rm -rf "$INSTALLER_DIR.new"; mkdir -p "$INSTALLER_DIR.new"
+    tar -xzf "$T/b.tar.gz" -C "$INSTALLER_DIR.new" --strip-components=1
+    rm -rf "$INSTALLER_DIR"; mv "$INSTALLER_DIR.new" "$INSTALLER_DIR"
+    trap - EXIT; rm -rf "$T"
+    exec bash "$INSTALLER_DIR/install-box.sh" "${ARGS[@]}"
+  fi
+  if [ "$FOREGROUND" = 0 ] && [ -f "$SELF" ]; then
+    # run detached from this terminal: an ssh drop sends SIGHUP here, not to the install
+    START=$(( $(wc -l < "$LOG") + 1 ))
+    setsid env SALU_INSTALL_CHILD=1 bash "$SELF" "${ARGS[@]}" >>"$LOG" 2>&1 </dev/null &
+    CHILD=$!
+    echo "salu box install started (log: $LOG). If this connection drops, run it again to carry on."
+    tail -n "+$START" -f "$LOG" --pid="$CHILD" 2>/dev/null &
+    TAILP=$!
+    RC=0; wait "$CHILD" || RC=$?
+    sleep 1; kill "$TAILP" 2>/dev/null || true
+    exit "$RC"
+  fi
+fi
+if [ "${SALU_INSTALL_CHILD:-}" = 1 ]; then
+  exec 9>"$LOCK"; flock -n 9 || { echo "another install holds the lock"; exit 75; }
+  trap 'echo $? > "$RCFILE"' EXIT
+  echo "--- salu box install $(date -u +%FT%TZ) ---"
 fi
 
 VIRT="$(systemd-detect-virt 2>/dev/null || true)"; [ -n "$VIRT" ] || VIRT=none
@@ -83,6 +160,7 @@ if [ "$CHECK" = 1 ]; then
 fi
 
 # --- 2. packages ---
+PROBLEMS=0   # the report above is what was; from here on, count what is still wrong after the fixes
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq curl ca-certificates git unattended-upgrades cpu-checker bubblewrap socat apparmor >/dev/null
@@ -139,8 +217,9 @@ printf 'APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgr
 ok "automatic security updates"
 
 # --- 7. the runner (salu user, salu, Claude Code, systemd template) ---
+# From a bundle the salu inside it is the one installed, so the box needs no git, bun or branch merges.
+[ "$BUNDLE" = 1 ] && [ -z "${SALU_BINARY:-}" ] && export SALU_BINARY="$HERE/salu"
 if [ "$RUNNER" = 1 ]; then
-  HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
   if [ -n "$HERE" ] && [ -f "$HERE/install-runner.sh" ]; then bash "$HERE/install-runner.sh"
   else curl -fsSL https://raw.githubusercontent.com/OliverVillson/salu/main/scripts/install-runner.sh | bash; fi
 fi
@@ -170,14 +249,38 @@ else
   note "safe-kernel container runtime: skipped (install-kernel-runtime.sh is not available yet; set SALU_KERNEL_INSTALLER=<script> to use another copy)"
 fi
 
-echo
-echo "Box ready. Next: make a login token on a machine with a browser (claude setup-token), then see docs/home-server.md"
-if [ "${KERNEL_DONE:-0}" = 1 ]; then
-  echo "Then, as the runner user, build the container kernel and give it its own login token:"
-  echo "  sudo -iu ${SALU_RUNNER_USER:-salu} salu kernel setup      # builds the image (a few GB, once)"
-  echo "  sudo -iu ${SALU_RUNNER_USER:-salu} salu kernel login      # an agent token from claude setup-token; revocable"
-  echo "  sudo -iu ${SALU_RUNNER_USER:-salu} salu kernel login --box   # the same token again, for runner projects (/var/lib/salu/kernel-token)"
-  echo "  sudo -iu ${SALU_RUNNER_USER:-salu} salu doctor --sandbox  # attacks a throwaway container; every line a green check"
-  echo "Until the image and login exist, tickets on this box fail with a message rather than run unprotected."
+# --- 9. the container kernel image: built once per version, over ssh, no terminal needed (a changed image recreates old containers) ---
+SALU_AS="runuser -u $RUNNER_USER --"
+if [ "${KERNEL_DONE:-0}" = 1 ] && [ "$IMAGE" = 1 ]; then
+  if (cd / && $SALU_AS env HOME="$(getent passwd "$RUNNER_USER" | cut -d: -f6)" salu kernel setup --yes); then ok "container kernel image"
+  else bad "the kernel image did not build (see above): run this script again and it carries on"; fi
 fi
-echo "Check anytime:  sudo bash install-box.sh --check   and   salu runner doctor"
+
+# --- 10. the box's keys for pairing with a Mac (docs/control-channel.md); nothing changes when it is run again ---
+# Made by root, in a folder only root reads: the control service runs as root, and the agents (the salu user) never see these keys.
+INIT_JSON=""
+if [ "$INIT" = 1 ]; then
+  NAME_ARGS=(); [ -n "$BOXNAME" ] && NAME_ARGS=(--name "$BOXNAME")
+  if INIT_JSON="$(cd / && salu box init --json ${NAME_ARGS[@]+"${NAME_ARGS[@]}"})"; then ok "box keys"
+  else bad "salu box init failed: run this script again"; INIT_JSON=""; fi
+fi
+
+# --- 11. the control service (commands from the Mac, see src/control): enabled here, started by the pairing step ---
+# It runs as root (runner add needs that). A handler cannot restart its own service, so this script does: after an update
+# it restarts the service if it was running (an update handler must start this script in its own unit: systemd-run --no-block).
+if salu control unit >/tmp/salu-control.unit 2>/dev/null && [ -s /tmp/salu-control.unit ]; then
+  grep -v '^User=' /tmp/salu-control.unit > /etc/systemd/system/salu-control.service   # no User= line: root
+  rm -f /tmp/salu-control.unit
+  systemctl daemon-reload; systemctl enable salu-control.service >/dev/null 2>&1 || true
+  systemctl try-restart salu-control.service >/dev/null 2>&1 || true
+  ok "control service installed (runs as root, restarts itself after an update)"
+else
+  bad "could not get the control service unit from salu (salu control unit)"
+fi
+
+echo
+if [ "$PROBLEMS" = 0 ]; then echo "Box ready."; else echo "Box installed, with $PROBLEMS thing(s) to fix (see the ✗ lines above)."; fi
+echo "Next, on your Mac:  salu box add <user>@<this host>"
+echo "By hand instead:  see docs/home-server.md.  Check anytime:  sudo bash $0 --check  and  salu doctor --sandbox"
+[ -n "$INIT_JSON" ] && echo "$INIT_JSON"
+[ "$PROBLEMS" = 0 ]
