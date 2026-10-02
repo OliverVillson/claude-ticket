@@ -130,6 +130,9 @@ export function workerSdkOptions(t: TicketView, project: Project | null, extra: 
     opts.permissionMode = 'bypassPermissions';
     opts.allowDangerouslySkipPermissions = true;
     opts.env = scrubSecrets(opts.env ?? {});
+    // With the subprocess scrub on (it hides the login from commands the agent runs) Claude Code ignores
+    // bypassPermissions, so everything a worker uses is allowed by name instead.
+    opts.allowedTools = [...new Set([...(opts.allowedTools ?? []), 'Read', 'Write', 'Edit', 'MultiEdit', 'Glob', 'Grep', 'Bash'])];
     opts.spawnClaudeCodeProcess = containerSpawner(extra.container.project, extra.container.dir, { onStderr: extra.container.onStderr });
   } else if (extra.kernel || extra.fence) {
     // The kernel (own copy) or the fence (real project): writes confined to the folder by the OS sandbox around shell

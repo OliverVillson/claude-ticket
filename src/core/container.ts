@@ -66,7 +66,7 @@ export function createArgs(o: CreateOpts): string[] {
     ...(o.runtime ? ['--runtime', o.runtime] : []),
     '--network', 'none', // the only way out is the egress socket below
     '--security-opt', 'no-new-privileges',
-    '--cap-drop', 'ALL', '--cap-add', 'CHOWN,DAC_OVERRIDE,FOWNER,FSETID,KILL,SETGID,SETUID,SETPCAP,SYS_CHROOT,AUDIT_WRITE',
+    '--cap-drop', 'ALL', '--cap-add', 'CHOWN,DAC_OVERRIDE,FOWNER,FSETID,KILL,SETGID,SETUID,SETPCAP,SETFCAP,SYS_CHROOT,AUDIT_WRITE',
     '--memory', o.memory ?? process.env.SALU_KERNEL_MEMORY ?? '4g', '--cpus', o.cpus ?? process.env.SALU_KERNEL_CPUS ?? '2', '--pids-limit', String(o.pids ?? 2048),
     '--ulimit', 'nofile=4096:8192', '--shm-size', '256m',
     ...(o.disk ? ['--storage-opt', `size=${o.disk}`] : []),
@@ -309,7 +309,7 @@ ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
 RUN apt-get update && apt-get install -y --no-install-recommends \\
       ca-certificates curl wget git openssh-client socat unzip zip xz-utils jq ripgrep fd-find tree less file patch \\
       build-essential pkg-config cmake make python3 python3-pip python3-venv python3-dev golang-go default-jdk-headless \\
-      sqlite3 libsqlite3-dev libssl-dev nodejs npm sudo vim-tiny procps \\
+      sqlite3 libsqlite3-dev libssl-dev nodejs npm sudo vim-tiny procps bubblewrap \\
     && rm -rf /var/lib/apt/lists/*
 RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash && npm install -g @anthropic-ai/claude-code
 RUN printf '#!/bin/sh\\nsocat TCP-LISTEN:3128,bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:${EGRESS_IN} >/tmp/salu-init.log 2>&1 &\\nexec sleep infinity\\n' > /usr/local/bin/salu-kernel-init && chmod +x /usr/local/bin/salu-kernel-init

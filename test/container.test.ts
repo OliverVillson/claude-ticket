@@ -127,6 +127,11 @@ exit 0
     expect(o.hooks).toBeUndefined();
     expect(o.cwd).toBe(join(root, 'k'));
     expect(o.env?.GITHUB_TOKEN).toBeUndefined();
+    // the login stays hidden from the agent's commands (the scrub needs bubblewrap and SETFCAP), so tools are allowed by name
+    expect(o.env?.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB).toBe('1');
+    for (const tool of ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash']) expect(o.allowedTools).toContain(tool);
+    expect(DOCKERFILE).toContain('bubblewrap');
+    expect(createArgs({ name: 'n', project: 'p', dir: '/d' }).join(' ')).toContain('SETFCAP');
   });
 });
 
