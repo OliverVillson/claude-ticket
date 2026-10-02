@@ -138,6 +138,9 @@ if [ "\$CMD" = delete ]; then
   [ -n "\$ID" ] && { umount "\$NSDIR/\$ID" 2>/dev/null; rm -f "\$NSDIR/\$ID" 2>/dev/null; }
 elif [ "\$CMD" = create ] && [ -r "\$BUNDLE/config.json" ]; then
   NETNS="\$(python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(next((n.get("path","") for n in c.get("linux",{}).get("namespaces",[]) if n.get("type")=="network"),""))' "\$BUNDLE/config.json" 2>/dev/null)"
+  # Podman keeps the spec we edited and reuses it when a stopped container starts again, but the namespace file is
+  # removed on delete (every stop), so a path of ours that no longer exists is made again, not trusted.
+  case "\$NETNS" in "\$NSDIR"/*) ! nsenter --net="\$NETNS" true 2>/dev/null && NETNS="" ;; esac
   if [ -z "\$NETNS" ]; then
     NETNS="\$NSDIR/\$ID"
     if mkdir -p "\$NSDIR" && touch "\$NETNS" && unshare --net="\$NETNS" true 2>>"\$LOG" \
