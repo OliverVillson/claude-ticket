@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { generateSealKeys, openSealed, sealTo } from '../src/control/seal.ts';
 import { canonical, commandPath, replyPath, signMessage, validateArgs, verifyMessage, type Msg } from '../src/control/message.ts';
-import { gitTransport, memoryTransport, type ControlTransport } from '../src/control/transport.ts';
+import { gitEnv, gitTransport, memoryTransport, problem, type ControlTransport } from '../src/control/transport.ts';
 import { runWatcher, type Handlers } from '../src/control/watcher.ts';
 import { readHeartbeat, sendCommand, waitReply, type BoxConfig } from '../src/control/client.ts';
 import { newId } from '../src/sync/format.ts';
@@ -187,6 +187,27 @@ for (const kind of ['memory', 'git'] as const) {
     });
   });
 }
+
+describe('ssh host key', () => {
+  test('a deploy key pins github.com and writes its own known_hosts', async () => {
+    const key = join(root, 'deploy');
+    const e = gitEnv(key);
+    const kh = readFileSync(`${key}.known_hosts`, 'utf8');
+    expect(kh).toBe('github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\n');
+    expect(e.GIT_SSH_COMMAND).toContain('StrictHostKeyChecking=yes');
+    expect(e.GIT_SSH_COMMAND).toContain(`UserKnownHostsFile=${JSON.stringify(`${key}.known_hosts`)}`);
+    const { createHash } = await import('node:crypto');
+    const fp = createHash('sha256').update(Buffer.from(kh.split(' ')[2]!.trim(), 'base64')).digest('base64').replace(/=+$/, '');
+    expect(fp).toBe('+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU');
+    expect(gitEnv(join(root, 'k2'), 'example.org ssh-ed25519 AAAA\n').GIT_SSH_COMMAND).toContain('k2.known_hosts');
+  });
+  test('a host key failure is not reported as a deploy key problem', () => {
+    const m = problem('Host key verification failed.\nfatal: Could not read from remote repository.').message;
+    expect(m).toMatch(/host key/);
+    expect(m).not.toMatch(/deploy key/);
+    expect(problem('git@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository.').message).toMatch(/deploy key/);
+  });
+});
 
 describe('git transport', () => {
   test('two writers never lose a file; write-once; path checks; file size', async () => {
