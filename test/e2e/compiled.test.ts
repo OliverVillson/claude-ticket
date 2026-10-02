@@ -52,7 +52,7 @@ maybe('compiled salu binary', () => {
     const t = (await tickets(e))[0];
     expect(t.status).toBe('todo');
     expect(t.attempts).toBe(0);
-  });
+  }, 60_000); // doctor probes Podman, which can take several seconds the first time on a CI runner
 
   test('with a claude on PATH: doctor is happy and a ticket runs to done', async () => {
     const e = env(true);
@@ -89,5 +89,5 @@ maybe('compiled salu binary', () => {
     const bad = await salu(['doctor'], env(true, { SALU_CLAUDE_PATH: '/nope/claude' }));
     expect(bad.code).toBe(1);
     expect(bad.out).toContain('SALU_CLAUDE_PATH points to /nope/claude');
-  });
+  }, 60_000);
 });
