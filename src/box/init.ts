@@ -1,10 +1,10 @@
-import { generateKeyPairSync, randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runnerRoot } from '../core/runner.ts';
 import { CliError } from '../core/errors.ts';
+import { ensureBoxKeys } from '../control/keys.ts';
 
 /**
  * `salu box init`: the keys a box needs to talk to a Mac over the control repo (docs/control-channel.md). Run once by
@@ -63,16 +63,8 @@ export function boxInit(o: { name?: string; dir?: string; version: string }): Bo
       rmSync(tmp, { recursive: true, force: true });
     }
   }
-  // seal: X25519, raw 32 byte halves (base64); the private half never leaves the box
-  if (!existsSync(join(dir, 'seal.key')) || !existsSync(join(dir, 'seal.pub'))) {
-    const { publicKey, privateKey } = generateKeyPairSync('x25519');
-    const pub = Buffer.from(publicKey.export({ format: 'jwk' }).x!, 'base64url');
-    const priv = Buffer.from(privateKey.export({ format: 'jwk' }).d!, 'base64url');
-    put(join(dir, 'seal.pub'), pub.toString('base64') + '\n');
-    put(join(dir, 'seal.key'), priv.toString('base64') + '\n');
-  }
-  // box: HMAC-SHA256 secret that signs replies and the heartbeat
-  if (!existsSync(join(dir, 'box.key'))) put(join(dir, 'box.key'), randomBytes(32).toString('base64') + '\n');
+  // seal (X25519) and box (HMAC) keys come from the control channel's own code, so init and the watcher agree
+  ensureBoxKeys(dir);
   put(join(dir, 'name'), named + '\n');
   for (const f of ['deploy', 'seal.key', 'box.key']) chmodSync(join(dir, f), 0o600);
 

@@ -275,7 +275,7 @@ if salu control unit >/tmp/salu-control.unit 2>/dev/null && [ -s /tmp/salu-contr
   systemctl try-restart salu-control.service >/dev/null 2>&1 || true
   ok "control service installed (runs as root, restarts itself after an update)"
 else
-  note "this salu has no control channel yet: skipped the control service"
+  bad "could not get the control service unit from salu (salu control unit)"
 fi
 
 echo
