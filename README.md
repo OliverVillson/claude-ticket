@@ -9,6 +9,21 @@ and resumes on its own once the window resets.
 Everything runs on top of Claude Code: workers are Claude Code sessions started through
 the Agent SDK. Nothing else needs to be installed.
 
+## Quickstart
+
+Three commands, all on your Mac. You need a spare Ubuntu 24.04 machine you can ssh into
+([how to prepare one](docs/ubuntu-prep.md)).
+
+```sh
+U=https://olivervillson.github.io/salu
+curl -fsSL $U/i | bash
+salu box add you@salubox
+salu new web
+```
+
+The first installs salu and tells you if `gh` or Claude Code is missing. The second sets up the box over
+ssh, once. The third makes a private repo and a runner for a project. More in [docs/quickstart.md](docs/quickstart.md).
+
 ## Install
 
 One command on macOS or Linux (x64 or arm64). It needs nothing else, not even Bun: it downloads a
@@ -16,8 +31,10 @@ single prebuilt binary, checks its SHA-256, puts `salu` in `~/.local/bin`, adds 
 shell's PATH if it is missing, and tells you how to start.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/OliverVillson/salu/main/scripts/install.sh | bash
+curl -fsSL https://olivervillson.github.io/salu/i | bash
 ```
+
+The long form, same script: `https://raw.githubusercontent.com/OliverVillson/salu/main/scripts/install.sh`.
 
 Workers run through a logged-in Claude Code (`claude auth status`).
 

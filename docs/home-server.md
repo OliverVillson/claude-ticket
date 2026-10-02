@@ -1,5 +1,7 @@
 # Home server: from a blank laptop to a salu box
 
+> New here? [quickstart.md](quickstart.md) and [ubuntu-prep.md](ubuntu-prep.md) are the short path. This long guide keeps the manual steps and the reasons behind them.
+
 Target: your old laptop (Intel 9th-gen i7, 16 GB RAM, 512 GB SSD) as an always-on Ubuntu Server 24.04 LTS box that
 runs the tickets you send from your Mac and your phone. Wipes the laptop. Allow about 1 hour.
 
