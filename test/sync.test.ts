@@ -725,3 +725,32 @@ describe('co-working: two people, one project', () => {
     friend.db.close();
   });
 });
+
+describe('tickets added from the TUI', () => {
+  test('a ticket for a box project goes to the box, like `salu add`', async () => {
+    const { defaultActions } = await import('../src/tui/actions.ts');
+    process.env.SALU_NO_FETCH = '1'; // the test syncs by hand
+    try {
+      const actions = defaultActions(client.db);
+      const t = actions.create({ projectId: client.project.id, name: 'live idea', query: 'do it', tags: '', queue: true });
+      expect(t.status).toBe('todo');
+      expect(claimNextTicket(client.db)).toBeNull(); // never runs on this side
+      expect(sync(client).ticketsSent).toBe(1);
+      expect(sync(box).ticketsReceived).toBe(1);
+      const onBox = listTickets(box.db)[0]!;
+      expect(onBox.name).toBe('live idea');
+      expect(onBox.status).toBe('todo');
+
+      const saved = actions.create({ projectId: client.project.id, name: 'later', query: 'do it', tags: '' });
+      expect(saved.status).toBe('backlog');
+      sync(client);
+      sync(box);
+      expect(listTickets(box.db).find((x) => x.name === 'later')!.status).toBe('backlog');
+
+      actions.reply(client.db && getTicketById(client.db, t.id)!, 'also add tests');
+      expect(sync(client).repliesSent).toBe(1);
+    } finally {
+      delete process.env.SALU_NO_FETCH;
+    }
+  });
+});
