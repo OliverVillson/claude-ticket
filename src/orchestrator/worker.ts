@@ -19,7 +19,7 @@ import { CLAUDE_MISSING, EnvironmentError, claudeExecutableOption, environmentPr
 import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../core/tags.ts';
 import { checkDisk, containerReady, containerRequired, containerSpawner, engine, requireKernelAuth, sweepStaleContainers, WORKDIR } from '../core/container.ts';
 import { startEgress } from '../core/egress.ts';
-import { allowedDomains, auditKernel, confinementFor, kernelOptions, prepareKernel, sandboxSupport, scrubSecrets } from '../core/kernel.ts';
+import { allowedDomains, auditKernel, cleanScrubStubs, confinementFor, kernelOptions, prepareKernel, sandboxSupport, scrubSecrets } from '../core/kernel.ts';
 import { DEFAULT_TOOLS, denialsFrom, toolsToSdk } from '../core/tools.ts';
 import { memoryPrompt } from '../memory/prompt.ts';
 import { refreshKernel } from '../memory/sync.ts';
@@ -293,9 +293,11 @@ export const sdkRunner: WorkerRunner = {
     } catch (e) {
       // The process's own explanation (bad flag, not logged in, ...) is on stderr; log it before rethrowing.
       while (stderr.length) yield { type: 'stderr', text: stderr.shift(), ts: Date.now() };
+      if (inContainer && kernel) cleanScrubStubs(kernel);
       throw e;
     }
     while (stderr.length) yield { type: 'stderr', text: stderr.shift(), ts: Date.now() };
+    if (inContainer && kernel) cleanScrubStubs(kernel); // the empty stand-ins Claude Code's bubblewrap scrub leaves behind
     // Tricks that beat a check-then-use guard leave links behind: say so in the log.
     const findings = kernel ? auditKernel(kernel) : [];
     if (findings.length) yield { type: 'stderr', text: `salu kernel audit: ${findings.slice(0, 5).join('; ')}${findings.length > 5 ? ` (and ${findings.length - 5} more)` : ''}`, ts: Date.now() };

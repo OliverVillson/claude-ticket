@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { allowedDomains, fileToolGuard, fileToolHook, kernelOptions, prepareKernel, sandboxSupport, scrubSecrets, requireHuman, setHumanTty } from '../src/core/kernel.ts';
+import { allowedDomains, cleanScrubStubs, fileToolGuard, fileToolHook, kernelOptions, prepareKernel, sandboxSupport, scrubSecrets, requireHuman, setHumanTty } from '../src/core/kernel.ts';
 import { workerEnv, workerSdkOptions } from '../src/orchestrator/worker.ts';
 import { dispatch } from '../src/cli/dispatch.ts';
 
@@ -238,5 +238,28 @@ describe('salu push and export', () => {
       closeDb();
       delete process.env.SALU_HOME;
     }
+  });
+});
+
+describe('the stand-ins left by the bubblewrap scrub', () => {
+  test('empty untracked ones are removed; real, non-empty or committed ones stay', () => {
+    const d = mkdtempSync(join(tmpdir(), 'salu-stubs-'));
+    git(d, 'init', '-q');
+    writeFileSync(join(d, '.env'), '');
+    writeFileSync(join(d, '.env.local'), '');
+    writeFileSync(join(d, 'package.json'), '');
+    writeFileSync(join(d, 'bunfig.toml'), 'x = 1\n'); // has content: stays
+    writeFileSync(join(d, '.npmrc'), ''); // committed empty: stays
+    git(d, 'add', '.npmrc');
+    git(d, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'x');
+    mkdirSync(join(d, 'node_modules'));
+    mkdirSync(join(d, '.claude'));
+    writeFileSync(join(d, '.claude', 'settings.json'), '{}'); // not empty: stays
+    const removed = cleanScrubStubs(d).sort();
+    expect(removed).toEqual(['.env', '.env.local', 'node_modules/', 'package.json']);
+    expect(existsSync(join(d, 'bunfig.toml'))).toBe(true);
+    expect(existsSync(join(d, '.npmrc'))).toBe(true);
+    expect(existsSync(join(d, '.claude'))).toBe(true);
+    rmSync(d, { recursive: true, force: true });
   });
 });
