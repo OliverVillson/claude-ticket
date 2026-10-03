@@ -35,6 +35,8 @@ export interface Planned {
 export interface SchedLast {
   at: number;
   seat?: string;
+  /** The seat the last pick went to and why the others did not take it. */
+  placed?: Placed | null;
   mode: SchedMode;
   /** Ticket the policy would start (advise mode: not necessarily the one that started). */
   wouldPick: string | null;
@@ -49,20 +51,31 @@ export interface SchedLast {
 /** Whose plan a decision draws on. One seat today; a seat-aware scheduler asks `decide` once per seat and takes the best. */
 export const SELF_SEAT = 'self';
 
+/** Where a started ticket went and why not elsewhere (only for projects with seats). */
+export interface Placed {
+  name: string;
+  seat: string;
+  /** The other seats that were looked at and why each did not take it. */
+  others: { seat: string; why: string }[];
+}
+
 export interface Decision {
   seat: string;
+  /** The registry seat the pick starts on; null/absent = the machine's own login. */
+  seatId?: number | null;
+  placed?: Placed;
   pick: TicketView | null;
   hold: { until: number | null; reason: string } | null;
   skipped: { id: number; name: string; why: string }[];
 }
 
-export function plan(db: Database, t: TicketView, stats = readStats(db)): Planned {
+export function plan(db: Database, t: TicketView, stats = readStats(db), seatId?: number): Planned {
   const tags = ticketTags(t);
   const base = getProjectById(db, t.project_id);
   const proj = base ? inheritedProject(db, base) : null;
   const model = effectiveModel(db, t) ?? 'claude-opus-5-5';
   const effort = tags.effort ?? proj?.default_effort ?? DEFAULT_EFFORT;
-  const est = estimateTicket(db, model, effort, stats);
+  const est = estimateTicket(db, model, effort, stats, seatId);
   // A paused ticket resumes its session: roughly half its work is already paid for.
   if (t.session_id) return { ticket: t, model, effort, est: { ...est, usd: est.usd / 2, pct: est.pct == null ? null : est.pct / 2 } };
   return { ticket: t, model, effort, est };
