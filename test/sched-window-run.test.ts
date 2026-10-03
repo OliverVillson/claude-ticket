@@ -44,3 +44,11 @@ describe('scripts/sched-window-run.sh', () => {
     expect(readFileSync(seen, 'utf8')).toContain('yes');
   }, 150_000);
 });
+
+describe('probeCwd', () => {
+  test('a directory the probe cannot start in falls back to the temp dir', async () => {
+    const { probeCwd } = await import('../src/usage/probe.ts');
+    expect(probeCwd(join(dir, 'nope'))).toBe(tmpdir());
+    expect(probeCwd(dir)).toBe(dir);
+  });
+});
