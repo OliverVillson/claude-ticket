@@ -56,8 +56,10 @@ A teammate can lend a capped slice of their seat:
 
     SALU_USER=bob salu seat lend bob-team on --cap 25 --from 22 --to 7
 
-- Only the seat's owner switches lending **on** (`SALU_USER` must match the seat's owner); anyone with box access
-  can switch it off. A person who leaves the project stops lending.
+- Lending is switched on or off with `salu seat lend`, on the box only; there is no remote way to do it. The
+  command refuses unless `SALU_USER` matches the seat's owner, but that is a guard against accidents, not a
+  security boundary: anyone with a shell on the box is the admin and can change it. A person who leaves the
+  project stops lending.
 - `--cap N` is the most percent of the 5-hour window borrowed tickets may use in total (counted over the last 5
   hours, by each ticket's expected use). `--from/--to` are hours of the day on the box (22 to 7 wraps midnight).
 - A ticket first uses seats it is entitled to (the project's seats, its author's own, or an admin's for a ticket

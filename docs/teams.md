@@ -165,8 +165,9 @@ With an API key there is no plan meter; set `SALU_BUDGET_USD_PER_DAY` and the sa
     salu seat lend bob-team off
     salu seat lent                  # every borrowed ticket: lender, borrower, expected use, cost so far
 
-Only the seat's owner can switch lending on (`SALU_USER` must match the owner); anyone with box access can
-switch it off. `--cap N` is the most percent of the 5-hour window borrowed tickets may use in total, counted
+Lending is switched on or off with `salu seat lend` on the box only; it has no remote path. The command refuses
+to switch it on unless `SALU_USER` matches the seat's owner, but that is a guard against accidents, not a
+security boundary: anyone with a shell on the box is the admin and can change it. `--cap N` is the most percent of the 5-hour window borrowed tickets may use in total, counted
 over the last 5 hours by each ticket's expected use. `--from/--to` are hours of the day on the box (22 to 7 wraps
 midnight). A ticket tries its own seat and unowned seats first; a lender's seat only when none has room.
 A ticket that started on a lender's seat stays there, and waits if lending stops. Only named members borrow.
