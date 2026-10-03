@@ -5,12 +5,16 @@ import { CliError } from '../../core/errors.ts';
 import { dim, green } from '../../core/ansi.ts';
 import { formatForecast, forecast, lastDecisionLines } from '../../sched/forecast.ts';
 import { schedMode, setSchedMode, type SchedMode } from '../../sched/stats.ts';
-import { getUsageSnapshot } from '../../usage/index.ts';
+import { getUsageSnapshot, teamUsage } from '../../usage/index.ts';
+import { listProjects } from '../../db/queries.ts';
+import { listSeats } from '../../team/store.ts';
 import { helpIf } from './_shared.ts';
 
 const HELP = `salu sched [off|advise|on] [--json]
 
 The token-aware scheduler: what the queue will cost, and whether it fits your plan's windows.
+With seats (salu seat) it places each ticket on the seat that has room, and says why the others did not
+take it. A ticket stays on the seat it started on; a seat with no login or a refused one is never used.
   salu sched            show the mode, what finished runs taught it, the queue forecast and the last decision
   salu sched advise     (default) show what it would do; dispatch stays as it was
   salu sched on         start only tickets that fit the 5-hour window, let a smaller ticket go first when a big one
@@ -33,6 +37,8 @@ export async function sched(p: Parsed): Promise<number> {
   }
   const snap = await getUsageSnapshot({ db }).catch(() => null);
   const s = snap ?? { available: false, reason: null, reasonKind: null, plan: null, windows: [], updatedAt: 0, fetchedAt: 0, stale: true, error: null };
+  // Each seat's own meter, read with its own login, so the seat lines are current.
+  for (const proj of listProjects(db)) if (listSeats(db, proj.id).length) await teamUsage(db, proj.id).catch(() => []);
   const f = forecast(db, s);
   if (flagBool(p, 'json')) {
     console.log(JSON.stringify({ ...f, mode: schedMode(db) }, null, 2));
