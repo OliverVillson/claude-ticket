@@ -242,6 +242,23 @@ describe('git transport', () => {
     const t = gitTransport({ url: join(root, 'missing.git'), dir: join(root, 'w') });
     await expect(t.list('boxes/x/commands')).rejects.toThrow(/could not reach the control repo/);
   });
+  test('refuses to pull a control repo that has grown past the disk cap', async () => {
+    const bare = join(root, 'grown.git');
+    git(root, ['init', '-q', '--bare', '-b', 'main', bare]);
+    const wc = join(root, 'filler');
+    git(root, ['clone', '-q', bare, wc]);
+    mkdirSync(join(wc, 'boxes/x/commands'), { recursive: true });
+    writeFileSync(join(wc, 'boxes/x/commands/pad.bin'), 'x'.repeat(3 * 1024 * 1024)); // 3 MB working tree
+    git(wc, ['add', '-A']);
+    git(wc, ['commit', '-q', '-m', 'pad']);
+    git(wc, ['push', '-q', 'origin', 'HEAD:refs/heads/main']);
+    // a tight cap: the 3 MB checkout trips it and the box refuses to pull more
+    const tight = gitTransport({ url: bare, dir: join(root, 'tight'), maxBytes: 1024 * 1024 });
+    await expect(tight.list('boxes/x/commands')).rejects.toThrow(/grown to .* past the .* limit|refusing to pull more/);
+    // the default cap (128 MB) is far above a real control repo, so normal use is unaffected
+    const roomy = gitTransport({ url: bare, dir: join(root, 'roomy') });
+    expect(await roomy.list('boxes/x/commands')).toEqual(['pad.bin']);
+  });
 });
 
 describe('salu control watch', () => {

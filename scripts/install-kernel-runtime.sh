@@ -94,26 +94,38 @@ fi
 if [ "$GVISOR" -eq 1 ]; then
   say "== gVisor"
   # gVisor publishes one archive per release (runsc plus a gvisor-bin/ folder of helpers that must sit next to it).
-  # Pinned to a release and checked against its published sha512; bump both together (SALU_GVISOR_RELEASE overrides
-  # the release, and then the checksum is read from the .sha512 next to the archive).
+  # Pinned to a release and checked against a sha512 committed here (gVisor signs no detached signature for the GCS
+  # archive, so the pinned checksum, reviewed in git, is the trust anchor; fetching the .sha512 from the same bucket
+  # as the archive would trust whoever can write that bucket). Bump the release and both checksums together.
+  # SALU_GVISOR_RELEASE overrides the release, and then SALU_GVISOR_SHA512 must give the archive's sha512: an override
+  # with no pinned checksum is refused rather than trusted blindly.
   GV_RELEASE="${SALU_GVISOR_RELEASE:-20260928.0}"
   case "$GARCH" in
     x86_64)  GV_SHA=c8d3a9fd4d4c4f5b8ff213caa4517356be128d18659ec4cde37828fe797f61a9725a602a846c81a8ed19c057a996515d31c081eba343ed4613a89951ba32ed59 ;;
     aarch64) GV_SHA=926538a4f20056d44838f230297ecec9192db2562e2523a207295f706b76126725f2ff7b4e59d747147510c5714057eeec862a0f77d43bf625746592b5f51b00 ;;
   esac
-  [ "$GV_RELEASE" != "20260928.0" ] && GV_SHA=""
+  [ "$GV_RELEASE" != "20260928.0" ] && GV_SHA="${SALU_GVISOR_SHA512:-}"
+  if [ -z "$GV_SHA" ]; then
+    say "FAILED: SALU_GVISOR_RELEASE overrides the pinned gVisor release ($GV_RELEASE) but SALU_GVISOR_SHA512 is not set."
+    say "        Set SALU_GVISOR_SHA512 to that archive's sha512 (do not trust the checksum published next to it)."
+    exit 1
+  fi
   if [ ! -x /usr/local/bin/runsc ] || [ ! -d /usr/local/bin/gvisor-bin ]; then
     URL="https://storage.googleapis.com/gvisor/releases/release/$GV_RELEASE/$GARCH"
     TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
     curl -fsSL -o "$TMP/gvisor.tar.bz2" "$URL/gvisor.tar.bz2" || { say "FAILED: could not download gVisor $GV_RELEASE from $URL"; exit 1; }
-    [ -n "$GV_SHA" ] || GV_SHA="$(curl -fsSL "$URL/gvisor.tar.bz2.sha512" | cut -d' ' -f1)"
-    echo "$GV_SHA  $TMP/gvisor.tar.bz2" | sha512sum -c - >/dev/null || { say "FAILED: the gVisor download does not match its checksum"; exit 1; }
+    echo "$GV_SHA  $TMP/gvisor.tar.bz2" | sha512sum -c - >/dev/null || { say "FAILED: the gVisor download does not match the pinned checksum: refusing to install it"; exit 1; }
     mkdir "$TMP/x" && tar -xjf "$TMP/gvisor.tar.bz2" -C "$TMP/x"
     rm -rf /usr/local/bin/gvisor-bin
     cp -a "$TMP/x/gvisor-bin" /usr/local/bin/gvisor-bin
     install -m 0755 "$TMP/x/runsc" /usr/local/bin/runsc
   fi
   # Rootless gVisor needs no cgroup ownership, and reaching the egress filter's unix socket needs host-uds.
+  # host-uds=open is the narrowest mode that still lets the sandbox connect to a host socket: it permits connect()
+  # to existing host sockets but not create/bind (never "all" or "create"). The only host socket a kernel container
+  # can reach is its own project's egress socket, because that per-project socket folder is the single host path
+  # bind-mounted in (see createArgs in src/core/container.ts); no other host socket is ever mounted, so "open" cannot
+  # reach anything else. If a host socket is ever added to a container's mounts, revisit this.
   cat > "$RUNSC_WRAPPER" <<WRAP
 #!/bin/sh
 # Platform: SALU_GVISOR_PLATFORM, else the file written by \`salu kernel platform\`, else gVisor's default (systrap).
