@@ -47,7 +47,9 @@ export interface TicketFile {
   labels: string[];
   priority: number;
   queue: boolean; // true: run it as soon as the box can; false: save it in the backlog
-  by?: string; // who added it (co-working: several people send tickets to one project)
+  by?: string; // who added it (co-working: several people send tickets to one project). Display only unless `verifiedBy` is set.
+  /** Set only when a member's own key signed the file: the one name the box may attach as the `by-` label. */
+  verifiedBy?: string;
   at: number;
 }
 
@@ -276,6 +278,9 @@ export function personName(v: unknown): string | null {
   return n || null;
 }
 
+/** Labels of the form `by-...` mark who owns a ticket (and which seat it runs on), so they are never taken from a file. */
+export const isByLabel = (l: string): boolean => /^\s*by-/i.test(l.normalize('NFKC'));
+
 /** The label that marks a ticket as someone's (`by-bob`). */
 export function byLabel(name: string): string {
   return 'by-' + (name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30) || 'someone');
@@ -303,10 +308,10 @@ export function parseTicketFile(text: string, verify: Verifier = sharedVerifier)
   if (!name?.trim() || query === null) return null;
   const tags: Record<string, string> = {};
   if (o.tags && typeof o.tags === 'object') for (const [k, v] of Object.entries(o.tags)) if (typeof v === 'string' && k.length <= 64 && v.length <= 2000) tags[stripControl(k)] = stripControl(v);
-  const labels = Array.isArray(o.labels) ? o.labels.filter((l: unknown): l is string => typeof l === 'string' && l.length <= 64).slice(0, 50).map(stripControl) : [];
+  const labels = Array.isArray(o.labels) ? o.labels.filter((l: unknown): l is string => typeof l === 'string' && l.length <= 64).slice(0, 50).map(stripControl).filter((l: string) => !isByLabel(l)) : []; // `by-<name>` is the box's to add, from the verified key, never the sender's
   const priority = Number.isInteger(o.priority) && o.priority >= 1 && o.priority <= 5 ? o.priority : 3;
   const by = who.by ?? personName(o.by); // a member's key decides who sent it, whatever the file says
-  return { v: 1, id: o.id, project: str(o.project, 200) ?? '', name: name.trim(), query, tags, labels, priority, queue: o.queue !== false, ...(by ? { by } : {}), at: Number.isFinite(o.at) ? o.at : 0 };
+  return { v: 1, id: o.id, project: str(o.project, 200) ?? '', name: name.trim(), query, tags, labels, priority, queue: o.queue !== false, ...(by ? { by } : {}), ...(who.by ? { verifiedBy: who.by } : {}), at: Number.isFinite(o.at) ? o.at : 0 };
 }
 
 export function parseReplyFile(text: string, verify: Verifier = sharedVerifier): ReplyFile | null {
