@@ -264,13 +264,14 @@ export const sdkRunner: WorkerRunner = {
     // The compiled binary has no claude of its own: fail with instructions, not the SDK's error.
     if (runningCompiled() && !claudeExecutableOption()) throw new EnvironmentError(process.env.SALU_CLAUDE_PATH ? `SALU_CLAUDE_PATH points to ${process.env.SALU_CLAUDE_PATH}, which is not an executable file` : CLAUDE_MISSING);
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    const seat = input.seat ?? (input.ticket.seat_id != null ? String(input.ticket.seat_id) : null); // the registry's seat id; its login is stored under the same id
     let mode = confinementFor(input.project);
     const inContainer = mode !== 'off' && containerReady();
     if (mode !== 'off' && !inContainer && containerRequired()) throw new EnvironmentError('SALU_KERNEL_REQUIRE=1 but the container kernel is not ready here. Run `salu doctor`, then `salu kernel setup`.');
-    if (input.seat && !inContainer) throw new EnvironmentError(`this ticket runs on seat "${input.seat}", which only works in the container kernel, and it is not ready here (salu doctor): the ticket will not borrow another login`);
+    if (seat && !inContainer) throw new EnvironmentError(`this ticket runs on seat ${seat}, which only works in the container kernel, and it is not ready here (salu doctor): the ticket will not borrow another login`);
     if (inContainer) {
       mode = 'kernel';
-      if (input.seat) requireSeatAuth(input.seat); // a seat's ticket only ever uses that seat's login, never the box's or another seat's
+      if (seat) requireSeatAuth(seat); // a seat's ticket only ever uses that seat's login, never the box's or another seat's
       else requireKernelAuth(); // the container only ever gets the login from `salu kernel login`; none means no run
     }
     const fellBack = mode !== 'off' && !inContainer && process.platform === 'linux';
@@ -279,13 +280,13 @@ export const sdkRunner: WorkerRunner = {
     const ticket = kernel ? { ...input.ticket, project_path: inContainer ? WORKDIR : kernel } : input.ticket;
     if (inContainer) {
       checkDisk(kernel!);
-      await ensureEgressProxy(input.ticket.project, input.seat);
+      await ensureEgressProxy(input.ticket.project, seat);
     }
     // Without the OS sandbox (a Linux machine lacking bubblewrap) a fenced worker keeps the file-tool fence and the
     // old narrow shell rules, so it never gets more than it can be held to.
     const fence = mode === 'fence' ? { osSandbox: sandboxSupport().ok } : undefined;
     const stderr: string[] = [];
-    const options = workerSdkOptions(ticket, input.project, { resume: input.resume, abort: input.abort, kernel: inContainer ? undefined : kernel, fence, container: inContainer ? { project: input.ticket.project, seat: input.seat, dir: kernel!, onStderr: (s) => stderr.push(s.trim()) } : undefined });
+    const options = workerSdkOptions(ticket, input.project, { resume: input.resume, abort: input.abort, kernel: inContainer ? undefined : kernel, fence, container: inContainer ? { project: input.ticket.project, seat, dir: kernel!, onStderr: (s) => stderr.push(s.trim()) } : undefined });
     input = { ...input, ticket };
     if (saluToolOn(ticket, input.project)) {
       // The thread tools: in-process, so they write to the same database the orchestrator uses.
