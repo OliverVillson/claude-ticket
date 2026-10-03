@@ -44,6 +44,7 @@ export interface Ticket {
   branch?: string | null; // the salu/<ticket> git branch the work was committed on, when there is one
   depends_on: string | null; // reserved
   parent_id?: number | null; // the ticket whose worker started this one as a sub-thread
+  seat_id?: number | null; // the Claude seat the ticket ran on (null = this machine's own login)
   created_at: number;
   updated_at: number;
   started_at: number | null;
