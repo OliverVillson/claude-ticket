@@ -56,7 +56,7 @@ describe('team roster', () => {
     addMember(db, p.id, 'Alice');
     addMember(db, p.id, 'Bob');
     addSeat(db, p.id, 'bob-team', { owner: 'Bob' });
-    setLend(db, p.id, 'bob-team', true, 30);
+    setLend(db, p.id, 'bob-team', true, { cap: 30 });
     removeMember(db, p.id, 'Bob');
     const s = listSeats(db, p.id)[0]!;
     expect(s.disabled).toBe(1);
@@ -83,8 +83,8 @@ describe('seats', () => {
     addSeat(db, p.id, 'a', { owner: 'Alice' });
     expect(listSeats(db, p.id)[0]!.lend).toBe(0);
     expect(setLend(db, p.id, 'a', true).lend_cap_pct).toBe(50);
-    expect(setLend(db, p.id, 'a', true, 20).lend_cap_pct).toBe(20);
-    expect(() => setLend(db, p.id, 'a', true, 0)).toThrow('1 to 100');
+    expect(setLend(db, p.id, 'a', true, { cap: 20 }).lend_cap_pct).toBe(20);
+    expect(() => setLend(db, p.id, 'a', true, { cap: 0 })).toThrow('1 to 100');
     expect(setLend(db, p.id, 'a', false).lend_cap_pct).toBeNull();
     setSeatDisabled(db, p.id, 'a', true);
     expect(() => setLend(db, p.id, 'a', true)).toThrow('switched off');
@@ -140,7 +140,10 @@ describe('salu team / salu seat', () => {
     expect(await dispatch(['team', 'add', 'Alice', '--project', 'web'])).toBe(0);
     expect(await dispatch(['team', 'add', 'Bob', '--project', 'web'])).toBe(0);
     expect(await dispatch(['seat', 'add', 'bob-team', '--owner', 'Bob', '--plan', 'team', '--project', 'web'])).toBe(0);
+    const was = process.env.SALU_USER;
+    process.env.SALU_USER = 'Bob'; // only the owner switches lending on
     expect(await dispatch(['seat', 'lend', 'bob-team', 'on', '--cap', '25', '--project', 'web'])).toBe(0);
+    was === undefined ? delete process.env.SALU_USER : (process.env.SALU_USER = was);
     logs = [];
     await dispatch(['team', '--project', 'web']);
     expect(logs.join('\n')).toContain('Alice');

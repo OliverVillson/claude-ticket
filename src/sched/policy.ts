@@ -64,6 +64,8 @@ export interface Decision {
   /** The registry seat the pick starts on; null/absent = the machine's own login. */
   seatId?: number | null;
   placed?: Placed;
+  /** The pick runs on a seat its requester does not own (a lender's spare time). */
+  borrowed?: boolean;
   pick: TicketView | null;
   hold: { until: number | null; reason: string } | null;
   skipped: { id: number; name: string; why: string }[];
