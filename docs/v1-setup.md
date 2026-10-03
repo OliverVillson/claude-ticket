@@ -248,20 +248,24 @@ sudo -u salu env SALU_HOME=/var/lib/salu/web salu remote ntfy --test   # sends a
 sudo -u salu env SALU_HOME=/var/lib/salu/web salu remote ntfy --off    # turn it off
 ```
 
-The topic name is the secret: anyone who knows it can read the titles, so do not share it. Apple push
-notifications from the app itself come later.
+The topic name is the secret: anyone who knows it can read the titles, so do not share it. Tapping a
+notification opens the Salu iPhone app on that ticket. Apple push notifications from the app itself come later.
 
-## 11. On your iPhone (optional, later) **[untested: never compiled]**
+## 11. On your iPhone (optional)
 
 The phone app reads and writes `salu/inbox` directly through the GitHub API. You need Xcode on the Mac.
 
-1. On GitHub: Settings > Developer settings > Fine-grained tokens > new token, **only the `you/web` repo**,
-   permission *Contents: read and write*.
-2. `brew install xcodegen`, then in your clone of the salu repo: `cd ios && xcodegen generate && open SaluPhone.xcodeproj`.
-3. Run it in a simulator (or on your iPhone with your team under Signing).
-4. Settings in the app: repo `you/web`, project `web`, the token (kept in the Keychain), then **Test connection**.
+1. `salu remote phone web` on the Mac lists what the app needs. `salu remote phone web --open` opens GitHub's
+   fine-grained token page with the name, owner and *Contents: read and write* filled in; under Repository access
+   pick **Only select repositories** and `web`'s repo, then Generate token.
+2. `brew install xcodegen`, then in your clone of the salu repo: `cd ios && xcodegen generate && open SaluPhone.xcodeproj`
+   and Run in a simulator. For your own iPhone run `bash ios/device.sh` first (it sets up signing with your Apple ID),
+   then pick the iPhone in Xcode and Run.
+3. Settings in the app: repo `you/web`, project `web`, the token, the signing key (`salu remote key | pbcopy` on the
+   Mac, paste on the phone), then **Test connection**. It also says whether the token reaches any other private repo.
 
-The inbox refreshes every 30 s while the app is open and on pull-down; use ntfy (step 10) for pings.
+The inbox is checked every few seconds while something you sent waits on the box, else every 30 s and on pull-down.
+For pings use ntfy (step 10): tapping one opens the app on that ticket.
 
 ## 12. Prove the sandbox on your Mac (once) **[untested]**
 

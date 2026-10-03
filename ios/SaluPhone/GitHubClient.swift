@@ -158,6 +158,47 @@ struct GitHubClient: @unchecked Sendable {
         try await put("contents/salu-inbox/actions/\(a.id).json", message: "salu \(a.action) \(a.id)", json: try Signing.encode(a, key: key))
     }
 
+    /// Which private repos the token can see, and its classic scopes when it has any, for Settings: a
+    /// fine-grained token limited to this repo sees only this one. Classic and `gh auth token` tokens
+    /// carry scopes (`repo` = every repo you have).
+    struct Reach: Sendable {
+        var scopes: [String]?
+        var privateRepos: [String]  // owner/name, as GitHub lists them
+        var more: Bool              // more than one page: at least 100
+    }
+
+    func reach() async throws -> Reach {
+        guard let url = URL(string: "https://api.github.com/user/repos?visibility=private&per_page=100") else { throw SaluError.badRepo }
+        var r = URLRequest(url: url)
+        r.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        r.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        r.cachePolicy = .reloadIgnoringLocalCacheData
+        let (data, resp) = try await URLSession.shared.data(for: r)
+        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw SaluError.http((resp as? HTTPURLResponse)?.statusCode ?? 0, "")
+        }
+        struct Repo: Decodable { let full_name: String }
+        let repos = try JSONDecoder().decode([Repo].self, from: data).map(\.full_name)
+        let scopes = http.value(forHTTPHeaderField: "X-OAuth-Scopes").map {
+            $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        }
+        return Reach(scopes: scopes, privateRepos: repos, more: (http.value(forHTTPHeaderField: "Link") ?? "").contains("rel=\"next\""))
+    }
+
+    /// GitHub's new fine-grained token page with the name, owner, 90 days and Contents read and write
+    /// filled in (`tokenUrl` in src/sync/phone.ts). The repo itself can't be preselected by a link.
+    static func tokenPage(owner: String, repo: String) -> URL? {
+        var c = URLComponents(string: "https://github.com/settings/personal-access-tokens/new")
+        c?.queryItems = [
+            URLQueryItem(name: "name", value: String("salu phone \(repo)".prefix(40))),
+            URLQueryItem(name: "description", value: "Salu iPhone app: reads and writes the salu/inbox branch of \(owner)/\(repo). Repository access: only \(repo)."),
+            URLQueryItem(name: "target_name", value: owner),
+            URLQueryItem(name: "expires_in", value: "90"),
+            URLQueryItem(name: "contents", value: "write"),
+        ]
+        return c?.url
+    }
+
     /// Settings' connection test. Throws when the token can't see the repo; returns whether the box
     /// has made the salu/inbox branch yet.
     func check() async throws -> Bool {
