@@ -178,7 +178,7 @@ export function parseUsage(usage: any, now = Date.now()): UsageFetch {
       plan,
       windows: [],
       reasonKind: 'no-subscription',
-      reason: 'Plan usage is only reported for Claude subscriptions (Pro, Max, Team); this login uses an API key or a third-party provider.',
+      reason: 'Plan usage cannot be read with this login (an API key, a third-party provider, or a setup-token login). Limits seen on tickets that ran on it still show.',
     };
   }
   const windows = new Map<string, UsageWindow>();
@@ -378,8 +378,8 @@ export function buildSnapshot(db: Database, now = Date.now(), lastError: string 
   const updatedAt = Math.max(fetchedAt, ...windows.map((w) => w.observedAt), 0);
   const error = lastError ?? fetched?.error ?? (fetched && !fetched.ok ? (fetched.reason ?? null) : null);
   const available = windows.length > 0;
-  const noSub = fetched && !fetched.ok && fetched.reasonKind === 'no-subscription';
-  if (!available || noSub) {
+  // Limits seen on real runs still count when the plan read is refused (an API key, or a setup-token login that cannot read usage).
+  if (!available) {
     const kind: UnavailableReason = fetched?.reasonKind ?? 'error';
     return {
       available: false,
@@ -393,7 +393,9 @@ export function buildSnapshot(db: Database, now = Date.now(), lastError: string 
       error,
     };
   }
-  const stale = error != null || now - Math.max(fetchedAt, updatedAt) > staleAfterMs;
+  // A login that cannot read plan usage never has a fresh read to be stale against: its windows come from runs and carry their own time.
+  const noSub = fetched != null && !fetched.ok && fetched.reasonKind === 'no-subscription';
+  const stale = !noSub && (error != null || now - Math.max(fetchedAt, updatedAt) > staleAfterMs);
   return { available: true, reason: stale && error ? error : null, reasonKind: null, plan: fetched?.plan ?? null, windows, updatedAt, fetchedAt, stale, error };
 }
 

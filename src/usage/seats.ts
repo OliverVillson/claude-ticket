@@ -42,9 +42,10 @@ export const seatScope = (seatId: number) => `seat:${seatId}`;
 /**
  * ok: read fine. full: a window is used up. dead: the seat's login is refused (expired or revoked), so no
  * ticket can run on it. no-login: this machine has no login for the seat. off: switched off by the admin.
+ * no-reading: the login works but cannot read plan usage and no ticket has reported a limit on it yet (never shown as 0%).
  * unavailable: the plan reports no usage (API key) or the read failed for another reason.
  */
-export type SeatUsageState = 'ok' | 'full' | 'dead' | 'no-login' | 'off' | 'unavailable';
+export type SeatUsageState = 'ok' | 'full' | 'dead' | 'no-login' | 'no-reading' | 'off' | 'unavailable';
 
 export interface SeatUsage {
   seat: SeatView;
@@ -96,6 +97,7 @@ export async function seatUsage(db: Database, seat: SeatView, o: { refresh?: boo
   const snapshot = await getUsageSnapshot({ db, scope: seatScope(seat.id), fetcher, force: o.force, refresh: o.refresh, now: o.now });
   const dead = snapshot.reasonKind === 'not-logged-in' && !snapshot.windows.length;
   if (dead) return done('dead', 'the login is refused (expired or revoked): sign this seat in again', snapshot);
+  if (!snapshot.available && snapshot.reasonKind === 'no-subscription') return done('no-reading', 'no reading yet: plan usage cannot be read with this login; it fills in from tickets that run on it', snapshot);
   if (!snapshot.available) return done('unavailable', snapshot.reason ?? 'usage could not be read', snapshot);
   const full = snapshot.windows.filter((w) => w.status === 'rejected' && w.id !== 'credits');
   if (full.length) return done('full', `${full.map((w) => w.short).join(' and ')} used up`, snapshot);
@@ -111,10 +113,18 @@ const pick = (s: UsageSnapshot, id: string): UsageWindow | undefined => s.window
 
 /** "alice  5h ▰▰▰▱▱ 62% · resets 3:45pm · week ▰▱▱▱▱ 31%", or the reason a seat has no meter. */
 export function formatSeatMeter(u: SeatUsage, now = Date.now(), cells = 5): string {
-  if (u.state === 'off' || u.state === 'no-login' || u.state === 'dead' || u.state === 'unavailable') return u.state === 'dead' ? `DEAD: ${u.detail}` : u.state === 'unavailable' ? `n/a: ${u.detail}` : u.detail ?? u.state;
+  if (u.state === 'off' || u.state === 'no-login' || u.state === 'no-reading' || u.state === 'dead' || u.state === 'unavailable') return u.state === 'dead' ? `DEAD: ${u.detail}` : u.state === 'unavailable' ? `n/a: ${u.detail}` : u.detail ?? u.state;
   const parts = ['session', 'weekly'].map((id) => pick(u.snapshot, id)).filter((w): w is UsageWindow => !!w);
   const shown = parts.length ? parts : u.snapshot.windows.slice(0, 1);
-  return shown.map((w, i) => (i === 0 ? formatWindowMeter(w, now, cells) : `${w.short} ${usageBar(w.percentUsed, cells)} ${w.percentUsed ?? '?'}%`)).join(' · ') + (u.snapshot.stale ? ' (stale)' : '');
+  const meter = (w: UsageWindow, first: boolean) =>
+    w.percentUsed == null && w.status === 'allowed'
+      ? `${w.short} ok, no % reported`
+      : first
+        ? formatWindowMeter(w, now, cells)
+        : `${w.short} ${usageBar(w.percentUsed, cells)} ${w.percentUsed ?? '?'}%`;
+  const fromRuns = shown.every((w) => w.source === 'event');
+  const when = fromRuns ? ` · from runs, as of ${new Date(Math.max(...shown.map((w) => w.observedAt))).toTimeString().slice(0, 5)}` : '';
+  return shown.map((w, i) => meter(w, i === 0)).join(' · ') + when + (u.snapshot.stale ? ' (stale)' : '');
 }
 
 /** Plain text for `salu usage` on a project with seats: one line per seat, a dead seat named in its line. */
