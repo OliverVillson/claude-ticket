@@ -66,3 +66,13 @@ export {
   SNAPSHOT_STATE,
 } from './snapshot.ts';
 export type { UsageSnapshot, UsageWindow, UsageWindowId, UsageWindowStatus, UnavailableReason, UsageFetch, UsageFetcher, GetUsageOptions } from './snapshot.ts';
+export {
+  seatUsage,
+  teamUsage,
+  setSeatLoginResolver,
+  seatTokenLogin,
+  seatScope,
+  formatSeatUsageLines,
+  formatSeatMeter,
+} from './seats.ts';
+export type { SeatLogin, SeatLoginResolver, SeatUsage, SeatUsageState } from './seats.ts';

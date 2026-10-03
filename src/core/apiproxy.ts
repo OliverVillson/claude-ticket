@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync } from 'node
 import { dirname, join } from 'node:path';
 import { projectSocketDir } from './egress.ts';
 import { tokenFile } from './container.ts';
+import { readSeatToken } from './seats.ts';
 
 /**
  * The login stays on this side. In socket mode (the default) the container's Claude Code gets only a
@@ -17,8 +18,8 @@ export const API_PLACEHOLDER = 'ssh-placeholder';
 export const API_SOCKET_IN = '/run/salu/api.sock';
 export const API_HOST = 'api.anthropic.com';
 
-export function apiSocketPath(project: string): string {
-  return join(projectSocketDir(project), 'api.sock');
+export function apiSocketPath(project: string, seat?: string | null): string {
+  return join(projectSocketDir(project, seat), 'api.sock');
 }
 
 export type KernelAuthMode = 'env' | 'socket';
@@ -66,10 +67,12 @@ export interface ApiProxyOptions {
   /** tests: speak plain http to this upstream instead of TLS */
   plain?: boolean;
   log?: (l: string) => void;
+  /** a seat's proxy: it only ever uses that seat's own token, and never the box login */
+  seat?: string;
 }
 
 export function createApiProxy(o: ApiProxyOptions = {}): Server {
-  const token = o.token ?? (() => (existsSync(tokenFile()) ? readFileSync(tokenFile(), 'utf8').trim() : ''));
+  const token = o.token ?? (o.seat ? () => readSeatToken(o.seat!) : () => (existsSync(tokenFile()) ? readFileSync(tokenFile(), 'utf8').trim() : ''));
   const log = o.log ?? (() => {});
   return createServer(async (req, res) => {
     const deny = (code: number, why: string) => {
@@ -80,7 +83,7 @@ export function createApiProxy(o: ApiProxyOptions = {}): Server {
     const path = cleanApiPath(req.url);
     if (!path || !apiPathAllowed(path)) return deny(403, 'only the model calls are allowed through');
     const t = token();
-    if (!t) return deny(401, 'no kernel token: run `salu kernel login`');
+    if (!t) return deny(401, o.seat ? `seat ${o.seat} has no login: run \`salu kernel login --seat ${o.seat}\`` : 'no kernel token: run `salu kernel login`');
     const send = o.plain ? (await import('node:http')).request : httpsRequest;
     const up = send({ host: o.host ?? API_HOST, port: o.port ?? 443, method: 'POST', path, headers: upstreamHeaders(req.headers, t) }, (r) => {
       res.writeHead(r.statusCode ?? 502, r.headers);
