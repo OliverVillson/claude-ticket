@@ -14,8 +14,7 @@ import { addDecision, addOutput, answerDecision, getDecision, setChecklist } fro
 import { answerFromReply, answerOpenWithText } from '../threads/decide.ts';
 import { activeKeys, boxVerifier, sharedKeyRetired } from '../team/keys.ts';
 import { whyNot } from '../team/perms.ts';
-import { listMembers } from '../team/store.ts';
-import { ACTIONS_DIR, parseActionFile, type ActionFile, MESSAGES_DIR, byLabel, remoteForbiddenTags, requireKey, whoAmI, remoteKey, signFile, signMessageFor, signatureOk, REPLIES_DIR, TICKETS_DIR, newId, parseMessageFile, parseReplyFile, parseTicketFile, type MessageFile, type ReplyFile, type TicketFile } from './format.ts';
+import { ACTIONS_DIR, parseActionFile, type ActionFile, MESSAGES_DIR, byLabel, isByLabel, remoteForbiddenTags, requireKey, whoAmI, remoteKey, signFile, signMessageFor, signatureOk, REPLIES_DIR, TICKETS_DIR, newId, parseMessageFile, parseReplyFile, parseTicketFile, type MessageFile, type ReplyFile, type TicketFile } from './format.ts';
 import {
   addOutAction,
   localDecisionFor,
@@ -162,12 +161,8 @@ function acceptTicket(db: Database, project: Project, f: TicketFile): TicketView
   const tags = { ...f.tags };
   for (const k of remoteForbiddenTags()) delete tags[k];
   let name = f.name;
-  // With a roster, who owns a ticket is what the signature proves, never what the file says: a file cannot
-  // make a ticket look like someone else's (resolve and reopen rights follow the `by-` label).
-  const team = listMembers(db, project.id).length > 0;
-  const by = team ? (f.sender?.name ?? undefined) : f.by;
-  const base = team ? f.labels.filter((l) => !l.startsWith('by-')) : f.labels;
-  const labels = by && !base.includes(byLabel(by)) ? [...base, byLabel(by)] : base;
+  // The by- label (it picks the seat) comes only from the key that signed the file; parseTicketFile already dropped any the sender wrote.
+  const labels = [...f.labels.filter((l) => !isByLabel(l)), ...(f.verifiedBy ? [byLabel(f.verifiedBy)] : [])];
   for (let n = 2; ; n++) {
     try {
       const t = createTicket(db, { project_id: project.id, name, query: f.query, tags, labels, priority: f.priority, status: f.queue ? 'todo' : 'backlog' });

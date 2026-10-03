@@ -60,6 +60,8 @@ export function boxVerifier(db: Database, projectId: number): Verifier {
       return row && memberSigOk(o, row.secret) ? { ok: true, by: row.name, sender: { name: row.name, role: row.role } } : { ok: false };
     }
     if (sharedKeyRetired(db, projectId)) return { ok: false };
+    // Once anyone has a personal key, a file without one is only good if a shared key is really set (never unsigned).
+    if (!remoteKey() && listKeys(db, projectId).length) return { ok: false };
     // The shared key proves nobody in particular, so it never carries a role: see src/team/perms.ts.
     return { ok: signatureOk(o, remoteKey()), sender: { name: null, role: null } };
   };
