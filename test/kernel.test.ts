@@ -68,6 +68,19 @@ describe('kernel', () => {
     expect(kernelOptions('/k', { home: '/h', env: { SALU_SANDBOX_DOMAINS: 'a.com' } }).sandbox.network?.strictAllowlist).toBe(true);
   });
 
+  test('a per-project SALU_SANDBOX_DOMAINS_<SLUG> wins over the box-wide list, so projects in one process do not share it', () => {
+    const env = { SALU_SANDBOX_DOMAINS: 'box-wide.com', SALU_SANDBOX_DOMAINS_MY_PROJECT: 'only-me.com, *.me.org' };
+    // no project, or a project with no key of its own: the box-wide list
+    expect(allowedDomains(env)).toEqual(['box-wide.com']);
+    expect(allowedDomains(env, 'other')).toEqual(['box-wide.com']);
+    // the project with its own key: its own list, not the box-wide one
+    expect(allowedDomains(env, 'my project')).toEqual(['only-me.com', '*.me.org']);
+    // its allow-list also reaches the in-container sandbox config
+    expect(kernelOptions('/k', { home: '/h', env, project: 'my project' }).sandbox.network?.allowedDomains).toEqual(['only-me.com', '*.me.org']);
+    // a project with only the box-wide list still gets '*' when neither is set
+    expect(allowedDomains({}, 'my project')).toEqual(['*']);
+  });
+
   test('secrets leave the worker environment but Claude auth stays', () => {
     const env = scrubSecrets({ GITHUB_TOKEN: 'x', GH_TOKEN: 'x', SSH_AUTH_SOCK: '/s', AWS_SECRET_ACCESS_KEY: 'x', ANTHROPIC_API_KEY: 'k', PATH: '/bin', CLAUDE_CODE_OAUTH_TOKEN: 't' });
     expect(Object.keys(env).sort()).toEqual(['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB', 'PATH']);

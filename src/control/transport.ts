@@ -77,9 +77,19 @@ export function problem(err: string): Error {
   return new Error(`could not reach the control repo: ${s.split('\n').filter(Boolean).pop() ?? 'git failed'}`);
 }
 
-export function gitTransport(opts: { url: string; sshKey?: string; hostKeys?: string; dir: string }): ControlTransport {
+/** How big the local control checkout may get before we refuse to pull more; SALU_CONTROL_MAX_MB overrides (default 128). */
+export function controlMaxBytes(env: NodeJS.ProcessEnv = process.env): number {
+  return Math.max(1, Number(env.SALU_CONTROL_MAX_MB) || 128) * 1024 * 1024;
+}
+function dirBytes(d: string): number {
+  const r = Bun.spawnSync(['du', '-sk', d], { stdout: 'pipe', stderr: 'pipe' });
+  return r.exitCode === 0 ? Number(r.stdout.toString().split(/\s/)[0]) * 1024 : 0;
+}
+
+export function gitTransport(opts: { url: string; sshKey?: string; hostKeys?: string; dir: string; maxBytes?: number }): ControlTransport {
   const { url, dir } = opts;
   const root = resolve(dir);
+  const maxBytes = opts.maxBytes ?? controlMaxBytes();
   const env = gitEnv(opts.sshKey, opts.hostKeys);
   const git = (args: string[]) => {
     const r = Bun.spawnSync(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', '-c', 'core.symlinks=false', ...args], { cwd: root, stdout: 'pipe', stderr: 'pipe', env });
@@ -121,6 +131,12 @@ export function gitTransport(opts: { url: string; sshKey?: string; hostKeys?: st
     if (!f.ok) throw problem(f.err);
     const c = git(['checkout', '-q', '-f', '-B', branch, `origin/${branch}`]);
     if (!c.ok) throw new Error(`git checkout failed: ${c.err.trim()}`);
+    // A control repo holds only small JSON (every file is write-once and ≤64 KiB), so it stays tiny. If it has grown
+    // past the cap, someone with write access may be filling it to exhaust the box's disk: stop pulling and say so,
+    // rather than keep fetching ever-larger pushes into .git and the working tree. The per-file memory cap in
+    // readLocal still holds; this bounds the total on disk.
+    const size = dirBytes(root);
+    if (size > maxBytes) throw new Error(`the control repo on this box has grown to ${(size / 1e6).toFixed(0)} MB, past the ${(maxBytes / 1e6).toFixed(0)} MB limit: refusing to pull more. Check who has write access to it; raise SALU_CONTROL_MAX_MB only if this much is expected.`);
   }
 
   const inside = (p: string): string => {
