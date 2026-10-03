@@ -70,6 +70,7 @@ export {
   seatUsage,
   teamUsage,
   setSeatLoginResolver,
+  seatTokenLogin,
   seatScope,
   formatSeatUsageLines,
   formatSeatMeter,

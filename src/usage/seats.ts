@@ -1,5 +1,6 @@
 import type { Database } from 'bun:sqlite';
 import type { SeatView } from '../team/store.ts';
+import { seatAuth } from '../core/seats.ts';
 import { listSeats } from '../team/store.ts';
 import { formatWindowMeter, getUsageSnapshot, parseUsage, sdkFetcher, usageBar } from './snapshot.ts';
 import type { UsageFetch, UsageFetcher, UsageSnapshot, UsageWindow } from './snapshot.ts';
@@ -7,10 +8,9 @@ import type { UsageFetch, UsageFetcher, UsageSnapshot, UsageWindow } from './sna
 /**
  * Plan usage per seat: each seat has its own 5-hour and weekly windows, read with that seat's own login.
  *
- * A seat holds no secret (see team/store.ts). The login lives wherever the box keeps seat tokens (v2 seat
- * logins), and reaches this module only through a {@link SeatLoginResolver}: given a seat, it returns the
+ * A seat holds no secret (see team/store.ts). The login lives where the box keeps seat tokens (core/seats.ts), and reaches this module only through a {@link SeatLoginResolver}: given a seat, it returns the
  * environment a Claude Code session needs to act as that seat, or null when this machine has no login for it.
- * Until a resolver is set no seat has a login, and every seat shows as "no login yet".
+ * By default that is the token saved by `salu kernel login --seat <id>`; a seat with none shows as "no login" (a ticket never borrows another seat's login, and neither does this).
  *
  * Snapshots are kept apart per seat in the `state` table (scope `seat:<id>`), so the machine's own usage
  * meter (v1) is untouched.
@@ -22,7 +22,13 @@ export interface SeatLogin {
 }
 export type SeatLoginResolver = (seat: SeatView) => SeatLogin | null | Promise<SeatLogin | null>;
 
-let resolver: SeatLoginResolver = () => null;
+/** The default: the token `salu kernel login --seat <id>` saved on this machine (core/seats.ts), if any. */
+export const seatTokenLogin: SeatLoginResolver = (seat) => {
+  const env = seatAuth(String(seat.id));
+  return Object.keys(env).length ? { env } : null;
+};
+
+let resolver: SeatLoginResolver = seatTokenLogin;
 
 /** Wire the place seat logins live. Returns the previous resolver (tests restore it). */
 export function setSeatLoginResolver(r: SeatLoginResolver): SeatLoginResolver {

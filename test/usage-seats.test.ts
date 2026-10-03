@@ -6,7 +6,8 @@ import { dispatch } from '../src/cli/dispatch.ts';
 import { closeDb, openDb } from '../src/db/db.ts';
 import { createProject } from '../src/db/queries.ts';
 import { addMember, addSeat, listSeats, setSeatDisabled } from '../src/team/store.ts';
-import { formatSeatUsageLines, parseUsage, seatUsage, setSeatLoginResolver, teamUsage } from '../src/usage/index.ts';
+import { saveSeatToken } from '../src/core/seats.ts';
+import { formatSeatUsageLines, seatTokenLogin, parseUsage, seatUsage, setSeatLoginResolver, teamUsage } from '../src/usage/index.ts';
 import type { UsageFetcher } from '../src/usage/index.ts';
 import { estimateTicket, percentPerUsd } from '../src/sched/stats.ts';
 
@@ -90,6 +91,15 @@ describe('per-seat usage', () => {
     } finally {
       setSeatLoginResolver(prev);
     }
+  });
+
+  test('the default login is the seat token saved on this machine, and only that seat\'s', () => {
+    const { db, p } = team();
+    const [a, b] = listSeats(db, p.id);
+    expect(seatTokenLogin(a!)).toBeNull();
+    saveSeatToken(String(a!.id), 'sk-ant-oat01-abcdefgh');
+    expect(seatTokenLogin(a!)).toEqual({ env: { CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-abcdefgh' } });
+    expect(seatTokenLogin(b!)).toBeNull();
   });
 
   test('SALU_FAKE_SEAT_USAGE drives `salu usage` with a meter per seat', async () => {
