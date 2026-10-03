@@ -123,4 +123,35 @@ describe('per-person keys', () => {
     syncAs(e, SHARED);
     expect(listNotifications(e.db, { all: true }).length).toBe(1);
   });
+
+  test('a sender cannot set a by- label: only the verified key does', () => {
+    const alice = issueKey(box.db, box.project.id, 'Alice');
+    issueKey(box.db, box.project.id, 'Bob');
+    for (const [name, key] of [['m', alice.token], ['s', SHARED]] as const) {
+      const c = side(name, 'client');
+      const t = createTicket(c.db, { project_id: c.project.id, name: `t-${name}`, query: 'q', tags: {}, labels: ['by-bob', 'BY-Bob', ' by-bob', 'keep'], status: 'todo' });
+      publishTicket(c.db, c.project, t, { queue: true });
+      syncAs(c, key);
+    }
+    syncAs(box, SHARED);
+    const by = (n: string): string[] => JSON.parse((listTickets(box.db, { project_id: box.project.id } as any) as any[]).find((t) => t.name === n)!.labels);
+    expect(by('t-m')).toEqual(['keep', 'by-alice']); // Alice's key, so Alice, whatever the file said
+    expect(by('t-s')).toEqual(['keep']); // shared key: unnamed
+  });
+
+  test('once a member has a key, unsigned files are refused even if unsigned mode is on', () => {
+    const bob = issueKey(box.db, box.project.id, 'Bob');
+    process.env.SALU_REMOTE_ALLOW_UNSIGNED = '1';
+    const c = side('u', 'client');
+    const t = createTicket(c.db, { project_id: c.project.id, name: 'u', query: 'q', tags: {}, status: 'todo' });
+    publishTicket(c.db, c.project, t, { queue: true });
+    process.env.SALU_SYNC_DIR = c.sync;
+    delete process.env.SALU_REMOTE_KEY;
+    syncProject(c.db, c.project);
+    clientSends('b', bob.token);
+    process.env.SALU_SYNC_DIR = box.sync;
+    delete process.env.SALU_REMOTE_KEY; // the box has no shared key either
+    syncProject(box.db, box.project);
+    expect(boxNames()).toEqual(['x-b']);
+  });
 });
