@@ -24,7 +24,7 @@ test('with a control, a refusal only counts if the commands reached the sandbox'
     const noControl = judge(c, base, { kernelHasLink: false, ran: true, control: CONTROL_OUTPUT });
     expect(noControl.find((p) => p.name.startsWith('a harmless command'))!.ok).toBe(false);
     const denied = judge(c, base + CONTROL_OUTPUT + '\n' + JSON.stringify({ type: 'system', subtype: 'permission_denied', tool_name: 'Bash', tool_use_id: 't1', decision_reason_type: 'asyncAgent' }), { kernelHasLink: false, ran: true, control: CONTROL_OUTPUT });
-    expect(denied.find((p) => p.name.startsWith('no attempt was stopped'))!.ok).toBe(false);
+    expect(denied.find((p) => p.name.startsWith('no shell attempt was stopped'))!.ok).toBe(false);
   } finally {
     rmSync(c.dir, { recursive: true, force: true });
   }
