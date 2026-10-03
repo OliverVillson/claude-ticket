@@ -9,6 +9,7 @@ import { resolveProject } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
 import { dim, green, red } from '../../core/ansi.ts';
 import { DOCKERFILE, podmanCwd, boxAdmit, idleMinutes, startStats, startsLog, ensureImage, containerName, engine, ensureContainer, GVISOR_PLATFORMS, gvisorPlatform, imageExists, kernelStatus, KERNEL_IMAGE, kvmUsable, resetContainerReadyCache, runtime, saveToken, setGvisorPlatform, tokenFile, type GvisorPlatform } from '../../core/container.ts';
+import { requireSeatId, saveSeatToken } from '../../core/seats.ts';
 import { kernelPath, prepareKernel, requireHuman } from '../../core/kernel.ts';
 import { helpIf } from './_shared.ts';
 
@@ -20,7 +21,7 @@ has only the project's kernel folder, no logins and no home network. Installs pe
   salu kernel                 what is ready and what is missing
   salu kernel setup [--yes] [--force]   build the kernel image (a large download) when its version is new, and recreate
                               containers made from an older one; --yes lets it run over ssh with no terminal
-  salu kernel login [--box] [token]   save the Claude token agents use inside the container; --box saves the one box login (kernel and every runner project; get one with \`claude setup-token\`);
+  salu kernel login [--box | --seat <id>] [token]   save the Claude token agents use inside the container; --box saves the one box login (kernel and every runner project; get one with \`claude setup-token\`);
                               without an argument it is read from the terminal, or from stdin when piped
   salu kernel demo [--slow]   show an agent failing to steal the login, leave its folder or reach the network (for a recording)
   salu kernel reset [project] delete a project's container (installed packages go; the kernel folder stays)
@@ -100,11 +101,19 @@ export async function kernel(p: Parsed): Promise<number> {
     }
     case 'login': {
       requireHuman('kernel login');
+      const seat = flagStr(p, 'seat'); // one person's own login: only that seat's tickets use it, through a proxy of its own
       const box = flagBool(p, 'box'); // the one login runner projects read (/var/lib/salu/kernel-token); a boolean flag, so never in rest
       const token = (rest[0] ?? (await readToken())).trim();
       if (!token) throw new CliError('no token given. Run `claude setup-token` and paste the result.');
-      const file = box ? join(runnerRoot(), 'kernel-token') : tokenFile();
+      if (seat && box) throw new CliError('use either --seat <id> or --box, not both');
+      if (seat) requireSeatId(seat);
+      const file = seat ? '' : box ? join(runnerRoot(), 'kernel-token') : tokenFile();
       try {
+        if (seat) {
+          const f = saveSeatToken(seat, token);
+          console.log(`${green('✓')} seat ${seat}'s login saved to ${f} ${dim('(only the proxy for that seat reads it; its tickets never get the token, and no other seat can reach it)')}`);
+          return 0;
+        }
         if (box) saveBoxLogin(token); // the one box login: the kernel proxy and every runner project's orchestrator
         else saveToken(token, file);
       } catch (e: any) {

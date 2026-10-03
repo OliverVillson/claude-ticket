@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import type { SpawnedProcess, SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
 import { CliError } from './errors.ts';
 import { projectSocketDir } from './egress.ts';
+import { requireSeatAuth, seatKey } from './seats.ts';
 import { folderSlug } from './resolve.ts';
 import { ticketHome } from './paths.ts';
 import { kernelAuthMode, placeholderEnv } from './apiproxy.ts';
@@ -38,7 +39,9 @@ export function runtime(env: NodeJS.ProcessEnv = process.env, which: (c: string)
   return which('runsc') ? { name: 'runsc', gvisor: true } : { name: null, gvisor: false };
 }
 
-export function containerName(project: string): string {
+/** A seat's tickets run in a container of their own (prefix salu-ks-, so it can never be a project's default container). */
+export function containerName(project: string, seat?: string | null): string {
+  if (seat) return `salu-ks-${seatKey(project, seat)}${homeTag()}`;
   return `salu-k-${folderSlug(project)}${homeTag()}`;
 }
 
@@ -50,6 +53,8 @@ export function homeTag(): string {
 export interface CreateOpts {
   name: string;
   project: string;
+  /** the seat this container belongs to; its socket folder holds only that seat's login proxy */
+  seat?: string | null;
   dir: string;
   runtime?: string | null;
   socket?: string;
@@ -77,11 +82,11 @@ export function createArgs(o: CreateOpts): string[] {
     '--ulimit', 'nofile=4096:8192', '--shm-size', '256m',
     ...(o.disk ? ['--storage-opt', `size=${o.disk}`] : []),
     '--hostname', 'salu-kernel', '--workdir', WORKDIR,
-    '--label', 'salu.kernel=1', '--label', `salu.project=${o.project}`, '--label', `salu.home=${ticketHome()}`, '--label', `salu.mounts=${MOUNTS_VERSION}`, '--label', `salu.image=${o.image ?? KERNEL_IMAGE}`,
+    '--label', 'salu.kernel=1', '--label', `salu.project=${o.project}`, ...(o.seat ? ['--label', `salu.seat=${o.seat}`] : []), '--label', `salu.home=${ticketHome()}`, '--label', `salu.mounts=${MOUNTS_VERSION}`, '--label', `salu.image=${o.image ?? KERNEL_IMAGE}`,
     '-v', `${o.dir}:${WORKDIR}:rw`,
     // The socket's folder, not the socket file: a file mount keeps the inode it had at create time, and the filter
     // makes a new socket (new inode) every time it starts, which would leave a running container talking to a dead one.
-    '-v', `${dirname(o.socket ?? join(projectSocketDir(o.project), 'egress.sock'))}:${EGRESS_DIR_IN}:rw`,
+    '-v', `${dirname(o.socket ?? join(projectSocketDir(o.project, o.seat), 'egress.sock'))}:${EGRESS_DIR_IN}:rw`,
     ...Object.entries(env).flatMap(([k, v]) => ['--env', `${k}=${v}`]),
     o.image ?? KERNEL_IMAGE,
   ];
@@ -163,10 +168,10 @@ export function imageExists(bin: string, image = KERNEL_IMAGE): boolean {
 }
 
 /** Make sure the project's container exists and runs; create it from the image the first time. */
-export function ensureContainer(project: string, dir: string, bin = engine(), onStart?: (t: StartTiming) => void): string {
+export function ensureContainer(project: string, dir: string, bin = engine(), onStart?: (t: StartTiming) => void, seat?: string | null): string {
   const t0 = performance.now();
   if (!bin) throw new CliError('Podman was not found. Install the container runtime: sudo scripts/install-kernel-runtime.sh (Linux) or brew install podman (Mac), then salu kernel setup.');
-  const name = containerName(project);
+  const name = containerName(project, seat);
   const inspect = () => {
     const r = podman(bin, ['inspect', '--format', '{{.State.Status}} {{index .Config.Labels "salu.mounts"}} {{index .Config.Labels "salu.image"}}', name]);
     const [status = '', mounts = '', image = ''] = (r.stdout ?? '').trim().split(/\s+/);
@@ -186,10 +191,10 @@ export function ensureContainer(project: string, dir: string, bin = engine(), on
     if (!imageExists(bin)) throw new CliError(`the kernel image ${KERNEL_IMAGE} is not built yet: run \`salu kernel setup\``);
     const rt = runtime();
     const disk = `${kernelDiskGb()}g`;
-    let c = podman(bin, createArgs({ name, project, dir, runtime: rt.name, disk }));
+    let c = podman(bin, createArgs({ name, project, seat, dir, runtime: rt.name, disk }));
     // The size limit needs a storage backend that can enforce it (overlay on xfs with quotas); without one, the
     // per-ticket size check below is the limit.
-    if (c.status !== 0 && /storage-opt|quota|size/i.test(c.stderr + c.stdout)) c = podman(bin, createArgs({ name, project, dir, runtime: rt.name, disk: null }));
+    if (c.status !== 0 && /storage-opt|quota|size/i.test(c.stderr + c.stdout)) c = podman(bin, createArgs({ name, project, seat, dir, runtime: rt.name, disk: null }));
     if (c.status !== 0) throw new CliError(`could not create the kernel container: ${(c.stderr || c.stdout).trim().split('\n').pop()}`);
   }
   if (state.text !== 'running') {
@@ -253,8 +258,8 @@ const inUse = new Map<string, number>();
 const stopTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 /** Count a running ticket against the project's container; the returned function lets go of it. */
-export function holdContainer(project: string, bin: string, o: { env?: NodeJS.ProcessEnv; stop?: (bin: string, name: string) => void } = {}): () => void {
-  const name = containerName(project);
+export function holdContainer(project: string, bin: string, o: { env?: NodeJS.ProcessEnv; stop?: (bin: string, name: string) => void; seat?: string | null } = {}): () => void {
+  const name = containerName(project, o.seat);
   clearTimeout(stopTimers.get(name));
   stopTimers.delete(name);
   inUse.set(name, (inUse.get(name) ?? 0) + 1);
@@ -289,12 +294,12 @@ export function sweepStaleContainers(bin: string): void {
  * Environment goes in through a 0600 file that is deleted right after the process starts, never on a command line.
  * Only Claude's own variables and the proxy settings go in: nothing from this machine's environment.
  */
-export function containerSpawner(project: string, dir: string, o: { bin?: string; auth?: Record<string, string>; onStderr?: (s: string) => void } = {}): (opts: SpawnOptions) => SpawnedProcess {
+export function containerSpawner(project: string, dir: string, o: { bin?: string; auth?: Record<string, string>; seat?: string | null; onStderr?: (s: string) => void } = {}): (opts: SpawnOptions) => SpawnedProcess {
   return (opts) => {
     const bin = o.bin ?? engine();
-    const auth = o.auth ?? requireKernelAuth(); // before anything starts: no kernel login, no run
-    const name = ensureContainer(project, dir, bin, (t) => o.onStderr?.(`salu kernel: container ${t.kind} in ${(t.ms / 1000).toFixed(1)} s (${t.platform})`));
-    const release = holdContainer(project, bin!);
+    const auth = o.auth ?? (o.seat ? requireSeatAuth(o.seat) : requireKernelAuth()); // before anything starts: no login, no run (a seat never falls back to another login)
+    const name = ensureContainer(project, dir, bin, (t) => o.onStderr?.(`salu kernel: container ${t.kind} in ${(t.ms / 1000).toFixed(1)} s (${t.platform})`), o.seat);
+    const release = holdContainer(project, bin!, { seat: o.seat });
     const keep = /^(CLAUDE_|ANTHROPIC_|SALU_TICKET|SALU_KERNEL_WORKER|LANG$|LC_|TERM$)/;
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(opts.env)) if (v !== undefined && keep.test(k) && !CREDENTIAL_ENV.test(k)) env[k] = v;
