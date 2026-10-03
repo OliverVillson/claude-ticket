@@ -690,7 +690,7 @@ describe('co-working: two people, one project', () => {
     sync(box);
     delete process.env.SALU_USER;
     const onBox = listTickets(box.db, { projectId: box.project.id, recursive: false }).find((x) => x.name === 'fix login')!;
-    expect(onBox.labels).toContain('by-bob');
+    expect(onBox.labels).not.toContain('by-bob'); // a shared-key file names nobody: only a member's own key earns the by- label
     // the friend has never seen it: it arrives with the box's acknowledgement
     process.env.SALU_SYNC_DIR = friend.sync;
     const s = syncProject(friend.db, friend.project);
