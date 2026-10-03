@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { ticketHome } from './paths.ts';
 import { folderSlug } from './resolve.ts';
+import { seatKey } from './seats.ts';
 
 /**
  * The egress filter for kernel containers. A container has no network of its own (`--network none`); its
@@ -21,8 +22,9 @@ export function egressSocketPath(): string {
  * Each project's container is given its own socket folder, so an agent that replaces or deletes a socket in its
  * folder only affects its own project: it cannot sit in the middle of another project's traffic.
  */
-export function projectSocketDir(project: string): string {
-  return join(dirname(egressSocketPath()), 'p', folderSlug(project));
+export function projectSocketDir(project: string, seat?: string | null): string {
+  // a seat's folder is a sibling of the project folders (never inside one), so no container sees another seat's sockets
+  return seat ? join(dirname(egressSocketPath()), 's', seatKey(project, seat)) : join(dirname(egressSocketPath()), 'p', folderSlug(project));
 }
 
 const v4 = (ip: string) => ip.split('.').map(Number);
