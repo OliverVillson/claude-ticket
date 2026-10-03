@@ -69,6 +69,8 @@ export interface WorkerInput {
   /** The earlier conversation, used only when there is no session to resume (a failed run started clean). */
   history?: Array<{ role: 'user' | 'assistant'; body: string }>;
   abort: AbortController;
+  /** The seat whose login pays for this ticket (from the team's seat registry); none = the box login. A seat with no login refuses the ticket. */
+  seat?: string | null;
 }
 
 /**
