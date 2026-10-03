@@ -34,6 +34,18 @@ status, results and replies follow the same way they do for your own tickets.
   seat is the open terms question.
 - A friend who joins late sees tickets from the box's history as the acknowledgements replay.
 
+## Team roster and seats (v2, in progress)
+
+    salu team add alice          # the first person added owns the project
+    salu team add bob
+    salu seat add bob-team --owner bob --plan team
+    salu seat lend bob-team on --cap 25   # off until the owner turns it on
+
+`salu team` and `salu seat` keep the roster and the list of Claude seats. They only record who is on
+the project and which seats exist (a seat is a name, never a login); signing, permissions, the
+scheduler and the seat logins read them in later steps. Whether a subscription seat may serve a
+teammate's ticket has not been checked at the source: check the plan's terms before turning lending on.
+
 ## Not built yet
 
 Per-person keys and roles (admin owns the project), one Team/Enterprise seat per person,
