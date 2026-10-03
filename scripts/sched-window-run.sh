@@ -15,15 +15,18 @@ SALU_USER="${SALU_BOX_USER:-salu}"
 if [ "$(id -un)" != "$SALU_USER" ] && [ -z "${SCHED_RUN_REEXEC:-}" ]; then
   cd /tmp # the salu user cannot enter the caller's home, and a spawn from an unreadable cwd fails
   COPY="$(mktemp /tmp/sched-window-run.XXXXXX)"; cp "$0" "$COPY"; chmod 644 "$COPY"
-  TMPOUT="/tmp/sched-window-run-$(date +%Y%m%d-%H%M%S).txt"; FINAL="$HOME/$(basename "$TMPOUT")"
+  FINAL="$HOME/sched-window-run-$(date +%Y%m%d-%H%M%S).txt"; (umask 077; : >"$FINAL")
   echo "running as the $SALU_USER user (sudo -u $SALU_USER -H)"
-  sudo -u "$SALU_USER" -H env SALU="${SALU:-salu}" SCHED_RUN_REEXEC=1 SCHED_RUN_OUT="$TMPOUT" bash "$COPY"
-  rc=$?; rm -f "$COPY"
-  [ -f "$TMPOUT" ] && cp "$TMPOUT" "$FINAL" && echo "report copied to $FINAL"
+  sudo -u "$SALU_USER" -H env SALU="${SALU:-salu}" SCHED_RUN_REEXEC=1 bash "$COPY" | tee -a "$FINAL"
+  rc=${PIPESTATUS[0]}; rm -f "$COPY"
+  echo "report saved to $FINAL (mode 600, token-shaped strings masked)"
   exit $rc
 fi
 SALU="${SALU:-salu}"
-OUT="${SCHED_RUN_OUT:-/tmp/sched-window-run-$(date +%Y%m%d-%H%M%S).txt}"; chmod 644 "$OUT" 2>/dev/null; : >>"$OUT"; chmod 644 "$OUT"
+umask 077
+OUT="${SCHED_RUN_OUT:-/tmp/sched-window-run-$(date +%Y%m%d-%H%M%S).txt}"; : >>"$OUT"; chmod 600 "$OUT"
+# Everything that reaches the screen or the report goes through scrub: token-shaped strings are masked.
+scrub() { sed -E 's/sk-ant-[A-Za-z0-9_-]+/sk-ant-****/g; s/([Bb]earer|[Tt]oken|TOKEN|[Kk]ey|KEY)([ =:"]+)[A-Za-z0-9._~+\/=-]{20,}/\1\2****/g; s/[A-Za-z0-9_-]{32,}/****/g'; }
 SCRATCH="$(mktemp -d /tmp/sched-run.XXXXXX)"
 trap 'rm -rf "$SCRATCH"' EXIT
 export SALU_HOME="$SCRATCH/home" SALU_SCHED=on
@@ -39,7 +42,7 @@ fi
 [ -r "$ROOT/kernel-token" ] && export SALU_KERNEL_TOKEN_FILE="$ROOT/kernel-token"
 [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -d "/run/user/$(id -u)" ] && export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 FAILS=0
-say() { printf '%s\n' "$*" | tee -a "$OUT"; }
+say() { printf '%s\n' "$*" | scrub | tee -a "$OUT"; }
 ok() { say "PASS  $*"; }
 bad() { say "FAIL  $*"; FAILS=$((FAILS + 1)); }
 usage_line() { "$SALU" usage --refresh --json 2>/dev/null | jq -r '. as $u | ([.windows[]|select(.id=="session" or .id=="weekly")|"\(.id)=\(.percentUsed)%"]|join(" ")) + " plan=" + ($u.plan//"?") + " available=" + ($u.available|tostring)'; }
@@ -83,7 +86,7 @@ for i in 1 2 3; do
   else
     bad "probe$i is $S"
     say "    why: $("$SALU" show "probe$i" 2>&1 | grep -i "error\|fail\|reason\|login\|container" | head -4 | cut -c1-220)"
-    say "    run log tail:"; tail -n 6 "$SCRATCH/run$i.log" | cut -c1-220 | sed 's/^/      /' | tee -a "$OUT"
+    say "    run log tail:"; tail -n 6 "$SCRATCH/run$i.log" | scrub | cut -c1-220 | sed 's/^/      /' | tee -a "$OUT"
   fi
 done
 EV="$(grep -rh '"rate_limit_event"' "$SALU_HOME" 2>/dev/null | head -2 | cut -c1-400)"
@@ -91,16 +94,16 @@ say "rate_limit_events in the worker logs: $([ -n "$EV" ] && echo yes || echo no
 [ -n "$EV" ] && say "$EV"
 case "$(usage_line)" in *available=true*) ok "the meter is readable after the probes" ;;
   *) bad "no meter even after real runs: the box login cannot read plan usage, so enforce has nothing to enforce on"; say "wrote $OUT"; exit 1 ;; esac
-say "learned (salu sched):"; "$SALU" sched 2>&1 | head -8 | sed 's/^/    /' | tee -a "$OUT" >/dev/null
+say "learned (salu sched):"; "$SALU" sched 2>&1 | head -8 | scrub | sed 's/^/    /' | tee -a "$OUT" >/dev/null
 
 say "== 3 hold test (SALU_SCHED_MARGIN=100: nothing may start)"
 "$SALU" add holdme "Reply with the single word OK. Do not use any tools." >/dev/null 2>&1
 SALU_SCHED_MARGIN=100 run_until holdme 40 "$SCRATCH/hold.log"
 S="$(status_of holdme)"
 [ "$S" = "todo" ] && ok "holdme stayed queued (status $S)" || bad "holdme is $S, expected todo"
-grep -i "holding the queue" "$SCRATCH/hold.log" | head -2 | tee -a "$OUT" | sed 's/^/    /'
+grep -i "holding the queue" "$SCRATCH/hold.log" | head -2 | scrub | tee -a "$OUT" | sed 's/^/    /'
 grep -qi "holding the queue until" "$SCRATCH/hold.log" && ok "the log names the reset time" || bad "no 'holding the queue until' line in the log"
-SALU_SCHED_MARGIN=100 "$SALU" sched 2>&1 | grep -i "last decision\|waits" | head -3 | sed 's/^/    /' | tee -a "$OUT" >/dev/null
+SALU_SCHED_MARGIN=100 "$SALU" sched 2>&1 | grep -i "last decision\|waits" | head -3 | scrub | sed 's/^/    /' | tee -a "$OUT" >/dev/null
 
 say "== 4 release test (normal margin)"
 run_until holdme 300 "$SCRATCH/release.log"

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -40,6 +40,7 @@ describe('scripts/sched-window-run.sh', () => {
     await p.exited;
     const report = readFileSync(out, 'utf8');
     expect(report).toContain('ALL PASS');
+    expect(statSync(out).mode & 0o777).toBe(0o600);
     expect(report).toContain('holdme stayed queued');
     expect(readFileSync(seen, 'utf8')).toContain('yes');
   }, 150_000);
@@ -50,5 +51,16 @@ describe('probeCwd', () => {
     const { probeCwd } = await import('../src/usage/probe.ts');
     expect(probeCwd(join(dir, 'nope'))).toBe(tmpdir());
     expect(probeCwd(dir)).toBe(dir);
+  });
+});
+
+describe('the report scrubber', () => {
+  test('masks token-shaped strings and keeps ordinary text', () => {
+    const script = join(import.meta.dir, '..', 'scripts', 'sched-window-run.sh');
+    const input = 'token sk-ant-oat01-AbCdEf123456 Bearer abcdefghijklmnopqrstuvwxyz0123 CLAUDE_CODE_OAUTH_TOKEN=abcdefghijklmnopqrstuvwxyz012345 probe1 status=done 5h meter 10% -> 12%';
+    const r = Bun.spawnSync(['bash', '-c', `eval "$(grep '^scrub()' ${script})"; printf '%s\\n' "$IN" | scrub`], { env: { ...process.env, IN: input } });
+    const out = r.stdout.toString();
+    expect(out).not.toMatch(/AbCdEf|abcdefghijklmnopqrstuvwxyz/);
+    expect(out).toContain('probe1 status=done 5h meter 10% -> 12%');
   });
 });
