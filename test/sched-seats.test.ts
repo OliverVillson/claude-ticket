@@ -9,7 +9,7 @@ import { fakeRunner } from '../src/orchestrator/fake.ts';
 import { Orchestrator } from '../src/orchestrator/scheduler.ts';
 import { readLast } from '../src/sched/policy.ts';
 import { recordRunStats, setSchedMode } from '../src/sched/stats.ts';
-import { addMember, addSeat, listSeats, setSeatDisabled, setTicketSeat } from '../src/team/store.ts';
+import { addMember, addSeat, listSeats, setLend, setSeatDisabled, setTicketSeat } from '../src/team/store.ts';
 
 const H = 3_600_000;
 const raw = (five: number, week = 10) => ({
@@ -50,6 +50,9 @@ function setup() {
   addMember(db, p.id, 'bob');
   const a = addSeat(db, p.id, 'alice-team', { owner: 'alice' });
   const b = addSeat(db, p.id, 'bob-team', { owner: 'bob' });
+  // The tickets below name no requester, so a member's seat is theirs to offer: both lend (see lend.test.ts).
+  setLend(db, p.id, 'alice-team', true, { cap: 100 });
+  setLend(db, p.id, 'bob-team', true, { cap: 100 });
   // finished runs taught the estimator: an Opus ticket costs about 30% of a window
   for (let i = 0; i < 5; i++) recordRunStats(db, 'claude-opus-5-5', 'medium', { usd: 1.5, pct: 30, at: Date.now() });
   setSchedMode(db, 'on');

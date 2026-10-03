@@ -5,6 +5,7 @@ import { buildSnapshot, getUsageSnapshot, peekUsageSnapshot, STALE_AFTER_MS, typ
 import { fits, noteStarted, plan, readLast, routeQueued, saveLast, type Decision, type SchedLast } from './policy.ts';
 import { decideSeats, peekSeats, type SeatMap } from './seats.ts';
 import { listSeats, setTicketSeat } from '../team/store.ts';
+import { logBorrow } from '../team/lend.ts';
 import { seatScope, seatUsage } from '../usage/seats.ts';
 import { recordRunStats, schedMode, type SchedMode } from './stats.ts';
 
@@ -85,6 +86,11 @@ export class TokenAware {
       setTicketSeat(this.db, t.id, d.seatId); // the seat that has room pays for it; a resumed session stays on it
       t.seat_id = d.seatId;
       const pct = plan(this.db, t, undefined, d.seatId).est.pct;
+      if (d.borrowed) {
+        const seat = listSeats(this.db, t.project_id).find((x) => x.id === d.seatId);
+        const est = plan(this.db, t, undefined, d.seatId).est;
+        if (seat && logBorrow(this.db, t, seat, { pct: est.pct, usd: est.usd })) this.log('info', `${t.name} borrows ${seat.owner}'s seat ${seat.label}`);
+      }
       if (pct != null) {
         this.promises.push({ seatId: d.seatId, pct, at: this.now });
         for (const list of this.seats.values()) for (const v of list) if (v.seat.id === d.seatId) v.promised += pct; // the next slot in this same tick sees it
