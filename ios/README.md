@@ -8,9 +8,22 @@ git remote through the GitHub API (format: `src/sync/format.ts`, PR #51). No ser
 brew install xcodegen
 cd ios && xcodegen generate && open SaluPhone.xcodeproj
 ```
-Pick a simulator (or your iPhone + your team under Signing) and Run. In Settings enter `owner/name` of the project's
-private remote, the project name, a fine-grained GitHub token with Contents read/write on that repo, and the signing
-key `salu remote key` prints on the box.
+Pick a simulator and Run (⌘R). In Settings enter `owner/name` of the project's private remote, the project name, a
+fine-grained GitHub token with Contents read/write on that repo only, and the signing key `salu remote key` prints.
+`salu remote phone <project>` on your Mac lists all four; `--open` opens GitHub's token page filled in (pick
+"Only select repositories" and the repo yourself: a link can't preselect it). Test connection then says whether the
+token reaches any other private repo.
+
+## On your iPhone
+```
+bash ios/device.sh
+```
+It finds your Apple team (Xcode > Settings > Accounts must have your Apple ID; a free one works), writes
+`ios/Local.xcconfig` (not in git: your team, and a bundle id of your own for the phone; the simulator keeps
+`dev.salu.phone` and its saved settings) and regenerates the project, so `xcodegen generate` never loses the signing.
+A team picked in Xcode's Signing pane instead is lost on the next `xcodegen generate`. Then plug the iPhone in, pick it in Xcode and ⌘R. The first time iOS asks for Developer Mode
+(Settings > Privacy & Security) and to trust your Apple ID (Settings > General > VPN & Device Management). With a free
+account the app stops opening after 7 days; Run it from Xcode again.
 
 No Xcode-generator? File > New > Project > iOS App (SwiftUI, name SaluPhone), delete the template Swift files, drag in `SaluPhone/*.swift`.
 
@@ -47,14 +60,14 @@ Look: `Theme.swift` holds the palette from `src/ui/theme.ts` and the TUI glyphs;
 sprites (`src/tui/dog/sprites.ts`).
 
 ## POC limits
-The token is in the Keychain. The inbox is checked every 30 s while the app is open and on pull-down; no push
-notifications yet. Messages are listed with the contents API, which stops at 1,000 files per folder. Written on Linux: not compiled here, so expect a small first-build fix or two.
+The token is in the Keychain. The inbox is checked every 5 to 30 s while the app is open and on pull-down; no push
+notifications of its own (see below). Messages are listed with the contents API, which stops at 1,000 files per folder. Written on Linux: not compiled here, so expect a small first-build fix or two.
 
 ## Notifications (ntfy, for now)
-The app itself does not receive pushes yet. Until Apple push is added, the box publishes each new orchestrator message to a
-private [ntfy](https://ntfy.sh) topic and you get the notification from the free ntfy iPhone app:
-1. Install **ntfy** from the App Store.
-2. Tap **+** and subscribe to the topic salu prints when you set up notifications on the box (pick a long random name: anyone who knows it can read it).
-3. Tapping a notification shows the title; open Salu and pull to refresh for the full message.
-
-The box side (salu publishing to ntfy) is a separate change and is not in this PR.
+The app itself does not receive pushes (that needs Apple push and a paid developer account). The box publishes each new
+message's title to a private [ntfy](https://ntfy.sh) topic and the free ntfy iPhone app shows it:
+1. On the box: `salu remote ntfy --test` (for a box project, as the salu user with that project's `SALU_HOME`, see
+   docs/v1-setup.md). It prints the topic.
+2. Install **ntfy** from the App Store, tap **+** and subscribe to that topic (copy it on the Mac, paste on the phone).
+3. Each push carries a `salu://ticket/<project>/<number>` link: tapping it opens Salu on that ticket's thread
+   (`salu://inbox` for messages about no ticket).

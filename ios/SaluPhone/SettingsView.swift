@@ -55,6 +55,11 @@ struct SettingsView: View {
                             pasteProblem = "Nothing to paste. Copy it again, then press ⌘V in the field."
                         }
                     }
+                    if let page = store.tokenPage {
+                        Link(destination: page) {
+                            Label("Make a token for this repo", systemImage: "arrow.up.forward.square")
+                        }
+                    }
                     if let pasteProblem {
                         Text("✗ " + pasteProblem).font(Salu.mono(.footnote)).foregroundStyle(Salu.error)
                     } else if !store.token.trimmed.isEmpty {
@@ -67,7 +72,7 @@ struct SettingsView: View {
                 } header: {
                     label("github token")
                 } footer: {
-                    note("A fine-grained token with Contents read and write on this repo only (or `gh auth token` on your Mac). It stays in the iOS Keychain.")
+                    note("A fine-grained token with Contents read and write on this repo only. Make a token opens GitHub with that filled in; under Repository access pick Only select repositories and this repo, then Generate token and copy it. (`salu remote phone --open` on your Mac does the same.) It stays in the iOS Keychain.")
                 }
                 .listRowBackground(Salu.surface)
                 .onChange(of: store.token) { pasteProblem = nil }
@@ -126,6 +131,14 @@ struct SettingsView: View {
                         }
                         .font(Salu.mono(.footnote))
                         .foregroundStyle(check.ok ? (check.inbox ? Salu.ok : Salu.warn) : Salu.error)
+                        if let reach = check.reach {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(check.reachOK ? "✓" : "!").fontWeight(.bold)
+                                Text(reach)
+                            }
+                            .font(Salu.mono(.footnote))
+                            .foregroundStyle(check.reachOK ? Salu.ok : Salu.warn)
+                        }
                     }
                     if let last = store.lastSync {
                         LabeledContent("last sync") {
@@ -134,6 +147,23 @@ struct SettingsView: View {
                     }
                 } footer: {
                     note("The app checks the inbox every 5 seconds while it waits on the box, else every 30 seconds while it is open. Pull down on a list to check now.")
+                }
+                .listRowBackground(Salu.surface)
+
+                Section {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("1  on the box: salu remote ntfy --test")
+                        Text("2  install ntfy, tap +, paste the topic it printed")
+                        Text("3  tap a push: Salu opens on that ticket")
+                    }
+                    .foregroundStyle(Salu.dim)
+                    Link(destination: URL(string: "https://apps.apple.com/app/ntfy/id1625396347")!) {
+                        Label("ntfy on the App Store", systemImage: "arrow.up.forward.square")
+                    }
+                } header: {
+                    label("push")
+                } footer: {
+                    note("The box sends each message's title to a private ntfy topic; only the title leaves the box. On a box project run step 1 as the salu user with that project's SALU_HOME (see docs/v1-setup.md).")
                 }
                 .listRowBackground(Salu.surface)
 

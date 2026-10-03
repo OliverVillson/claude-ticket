@@ -1,0 +1,7 @@
+// Signing for a real iPhone, kept out of project.yml so `xcodegen generate` never wipes it.
+// The simulator needs none of this. For a phone, run `bash ios/device.sh` once: it writes Local.xcconfig
+// (not in git) with your Apple team and, on the phone only, a bundle id of your own.
+SALU_TEAM =
+SALU_BUNDLE_ID = dev.salu.phone
+
+#include? "Local.xcconfig"

@@ -45,6 +45,16 @@ struct RootView: View {
         .sheet(isPresented: $composing) {
             ComposeView().environmentObject(store)
         }
+        .onOpenURL { url in
+            // salu:// links, which ntfy pushes open: the ticket's thread when the phone knows it, else the inbox
+            if store.open(url) { tab = .tickets; return }  // known already: no wait
+            Task {
+                // after a cold start the inbox is still loading: wait for that check, then one more
+                while store.loading { try? await Task.sleep(for: .milliseconds(200)) }
+                await store.refresh()
+                tab = store.open(url) ? .tickets : .inbox
+            }
+        }
         .task(id: phase) {
             // Check the inbox while the app is on screen: at once, then every few seconds while the box
             // owes an answer or works on something, else every 30 seconds.
