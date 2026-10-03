@@ -73,7 +73,12 @@ key until it is, which means you cannot retire the shared key while the phone is
 
 ## Changed behaviours to know about
 
-- With a roster, `by-<name>` labels in a ticket file are stripped and replaced by the signer's own. Two members
+- **Tickets sent with the shared key now show as unnamed.** In v1.2.0 they carried the name in the sender's
+  `SALU_USER` as a `by-<name>` label; in v2 the box adds that label only from a verified personal key, and
+  strips any `by-` label a sender writes. To get names back, give each person a personal key.
+- Once any member has a personal key, a file without a key id is refused unless a shared key is set.
+
+- Any `by-<name>` label in a ticket file is stripped; the signer's own is added. Two members
   whose names collide as labels are refused.
 - `salu team`/`salu seat` refuse on a computer that is only a client of the box.
 - In enforce mode (`salu sched on`) a full or rejected 5-hour window now holds the queue even with no learned estimate.

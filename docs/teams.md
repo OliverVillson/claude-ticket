@@ -38,8 +38,8 @@ A project always keeps one admin.
 | pin a ticket to a seat | any seat | only their own seat | none |
 | roster, keys, seats, allow list, kernel settings | yes, from the box or the paired Mac | no | no |
 
-- A ticket's owner comes from the signature, not from the file: with a roster, any `by-<name>` label in a
-  ticket file is stripped and the sender's own is added. A forged label does nothing.
+- A ticket's owner comes from the signature, not from the file: the box strips every `by-<name>` label a sender
+  writes and adds one only from the personal key that signed the ticket. A forged label does nothing.
 - Roster, keys, seats, the allow list and kernel settings have no verb on the sync channel. The control channel
   answers only to the Mac key the admin paired, so those are admin-only by construction.
 - The old shared key is an unnamed member, never an admin. It proves nobody, so it cannot resolve or reopen
@@ -179,8 +179,10 @@ A person who leaves the project stops lending.
   signatures). That gives you revocation and attribution: a revoked key stops working at once, and a ticket's
   author comes from the verified signer. It does not protect against someone who can read the box's database;
   treat box access as admin access.
-- A ticket's `by-<name>` label is set from the verified signer only. Tickets sent with the shared key or
-  unsigned carry no author label.
+- A ticket's `by-<name>` label is set from the verified signer only. Tickets sent with the shared key prove
+  nobody, so they carry no author label and show as unnamed (in v1.2.0 they carried the sender's `SALU_USER`).
+- Once any member has a personal key, a file with no key id is refused unless a shared key is really set;
+  an unsigned file is never accepted.
 
 ## What is verified
 
