@@ -2,7 +2,7 @@ import type { Database } from 'bun:sqlite';
 import { CliError } from '../core/errors.ts';
 import { byLabel, type Sender } from '../sync/format.ts';
 import { getRemote } from '../sync/store.ts';
-import { listMembers } from './store.ts';
+import { getSeat, listMembers } from './store.ts';
 
 /**
  * Roles. The admin owns the project and the box; a member can add tickets and reply, nothing more.
@@ -39,4 +39,20 @@ export function whyNot(db: Database, projectId: number, sender: Sender | undefin
  */
 export function requireOwnerSide(db: Database, projectId: number, what: string): void {
   if (getRemote(db, projectId)?.role === 'client') throw new CliError(`${what} lives on the box, and only its admin can change it: ask them, or run this on the box`);
+}
+
+/**
+ * Which seat a ticket runs on decides whose login and quota it spends, so it is never taken from a file:
+ * `seat` is a tag a remote ticket cannot carry, and the seat is chosen on the box (the scheduler, or the
+ * admin). This is the rule for anything that pins a seat for a sender: an admin may pin any seat, a member
+ * only their own, the shared key none. Lending (a seat's owner letting teammates use spare time) is the
+ * scheduler's decision, not a pin. No roster: v1, no restriction.
+ */
+export function whyNotSeat(db: Database, projectId: number, sender: Sender | undefined, seatLabel: string): string | null {
+  if (listMembers(db, projectId).length === 0) return null;
+  if (sender?.role === 'admin') return null;
+  const seat = getSeat(db, projectId, seatLabel);
+  if (!seat) return `no seat called "${seatLabel}"`;
+  if (sender?.name && seat.owner?.toLowerCase() === sender.name.toLowerCase()) return null;
+  return sender?.name ? `seat "${seat.label}" is not yours: only its owner or an admin can pin it` : 'the shared key cannot pin a seat: use your own key, or ask an admin';
 }

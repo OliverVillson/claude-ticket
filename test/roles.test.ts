@@ -9,9 +9,9 @@ import { ticketLabels } from '../src/db/types.ts';
 import { addRemoteTicket, setRemote } from '../src/sync/store.ts';
 import { publishAction, publishReply, publishTicket, syncProject } from '../src/sync/sync.ts';
 import { git } from '../src/sync/git.ts';
-import { addMember } from '../src/team/store.ts';
+import { addMember, addSeat } from '../src/team/store.ts';
 import { issueKey, setSharedRetired } from '../src/team/keys.ts';
-import { whyNot } from '../src/team/perms.ts';
+import { whyNot, whyNotSeat } from '../src/team/perms.ts';
 import { createHandlers, VERB_ROLE } from '../src/box/handlers/index.ts';
 import { VERBS, commandPath, signMessage } from '../src/control/message.ts';
 import { generateSealKeys } from '../src/control/seal.ts';
@@ -217,6 +217,34 @@ describe('roster, allow list and kernel settings are not on the sync channel', (
     await expect(seat(parseArgs(['add', 'mine', '--project', 'cliweb']))).rejects.toThrow(/lives on the box/);
     await team(parseArgs(['list', '--project', 'cliweb'])); // reading is fine
     db.close();
+  });
+});
+
+describe('seats', () => {
+  test('a remote ticket cannot carry a seat, whoever sent it, even if the admin allows other tags', () => {
+    process.env.SALU_REMOTE_ALLOW_TAGS = 'model,effort,seat';
+    const alice = issueKey(box.db, box.project.id, 'Alice');
+    addSeat(box.db, box.project.id, 'carol-seat', { owner: 'Carol' });
+    const c = side('c-seat', 'client');
+    const t = createTicket(c.db, { project_id: c.project.id, name: 'pin', query: 'q', tags: { seat: 'carol-seat', model: 'm' }, status: 'todo' });
+    publishTicket(c.db, c.project, t, { queue: true });
+    syncAs(c, alice.token);
+    syncAs(box, SHARED);
+    delete process.env.SALU_REMOTE_ALLOW_TAGS;
+    const onBox = listTickets(box.db, { project_id: box.project.id } as any).find((x: any) => x.name === 'pin')!;
+    expect(JSON.parse((onBox as any).tags || '{}').seat).toBeUndefined();
+    expect((onBox as any).seat_id ?? null).toBeNull();
+  });
+
+  test('who may pin which seat', () => {
+    addSeat(box.db, box.project.id, 'bob-seat', { owner: 'Bob' });
+    addSeat(box.db, box.project.id, 'carol-seat', { owner: 'Carol' });
+    const p = box.project.id;
+    expect(whyNotSeat(box.db, p, { name: 'Alice', role: 'admin' }, 'carol-seat')).toBeNull();
+    expect(whyNotSeat(box.db, p, { name: 'Bob', role: 'member' }, 'bob-seat')).toBeNull();
+    expect(whyNotSeat(box.db, p, { name: 'Bob', role: 'member' }, 'carol-seat')).toMatch(/not yours/);
+    expect(whyNotSeat(box.db, p, { name: null, role: null }, 'bob-seat')).toMatch(/shared key cannot pin/);
+    expect(whyNotSeat(box.db, p, { name: 'Bob', role: 'member' }, 'nope')).toMatch(/no seat/);
   });
 });
 

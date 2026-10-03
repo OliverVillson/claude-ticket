@@ -445,8 +445,8 @@ export function parseMessageFile(text: string, verify: Verifier = sharedVerifier
  * project) or let a pusher burn quota (max-turns, model, effort). The box's owner can allow some with
  * SALU_REMOTE_ALLOW_TAGS=model,effort,max-turns; permission, tools and project can never be allowed.
  */
-export const REMOTE_FORBIDDEN_TAGS = ['permission', 'tools', 'project', 'max-turns', 'model', 'effort'];
+export const REMOTE_FORBIDDEN_TAGS = ['permission', 'tools', 'project', 'seat', 'max-turns', 'model', 'effort'];
 export function remoteForbiddenTags(env: NodeJS.ProcessEnv = process.env): string[] {
-  const allow = (env.SALU_REMOTE_ALLOW_TAGS ?? '').split(',').map((x) => x.trim()).filter((x) => x && !['permission', 'tools', 'project'].includes(x));
+  const allow = (env.SALU_REMOTE_ALLOW_TAGS ?? '').split(',').map((x) => x.trim()).filter((x) => x && !['permission', 'tools', 'project', 'seat'].includes(x));
   return REMOTE_FORBIDDEN_TAGS.filter((t) => !allow.includes(t));
 }
