@@ -6,6 +6,7 @@ import { CliError } from '../../core/errors.ts';
 import { bold, dim, green } from '../../core/ansi.ts';
 import { SEAT_PLANS, addMember, addSeat, listMembers, listSeats, removeMember, removeSeat, setLend, setRole, setSeatDisabled, type Role, type SeatPlan } from '../../team/store.ts';
 import { issueKey, listKeys, revokeKey, setSharedRetired, sharedKeyRetired } from '../../team/keys.ts';
+import { requireOwnerSide } from '../../team/perms.ts';
 import { confirm, helpIf } from './_shared.ts';
 
 const TEAM_HELP = `salu team [list] [--project P] [--json]       who is on the project and who owns it
@@ -16,8 +17,10 @@ salu team key <name> [--revoke]                make a personal signing key for t
 salu team key --list                           who has a key
 salu team key --retire-shared [--undo]         stop accepting the old shared key for this project
 
-The admin owns the project and the box. Members add tickets and reply. This is the roster only: it does
-not yet sign, restrict or schedule anything, so a project without a team runs exactly as before.`;
+The admin owns the project and the box and is the only one who can change the roster, keys, seats, allow
+list and kernel settings (they are set on the box). A member adds tickets, replies to any ticket and
+resolves or reopens their own. The old shared key counts as a member without a name: it can add and
+reply, and resolve only tickets nobody owns. A project without a team runs exactly as before.`;
 
 const SEAT_HELP = `salu seat [list] [--project P] [--json]       the Claude seats this project can run tickets on
 salu seat add <label> [--owner <name>] [--plan team|enterprise|pro|max|api|other]
@@ -45,6 +48,7 @@ export async function team(p: Parsed): Promise<number> {
   const db = openDb();
   const proj = project(p);
   const [sub = 'list', a, b] = p.positional;
+  if (!['list', 'ls'].includes(sub) && !(sub === 'key' && (flagBool(p, 'list') || (!a && !flagBool(p, 'retire-shared'))))) requireOwnerSide(db, proj.id, 'the team');
   switch (sub) {
     case 'list':
     case 'ls': {
@@ -114,6 +118,7 @@ export async function seat(p: Parsed): Promise<number> {
   const db = openDb();
   const proj = project(p);
   const [sub = 'list', a, b] = p.positional;
+  if (!['list', 'ls'].includes(sub)) requireOwnerSide(db, proj.id, 'the list of seats');
   switch (sub) {
     case 'list':
     case 'ls': {

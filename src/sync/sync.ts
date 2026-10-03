@@ -13,6 +13,7 @@ import { announceAllSpawned } from './events.ts';
 import { addDecision, addOutput, answerDecision, getDecision, setChecklist } from '../threads/store.ts';
 import { answerFromReply, answerOpenWithText } from '../threads/decide.ts';
 import { activeKeys, boxVerifier, sharedKeyRetired } from '../team/keys.ts';
+import { whyNot } from '../team/perms.ts';
 import { ACTIONS_DIR, parseActionFile, type ActionFile, MESSAGES_DIR, byLabel, isByLabel, remoteForbiddenTags, requireKey, whoAmI, remoteKey, signFile, signMessageFor, signatureOk, REPLIES_DIR, TICKETS_DIR, newId, parseMessageFile, parseReplyFile, parseTicketFile, type MessageFile, type ReplyFile, type TicketFile } from './format.ts';
 import {
   addOutAction,
@@ -114,6 +115,8 @@ function applyAction(db: Database, project: Project, a: ActionFile): void {
     });
   const t = findTicket(db, project, a);
   if (!t) return void say(`Could not find the ticket to ${a.action}${a.name ? ` ("${a.name}")` : ''}`, 'warn');
+  const refused = whyNot(db, project.id, a.sender, a.action, ticketLabels(t));
+  if (refused) return void say(`${a.sender?.name ?? 'Someone'} cannot ${a.action} "${t.name}": ${refused}`, 'warn', t);
   const op = threadOps[a.action] ?? (a.action === 'resolve' ? core.resolveTicketById : core.queueTicket);
   try {
     const after = (op as (db: Database, id: number) => TicketView | void)(db, t.id) ?? getTicketById(db, t.id) ?? t;
