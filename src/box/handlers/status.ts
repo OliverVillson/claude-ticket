@@ -1,6 +1,7 @@
-import { statfsSync } from 'node:fs';
+import { readFileSync, statfsSync } from 'node:fs';
 import { runnerRoot } from '../../core/runner.ts';
 import { listProjects } from './projects.ts';
+import { updateStatusFile } from './update.ts';
 import type { BoxDeps, Handler } from './types.ts';
 
 export interface BoxSnapshot {
@@ -27,6 +28,15 @@ export async function snapshot(deps: BoxDeps): Promise<BoxSnapshot> {
   return { version: deps.version, disk: diskInfo(runnerRoot()), tickets, projects };
 }
 
+/** How the last `update` went (written by the update unit), if one ran. */
+function lastUpdateLine(): string | undefined {
+  try {
+    return readFileSync(updateStatusFile(), 'utf8').trim().slice(0, 200) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** `status`: the snapshot plus the lines of `salu doctor --sandbox`, so the Mac can show what is wrong in words. */
 export const status = (deps: BoxDeps): Handler => async () => {
   const [snap, doctor] = await Promise.all([snapshot(deps), deps.run([deps.salu, 'doctor', '--sandbox'], { as: deps.user, timeoutMs: 120_000 })]);
@@ -40,5 +50,5 @@ export const status = (deps: BoxDeps): Handler => async () => {
     failing ? `${failing} problem${failing === 1 ? '' : 's'} in the check (see data.doctor)` : 'all checks pass',
     sick.length ? `not running: ${sick.join(', ')}` : null,
   ].filter(Boolean).join(' · ');
-  return { ok: failing === 0 && !sick.length, message, data: { ...snap, doctor: lines } };
+  return { ok: failing === 0 && !sick.length, message, data: { ...snap, doctor: lines, update: lastUpdateLine() } };
 };

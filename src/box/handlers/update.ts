@@ -1,3 +1,4 @@
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { runnerRoot } from '../../core/runner.ts';
 import { bad, firstProblem } from './common.ts';
@@ -39,6 +40,10 @@ export const updateStatusFile = () => join(runnerRoot(), 'box', 'update-status')
 export const update = (deps: BoxDeps): Handler => async ({ args }) => {
   const want = args?.version === undefined ? undefined : String(args.version);
   if (want !== undefined && !VERSION_RE.test(want)) return bad('the version looks like v1.2.3');
+  // Clear the last run's line first, so whatever `status` shows next belongs to this run.
+  try {
+    rmSync(updateStatusFile(), { force: true });
+  } catch {}
   const unit = `salu-update-${Math.floor(deps.now() / 1000)}`;
   const r = await deps.run([
     'systemd-run', '--no-block', '--collect', `--unit=${unit}`, `--setenv=SALU_INSTALL_URL=${installerUrl(want)}`, `--setenv=SALU_BIN=${deps.salu}`, `--setenv=SALU_UPDATE_STATUS=${updateStatusFile()}`,

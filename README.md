@@ -24,6 +24,8 @@ salu new web
 The first installs salu and tells you if `gh` or Claude Code is missing. The second sets up the box over
 ssh, once. The third makes a private repo and a runner for a project. More in [docs/quickstart.md](docs/quickstart.md).
 
+Working as a team, one Claude seat per person: [docs/teams.md](docs/teams.md). Coming from v1.2.0: [docs/migrating-to-v2.md](docs/migrating-to-v2.md).
+
 ## Install
 
 One command on macOS or Linux (x64 or arm64). It needs nothing else, not even Bun: it downloads a
@@ -250,7 +252,7 @@ Anything an agent can read inside the kernel can be sent to any site it can reac
 - **Window-aware dispatch.** Before a ticket starts, its estimate is compared with what is left of the 5-hour window (5% margin) and the week (15% reserve, which `--now` tickets may use). A ticket that does not fit is passed over for a smaller one, at most 3 times, then waited for; when nothing fits the queue is held until the reset. Running tickets are never stopped. With an API key there is no meter: `SALU_BUDGET_USD_PER_DAY` counts dollars the same way.
 - **Model routing.** Tickets labelled docs, chore, typo, lint, format or rename go to Sonnet, and when the Opus window is 85% used (and Sonnet has room) so does any new ticket. Tickets that name a model, ask for effort high or more, have `route=off`, or live in a project with its own default model are never touched. The model and reason are written onto the ticket (`model=sonnet routed=light-task`).
 
-Modes: `salu sched advise` (default) only reports what it would do; `salu sched on` does it; `salu sched off` runs the queue in order as before. The 5-hour numbers have not been checked against a real subscription window yet.
+Modes: `salu sched advise` (default) only reports what it would do; `salu sched on` does it; `salu sched off` runs the queue in order as before. In `on` mode a full 5-hour window (or one the plan reports as rejected) holds the queue even before a percent per ticket has been learned. `SALU_SCHED_MARGIN` and `SALU_SCHED_RESERVE` (0 to 100) override the 5% and 15% margins. `scripts/sched-window-run.sh` is the real-window check: it runs on the box in a throwaway salu home, reads the real meter, runs three tiny tickets, proves a hold and a release, and writes a report. The 5-hour numbers have not been checked against a real subscription window until that report exists.
 
 ## The runner (an always-on Linux box)
 

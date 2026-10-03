@@ -6,6 +6,7 @@ struct TicketsView: View {
     @EnvironmentObject var store: Store
     var compose: () -> Void
     @AppStorage("tickets.showResolved") private var showResolved = false
+    @State private var path = NavigationPath()
 
     private struct Bucket: Identifiable {
         let id: String
@@ -19,7 +20,7 @@ struct TicketsView: View {
     ]
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             let tickets = store.tickets
             List {
                 if tickets.isEmpty {
@@ -86,6 +87,12 @@ struct TicketsView: View {
             }
             .saluDestinations()
         }
+        .task(id: store.openTicket) {
+            // a salu:// link (a push) asked for this ticket: show its thread on its own
+            guard let id = store.openTicket else { return }
+            store.openTicket = nil
+            path = NavigationPath([TicketRoute(id: id)])
+        }
     }
 }
 
@@ -110,6 +117,12 @@ struct TicketRow: View {
                 .font(Salu.mono(.caption2))
                 .foregroundStyle(Salu.chrome)
                 .lineLimit(1)
+                if let who = t.whoLine {
+                    Text(who)
+                        .font(Salu.mono(.caption2))
+                        .foregroundStyle(Salu.chrome)
+                        .lineLimit(1)
+                }
             }
         }
         .padding(.vertical, 6)

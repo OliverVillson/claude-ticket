@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { dbPath, ensureHome } from '../core/paths.ts';
 import { ensureThreadTables } from '../threads/store.ts';
+import { ensureTeamTables } from '../team/store.ts';
 
 const SCHEMA_VERSION = 9;
 
@@ -177,6 +178,8 @@ function migrate(db: Database) {
   ensureSyncTables(db);
   // v9: checklist, decisions, outputs and sub-thread links. Idempotent, so it also covers a v9 database from the core's migration.
   ensureThreadTables(db);
+  // Team members and Claude seats; also adds tickets.seat_id.
+  ensureTeamTables(db);
   if (version < SCHEMA_VERSION) db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
 }
 

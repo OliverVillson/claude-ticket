@@ -223,7 +223,7 @@ struct ConnectCard: View {
                     Text("1  the repo, as owner/name")
                     Text("2  the project name on the box")
                     Text("3  a fine-grained GitHub token")
-                    Text("4  the signing key: salu remote key, on the box")
+                    Text("4  the signing key: salu remote key, on your Mac")
                 }
                 .foregroundStyle(Salu.dim)
                 Button(action: action) {

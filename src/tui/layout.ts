@@ -9,6 +9,7 @@ export interface RowLayout {
   total: number;
   name: number;
   project: number; // 0 when hidden
+  by: number; // who added the ticket; 0 when the project has no team
   priority: number; // 0 when hidden
   model: number; // 0 when hidden
   status: number;
@@ -20,7 +21,7 @@ export interface RowLayout {
 export const ROW_PREFIX = 4;
 export const GAP = 2;
 
-export function computeLayout(innerWidth: number, opts: { showProject?: boolean; showCost?: boolean } = {}): RowLayout {
+export function computeLayout(innerWidth: number, opts: { showProject?: boolean; showCost?: boolean; showBy?: boolean } = {}): RowLayout {
   const total = Math.max(20, innerWidth);
   const showProject = !!opts.showProject;
   const showCost = opts.showCost !== false;
@@ -31,21 +32,24 @@ export function computeLayout(innerWidth: number, opts: { showProject?: boolean;
   let model = 14;
   let priority = 3;
   let project = showProject ? 12 : 0;
+  let by = opts.showBy ? 12 : 0;
   const status = 8;
 
-  const fixed = () => ROW_PREFIX + [project, priority, model, status, age, cost].filter(Boolean).reduce((a, b) => a + b + GAP, 0);
+  const fixed = () => ROW_PREFIX + [project, by, priority, model, status, age, cost].filter(Boolean).reduce((a, b) => a + b + GAP, 0);
   const minName = 12;
 
   if (total - fixed() < minName) cost = 0;
   if (total - fixed() < minName) model = 10;
+  if (total - fixed() < minName) by = by ? 8 : 0;
   if (total - fixed() < minName) project = showProject ? 8 : 0;
   if (total - fixed() < minName) model = 0;
   if (total - fixed() < minName) age = 0;
   if (total - fixed() < minName) project = 0;
+  if (total - fixed() < minName) by = 0;
   if (total - fixed() < minName) priority = 0;
 
   const name = Math.max(4, total - fixed());
-  return { total, name, project, priority, model, status, age, cost };
+  return { total, name, project, by, priority, model, status, age, cost };
 }
 
 /** Scroll `top` so that `cursor` is inside [top, top + height). */

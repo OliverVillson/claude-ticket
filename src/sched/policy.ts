@@ -13,6 +13,11 @@ import { dailyBudgetUsd, estimateTicket, readStats, SCHED_STATE, spentLast24h, t
 
 /** Percent of the 5-hour window kept free, so a rough estimate cannot push a run into the wall. */
 export const SESSION_MARGIN = 5;
+/** `SALU_SCHED_MARGIN` / `SALU_SCHED_RESERVE` override the two numbers above (0..100); used to prove the hold on a real window. */
+const envPct = (name: string, fallback: number): number => {
+  const v = Number(process.env[name]);
+  return process.env[name] != null && process.env[name] !== '' && Number.isFinite(v) ? Math.min(100, Math.max(0, v)) : fallback;
+};
 /** Percent of the weekly window kept for priority-0 ("run now") tickets. */
 export const WEEKLY_RESERVE = 15;
 /** After this many later tickets started ahead of it, a ticket that does not fit is waited for instead. */
@@ -29,6 +34,9 @@ export interface Planned {
 
 export interface SchedLast {
   at: number;
+  seat?: string;
+  /** The seat the last pick went to and why the others did not take it. */
+  placed?: Placed | null;
   mode: SchedMode;
   /** Ticket the policy would start (advise mode: not necessarily the one that started). */
   wouldPick: string | null;
@@ -40,19 +48,36 @@ export interface SchedLast {
   routed: { name: string; model: string; why: string; applied: boolean }[];
 }
 
+/** Whose plan a decision draws on. One seat today; a seat-aware scheduler asks `decide` once per seat and takes the best. */
+export const SELF_SEAT = 'self';
+
+/** Where a started ticket went and why not elsewhere (only for projects with seats). */
+export interface Placed {
+  name: string;
+  seat: string;
+  /** The other seats that were looked at and why each did not take it. */
+  others: { seat: string; why: string }[];
+}
+
 export interface Decision {
+  seat: string;
+  /** The registry seat the pick starts on; null/absent = the machine's own login. */
+  seatId?: number | null;
+  placed?: Placed;
+  /** The pick runs on a seat its requester does not own (a lender's spare time). */
+  borrowed?: boolean;
   pick: TicketView | null;
   hold: { until: number | null; reason: string } | null;
   skipped: { id: number; name: string; why: string }[];
 }
 
-export function plan(db: Database, t: TicketView, stats = readStats(db)): Planned {
+export function plan(db: Database, t: TicketView, stats = readStats(db), seatId?: number): Planned {
   const tags = ticketTags(t);
   const base = getProjectById(db, t.project_id);
   const proj = base ? inheritedProject(db, base) : null;
   const model = effectiveModel(db, t) ?? 'claude-opus-5-5';
   const effort = tags.effort ?? proj?.default_effort ?? DEFAULT_EFFORT;
-  const est = estimateTicket(db, model, effort, stats);
+  const est = estimateTicket(db, model, effort, stats, seatId);
   // A paused ticket resumes its session: roughly half its work is already paid for.
   if (t.session_id) return { ticket: t, model, effort, est: { ...est, usd: est.usd / 2, pct: est.pct == null ? null : est.pct / 2 } };
   return { ticket: t, model, effort, est };
@@ -65,15 +90,22 @@ const used = (w: UsageWindow | undefined): number | null => (w?.percentUsed == n
 export function fits(db: Database, p: Planned, snap: UsageSnapshot, now: number): { ok: true } | { ok: false; why: string; until: number | null } {
   const urgent = p.ticket.priority === 0;
   if (snap.available) {
+    const margin = envPct('SALU_SCHED_MARGIN', SESSION_MARGIN);
     const pct = p.est.pct;
-    if (pct == null || pct >= WHOLE_WINDOW) return { ok: true }; // no basis to hold it back
+    if (pct != null && pct >= WHOLE_WINDOW) return { ok: true }; // bigger than a whole window: waiting would never help
     const session = win(snap, 'session');
     const us = used(session);
-    if (us != null && us + pct > 100 - SESSION_MARGIN)
+    if (pct == null) {
+      // No percent learned yet: the cost is unknown, but a window that is already full is not a place to start.
+      if (session && (session.status === 'rejected' || (us != null && us >= 100 - margin)))
+        return { ok: false, why: `the 5-hour window is ${us != null ? `${Math.round(us)}% used` : 'full'}`, until: session.resetsAt ?? null };
+      return { ok: true };
+    }
+    if (us != null && us + pct > 100 - margin)
       return { ok: false, why: `needs about ${Math.round(pct)}% of the 5-hour window, ${Math.round(us)}% is used`, until: session?.resetsAt ?? null };
     const weekly = win(snap, 'weekly');
     const uw = used(weekly);
-    const reserve = urgent ? 0 : WEEKLY_RESERVE;
+    const reserve = urgent ? 0 : envPct('SALU_SCHED_RESERVE', WEEKLY_RESERVE);
     if (uw != null && uw + pct > 100 - reserve)
       return { ok: false, why: `would dip into the ${reserve}% weekly reserve (${Math.round(uw)}% of the week is used)`, until: weekly?.resetsAt ?? null };
     return { ok: true };
@@ -100,7 +132,7 @@ function readSkips(db: Database): Record<string, number> {
  * is passed over, but only {@link MAX_SKIPS} times: after that nothing starts ahead of it and the
  * queue waits for the window it needs. When nothing fits the queue is held until the earliest reset.
  */
-export function decide(db: Database, candidates: TicketView[], snap: UsageSnapshot, now = Date.now()): Decision {
+export function decide(db: Database, candidates: TicketView[], snap: UsageSnapshot, now = Date.now(), seat = SELF_SEAT): Decision {
   const stats = readStats(db);
   const skips = readSkips(db);
   const skipped: Decision['skipped'] = [];
@@ -108,14 +140,14 @@ export function decide(db: Database, candidates: TicketView[], snap: UsageSnapsh
   for (const c of candidates) {
     const p = plan(db, c, stats);
     const f = fits(db, p, snap, now);
-    if (f.ok) return { pick: c, hold: null, skipped };
+    if (f.ok) return { seat, pick: c, hold: null, skipped };
     skipped.push({ id: c.id, name: c.name, why: f.why });
     if (f.until != null && (earliest == null || f.until < earliest)) earliest = f.until;
     if ((skips[String(c.id)] ?? 0) >= MAX_SKIPS) break; // starved long enough: wait for it
   }
   const first = skipped[0];
-  if (!first) return { pick: null, hold: null, skipped }; // nothing queued: nothing to hold
-  return { pick: null, hold: { until: earliest, reason: `${first.name} ${first.why}` }, skipped };
+  if (!first) return { seat, pick: null, hold: null, skipped }; // nothing queued: nothing to hold
+  return { seat, pick: null, hold: { until: earliest, reason: `${first.name} ${first.why}` }, skipped };
 }
 
 /** Count a pass-over for each ticket that a later one was started ahead of; clear a started ticket's count. */

@@ -6,6 +6,7 @@ struct SettingsView: View {
     @State private var check: Store.Check?
     @State private var checking = false
     @State private var showToken = false
+    @State private var pasteProblem: String?
     @State private var keyDraft = ""  // saved on return or when leaving, not on every keystroke
 
     var body: some View {
@@ -47,17 +48,37 @@ struct SettingsView: View {
                         .accessibilityLabel(showToken ? "Hide token" : "Show token")
                     }
                     Button("Paste token") {
-                        if let s = UIPasteboard.general.string { store.token = s.trimmed }
+                        if let s = UIPasteboard.general.string?.trimmed, !s.isEmpty {
+                            store.token = s
+                            pasteProblem = nil
+                        } else {
+                            pasteProblem = "Nothing to paste. Copy it again, then press ⌘V in the field."
+                        }
+                    }
+                    if let page = store.tokenPage {
+                        Link(destination: page) {
+                            Label("Make a token for this repo", systemImage: "arrow.up.forward.square")
+                        }
+                    }
+                    if let pasteProblem {
+                        Text("✗ " + pasteProblem).font(Salu.mono(.footnote)).foregroundStyle(Salu.error)
+                    } else if !store.token.trimmed.isEmpty {
+                        // which token is in use, without showing it: the start says its kind, the end tells two apart
+                        LabeledContent("token set") {
+                            Text(verbatim: String(store.token.trimmed.prefix(4)) + "…" + String(store.token.trimmed.suffix(4)))
+                                .foregroundStyle(Salu.chrome)
+                        }
                     }
                 } header: {
                     label("github token")
                 } footer: {
-                    note("A fine-grained token with Contents read and write on this repo only. It stays in the iOS Keychain.")
+                    note("A fine-grained token with Contents read and write on this repo only. Make a token opens GitHub with that filled in; under Repository access pick Only select repositories and this repo, then Generate token and copy it. (`salu remote phone --open` on your Mac does the same.) It stays in the iOS Keychain.")
                 }
                 .listRowBackground(Salu.surface)
+                .onChange(of: store.token) { pasteProblem = nil }
 
                 Section {
-                    SecureField("", text: $keyDraft, prompt: Text("salu remote key, on the box").foregroundStyle(Salu.chrome))
+                    SecureField("", text: $keyDraft, prompt: Text("salu remote key, on your Mac").foregroundStyle(Salu.chrome))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .submitLabel(.done)
@@ -82,7 +103,7 @@ struct SettingsView: View {
                 } header: {
                     label("signing key")
                 } footer: {
-                    note("Run `salu remote key` on the box and paste what it prints (`salu remote add <project> --box` showed it the first time). The phone signs every ticket and reply with it and ignores messages that aren't signed with it. After `salu remote key --new`, paste the new key here; messages signed with the old one are hidden. It stays in the iOS Keychain, on this phone only.")
+                    note("Run `salu remote key | pbcopy` on your Mac (or `salu remote key` on the box) and paste it here. The phone signs every ticket and reply with it and ignores messages that aren't signed with it. After `salu remote key --new`, paste the new key here; messages signed with the old one are hidden. It stays in the iOS Keychain, on this phone only.")
                 }
                 .listRowBackground(Salu.surface)
 
@@ -110,6 +131,14 @@ struct SettingsView: View {
                         }
                         .font(Salu.mono(.footnote))
                         .foregroundStyle(check.ok ? (check.inbox ? Salu.ok : Salu.warn) : Salu.error)
+                        if let reach = check.reach {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(check.reachOK ? "✓" : "!").fontWeight(.bold)
+                                Text(reach)
+                            }
+                            .font(Salu.mono(.footnote))
+                            .foregroundStyle(check.reachOK ? Salu.ok : Salu.warn)
+                        }
                     }
                     if let last = store.lastSync {
                         LabeledContent("last sync") {
@@ -117,7 +146,24 @@ struct SettingsView: View {
                         }
                     }
                 } footer: {
-                    note("The app checks the inbox every 30 seconds while it is open. Pull down on a list to check now.")
+                    note("The app checks the inbox every 5 seconds while it waits on the box, else every 30 seconds while it is open. Pull down on a list to check now.")
+                }
+                .listRowBackground(Salu.surface)
+
+                Section {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("1  on the box: salu remote ntfy --test")
+                        Text("2  install ntfy, tap +, paste the topic it printed")
+                        Text("3  tap a push: Salu opens on that ticket")
+                    }
+                    .foregroundStyle(Salu.dim)
+                    Link(destination: URL(string: "https://apps.apple.com/app/ntfy/id1625396347")!) {
+                        Label("ntfy on the App Store", systemImage: "arrow.up.forward.square")
+                    }
+                } header: {
+                    label("push")
+                } footer: {
+                    note("The box sends each message's title to a private ntfy topic; only the title leaves the box. On a box project run step 1 as the salu user with that project's SALU_HOME (see docs/v1-setup.md).")
                 }
                 .listRowBackground(Salu.surface)
 

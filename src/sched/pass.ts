@@ -1,8 +1,12 @@
 import type { Database } from 'bun:sqlite';
 import type { TicketView } from '../db/types.ts';
 import { formatResetTime } from '../usage/format.ts';
-import { getUsageSnapshot, peekUsageSnapshot, type UsageSnapshot } from '../usage/snapshot.ts';
-import { decide, noteStarted, plan, readLast, routeQueued, saveLast, type Decision, type SchedLast } from './policy.ts';
+import { buildSnapshot, getUsageSnapshot, peekUsageSnapshot, STALE_AFTER_MS, type UsageSnapshot } from '../usage/snapshot.ts';
+import { fits, noteStarted, plan, readLast, routeQueued, saveLast, type Decision, type SchedLast } from './policy.ts';
+import { decideSeats, peekSeats, type SeatMap } from './seats.ts';
+import { listSeats, setTicketSeat } from '../team/store.ts';
+import { logBorrow } from '../team/lend.ts';
+import { seatScope, seatUsage } from '../usage/seats.ts';
 import { recordRunStats, schedMode, type SchedMode } from './stats.ts';
 
 /** What one worker run teaches the estimator. Held on the orchestrator's entry for the run. */
@@ -10,6 +14,8 @@ export interface RunWatch {
   model: string;
   effort: string;
   startPct: number | null;
+  /** The registry seat the run is paid by (null = the machine's own login). */
+  seatId: number | null;
   resetsAt: number | null;
   /** False once another worker overlapped this one: the meter's movement can no longer be pinned on one ticket. */
   solo: boolean;
@@ -30,6 +36,9 @@ export class TokenAware {
   private wouldPick: string | null = null;
   private lastSaved = '';
   private lastHold = '';
+  private seats: SeatMap = new Map();
+  /** Tickets started a moment ago, so the next pick in the same minute sees their share of a seat before the meter does. */
+  private promises: { seatId: number; pct: number; at: number }[] = [];
 
   constructor(
     private readonly db: Database,
@@ -44,6 +53,9 @@ export class TokenAware {
     this.routed = [];
     if (this.mode === 'off') return;
     this.snap = peekUsageSnapshot(this.db, now);
+    this.promises = this.promises.filter((x) => now - x.at < 120_000);
+    this.seats = peekSeats(this.db, now, this.promises);
+    for (const list of this.seats.values()) for (const v of list) void seatUsage(this.db, v.seat).catch(() => {}); // each seat's own login, throttled to one read a minute
     void getUsageSnapshot({ db: this.db }).catch(() => {}); // throttled to one read a minute; the next tick sees it
     try {
       this.routed = routeQueued(this.db, this.snap, this.mode);
@@ -56,7 +68,7 @@ export class TokenAware {
   choose = (cands: TicketView[]): TicketView | null => {
     if (this.mode === 'off') return cands[0] ?? null;
     try {
-      const d = decide(this.db, cands, this.snap, this.now);
+      const d = decideSeats(this.db, cands, this.seats, (c) => fits(this.db, plan(this.db, c), this.snap, this.now), this.now);
       this.decision = d;
       this.wouldPick = d.pick?.name ?? null;
       return this.mode === 'on' ? d.pick : (cands[0] ?? null);
@@ -67,7 +79,23 @@ export class TokenAware {
   };
 
   started(t: TicketView): void {
-    if (this.mode === 'on' && this.decision) noteStarted(this.db, this.decision, t.id);
+    const d = this.decision;
+    if (this.mode !== 'on' || !d) return;
+    noteStarted(this.db, d, t.id);
+    if (d.seatId != null && d.pick?.id === t.id) {
+      setTicketSeat(this.db, t.id, d.seatId); // the seat that has room pays for it; a resumed session stays on it
+      t.seat_id = d.seatId;
+      const pct = plan(this.db, t, undefined, d.seatId).est.pct;
+      if (d.borrowed) {
+        const seat = listSeats(this.db, t.project_id).find((x) => x.id === d.seatId);
+        const est = plan(this.db, t, undefined, d.seatId).est;
+        if (seat && logBorrow(this.db, t, seat, { pct: est.pct, usd: est.usd })) this.log('info', `${t.name} borrows ${seat.owner}'s seat ${seat.label}`);
+      }
+      if (pct != null) {
+        this.promises.push({ seatId: d.seatId, pct, at: this.now });
+        for (const list of this.seats.values()) for (const v of list) if (v.seat.id === d.seatId) v.promised += pct; // the next slot in this same tick sees it
+      }
+    }
   }
 
   /** Save the decision for `salu sched`; returns when a held queue may start (epoch ms) or null. */
@@ -76,14 +104,20 @@ export class TokenAware {
     const hold = this.mode === 'on' ? (this.decision?.hold ?? null) : null;
     const last: SchedLast = {
       at: this.now,
+      seat: this.decision?.seat,
+      placed: this.decision?.placed ?? null,
       mode: this.mode,
       wouldPick: this.wouldPick,
       hold: this.decision?.hold ?? null,
       skipped: (this.decision?.skipped ?? []).map(({ name, why }) => ({ name, why })),
       routed: this.routed,
     };
+    // A tick that looked at nothing (empty queue) must not wipe the last real decision `salu sched` explains.
+    const idle = !last.wouldPick && !last.hold && !last.skipped.length && !last.routed.length;
     const key = JSON.stringify({ ...last, at: 0 });
-    if (key !== this.lastSaved) {
+    const prev = idle ? readLast(this.db) : null;
+    const keepPrev = !!prev && !!(prev.wouldPick || prev.hold) && prev.mode === this.mode;
+    if (!keepPrev && key !== this.lastSaved) {
       this.lastSaved = key;
       saveLast(this.db, last);
     }
@@ -99,10 +133,14 @@ export class TokenAware {
 
   /** Called as a worker starts. */
   watch(t: TicketView, others: RunWatch[]): RunWatch {
-    const p = plan(this.db, t);
-    const session = this.mode === 'off' ? undefined : (this.snap ?? peekUsageSnapshot(this.db)).windows.find((w) => w.id === 'session');
-    const w: RunWatch = { model: p.model, effort: p.effort, startPct: session?.percentUsed ?? null, resetsAt: session?.resetsAt ?? null, solo: others.length === 0 };
-    for (const o of others) o.solo = false;
+    const seatId = t.seat_id ?? null;
+    const p = plan(this.db, t, undefined, seatId ?? undefined);
+    const snap = seatId != null ? peekSeatSnapshot(this.db, seatId) : (this.snap ?? peekUsageSnapshot(this.db));
+    const session = this.mode === 'off' ? undefined : snap.windows.find((x) => x.id === 'session');
+    const w: RunWatch = { model: p.model, effort: p.effort, seatId, startPct: session?.percentUsed ?? null, resetsAt: session?.resetsAt ?? null, solo: false };
+    const sameMeter = others.filter((o) => o.seatId === seatId); // a seat's meter moves with that seat's runs only
+    w.solo = sameMeter.length === 0;
+    for (const o of sameMeter) o.solo = false;
     return w;
   }
 
@@ -110,16 +148,30 @@ export class TokenAware {
   learn(w: RunWatch, costUsd: number): void {
     if (this.mode === 'off' || !(costUsd > 0)) return;
     const at = Date.now();
-    const plain = () => recordRunStats(this.db, w.model, w.effort, { usd: costUsd, pct: null, at });
+    const seat = w.seatId != null ? { seat: w.seatId } : {};
+    const plain = () => recordRunStats(this.db, w.model, w.effort, { usd: costUsd, pct: null, at, ...seat });
     if (!w.solo || w.startPct == null) return plain();
-    void getUsageSnapshot({ db: this.db, force: true })
+    // A seat's meter moves with that seat's runs only, so "solo" is per seat; the read uses the seat's own login.
+    const read = w.seatId != null ? seatNow(this.db, w.seatId) : getUsageSnapshot({ db: this.db, force: true });
+    void read
       .then((snap) => {
         const s = snap.windows.find((x) => x.id === 'session');
         const same = s && s.resetsAt === w.resetsAt && s.percentUsed != null && s.percentUsed >= w.startPct!;
-        recordRunStats(this.db, w.model, w.effort, { usd: costUsd, pct: same ? s!.percentUsed! - w.startPct! : null, at });
+        recordRunStats(this.db, w.model, w.effort, { usd: costUsd, pct: same ? s!.percentUsed! - w.startPct! : null, at, ...seat });
       })
       .catch(plain);
   }
 }
 
 export { readLast };
+
+function peekSeatSnapshot(db: Database, seatId: number): UsageSnapshot {
+  return buildSnapshot(db, Date.now(), null, STALE_AFTER_MS, seatScope(seatId));
+}
+
+/** A fresh read of one seat's meter, or its cached one when the seat is gone. */
+async function seatNow(db: Database, seatId: number): Promise<UsageSnapshot> {
+  const seat = db.query<{ project_id: number }, [number]>('SELECT project_id FROM seats WHERE id = ?').get(seatId);
+  const s = seat ? listSeats(db, seat.project_id).find((x) => x.id === seatId) : null;
+  return s ? (await seatUsage(db, s, { force: true })).snapshot : peekSeatSnapshot(db, seatId);
+}

@@ -97,9 +97,17 @@ export function originUrl(projectPath: string): string | null {
   return r.exitCode === 0 ? r.stdout.toString().trim() || null : null;
 }
 
-/** Agents may reach any site. SALU_SANDBOX_DOMAINS=a.com,*.b.com limits them to that list instead. */
-export function allowedDomains(env: NodeJS.ProcessEnv = process.env): string[] {
-  const list = (env.SALU_SANDBOX_DOMAINS ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+/**
+ * Agents may reach any site. SALU_SANDBOX_DOMAINS=a.com,*.b.com limits them to that list instead. A single project
+ * may carry its own list in SALU_SANDBOX_DOMAINS_<SLUG> (its folder slug, upper-cased with non-alphanumerics turned
+ * to _), which wins over the box-wide list; so when one process serves several projects they do not share one
+ * allow-list. The per-project value comes only from the environment (the box sets it per unit, the user per shell),
+ * never from inside the project folder, which an agent can write.
+ */
+export function allowedDomains(env: NodeJS.ProcessEnv = process.env, project?: string): string[] {
+  const parse = (v?: string) => (v ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+  const perProject = project ? parse(env[`SALU_SANDBOX_DOMAINS_${folderSlug(project).toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`]) : [];
+  const list = perProject.length ? perProject : parse(env.SALU_SANDBOX_DOMAINS);
   return list.length ? list : ['*'];
 }
 
@@ -255,11 +263,11 @@ export interface KernelOptions {
  * home folder is closed to reads. `fence`: `dir` is the real project; writes are confined to it just the same,
  * reads stay open except credential stores (git identity, tool caches and sibling folders keep working).
  */
-export function kernelOptions(dir: string, o: { home?: string; env?: NodeJS.ProcessEnv; mode?: 'kernel' | 'fence' } = {}): KernelOptions {
+export function kernelOptions(dir: string, o: { home?: string; env?: NodeJS.ProcessEnv; mode?: 'kernel' | 'fence'; project?: string } = {}): KernelOptions {
   const home = o.home ?? homedir();
   const fence = o.mode === 'fence';
   const secrets = fence ? credentialPaths(home) : secretPaths(home);
-  const domains = allowedDomains(o.env);
+  const domains = allowedDomains(o.env, o.project);
   const sandbox: KernelOptions['sandbox'] = {
     enabled: true,
     failIfUnavailable: true, // a sandbox that cannot start stops the ticket instead of running unprotected

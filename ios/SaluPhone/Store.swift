@@ -279,24 +279,75 @@ final class Store: ObservableObject {
         var ok: Bool
         var inbox: Bool
         var message: String
+        var reach: String?     // what else the token can see
+        var reachOK = false    // it sees this repo and no other private one
     }
+
+    /// GitHub's token page for this repo, filled in as far as a link can (Settings' "Make a token").
+    var tokenPage: URL? { GitHubClient.parseRepo(repo).flatMap { GitHubClient.tokenPage(owner: $0.owner, repo: $0.repo) } }
 
     /// Settings' "Test connection".
     func checkConnection() async -> Check {
-        guard GitHubClient.parseRepo(repo) != nil else { return Check(ok: false, inbox: false, message: SaluError.badRepo.localizedDescription) }
+        guard let r = GitHubClient.parseRepo(repo) else { return Check(ok: false, inbox: false, message: SaluError.badRepo.localizedDescription) }
         guard !token.trimmed.isEmpty else { return Check(ok: false, inbox: false, message: "Add a GitHub token.") }
         guard let c = client else {
             return Check(ok: false, inbox: false, message: signingKey.trimmed.isEmpty
-                ? "Add the signing key: run `salu remote key` on the box and paste what it prints."
+                ? "Add the signing key: run `salu remote key` on your Mac and paste what it prints."
                 : "That signing key is too short. Copy the whole line `salu remote key` prints.")
         }
         do {
             let inbox = try await c.check()
-            return Check(ok: true, inbox: inbox, message: inbox
+            var result = Check(ok: true, inbox: inbox, message: inbox
                 ? "Connected. The box's inbox branch is there."
                 : "The token works, but the repo has no salu/inbox branch yet. Run `salu remote add` on your computer.")
+            if let reach = try? await c.reach() {
+                let d = Self.describe(reach, repo: "\(r.owner)/\(r.repo)")
+                result.reach = d.0
+                result.reachOK = d.1
+            } else {
+                result.reach = "Couldn't check what else the token reaches. Test again in a moment."
+            }
+            return result
+        } catch SaluError.http(404, let msg) where !msg.localizedCaseInsensitiveContains("branch") && token.trimmed.hasPrefix("github_pat_") {
+            // The usual reason a fine-grained token 404s: the repo wasn't picked under Repository access.
+            return Check(ok: false, inbox: false, message: "This token doesn't include \(r.owner)/\(r.repo). On GitHub open the token (Settings > Developer settings > Fine-grained tokens), under Repository access pick Only select repositories and add \(r.repo), and give Contents read and write. Or tap Make a token.")
         } catch {
             return Check(ok: false, inbox: false, message: error.localizedDescription)
         }
+    }
+
+    /// One line on what the token reaches besides this repo, and whether that is only this repo.
+    nonisolated static func describe(_ r: GitHubClient.Reach, repo: String) -> (String, Bool) {
+        let others = r.privateRepos.filter { $0.lowercased() != repo.lowercased() }
+        if let scopes = r.scopes, scopes.contains("repo") {
+            return ("This token reaches every repo you have (a classic or gh token). Fine to try; for the phone, make a fine-grained one for this repo only.", false)
+        }
+        if others.isEmpty && !r.more { return ("The token reaches this repo and no other private one.", true) }
+        let n = r.more ? "100+" : String(others.count)
+        return ("This token can also see \(n) other private repo\(others.count == 1 && !r.more ? "" : "s"). Make one for this repo only.", false)
+    }
+
+    // MARK: links (salu://, from ntfy pushes)
+
+    /// A ticket to show on the Tickets tab, set by a link and taken by TicketsView.
+    @Published var openTicket: String?
+
+    /// `salu://ticket/<project>/<number>?ref=<ticket file id>` or `salu://inbox`. Returns whether it
+    /// named a ticket the phone knows (then `openTicket` is set).
+    func open(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "salu", url.host?.lowercased() == "ticket" else { return false }
+        let parts = url.pathComponents.filter { $0 != "/" }
+        guard parts.count == 2, let number = Int(parts[1]) else { return false }
+        let project = parts[0]  // pathComponents are already percent-decoded
+        let ref = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "ref" }?.value
+        let all = tickets
+        if let ref, all.contains(where: { $0.id == ref }) {
+            openTicket = ref
+        } else if let t = all.first(where: { $0.number == number && $0.project == project }) {
+            openTicket = t.id
+        } else {
+            return false
+        }
+        return true
     }
 }

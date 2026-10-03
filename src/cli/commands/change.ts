@@ -11,13 +11,17 @@ import { resolveProjectRef, resolveProject, resolveTicket } from '../../core/res
 import { CliError } from '../../core/errors.ts';
 import { parseStatus } from '../../core/format.ts';
 import { dim, green } from '../../core/ansi.ts';
+import { getSeat, listMembers, setTicketSeat } from '../../team/store.ts';
+import { requireOwnerSide } from '../../team/perms.ts';
+import { whoAmI, type Sender } from '../../sync/format.ts';
 import { helpIf, isTTY } from './_shared.ts';
 
-const HELP = `salu change "name" [--name N] [--query Q] [--tags T] [--priority P] [--status S] [--project P] [--id N]
+const HELP = `salu change "name" [--name N] [--query Q] [--tags T] [--priority P] [--status S] [--seat label|none] [--project P] [--id N]
 salu change project "name" [--in parent|none] [--name N] [--path P] [--model M] [--effort E] [--tools T] [--concurrency N] [--default]
 
 Edits one or more fields. --tags replaces the whole tag string. With no flags the ticket
-opens in an inline editor. --status todo re-queues a done, failed or blocked ticket.`;
+opens in an inline editor. --status todo re-queues a done, failed or blocked ticket.
+--seat pins the ticket to a Claude seat (an admin any seat, a member only their own; none clears it).`;
 
 export async function change(p: Parsed): Promise<number> {
   if (helpIf(p, HELP)) return 0;
@@ -86,6 +90,20 @@ export async function change(p: Parsed): Promise<number> {
       patch.finished_at = null;
     }
   }
+  const seatFlag = flagStr(p, 'seat');
+  if (seatFlag !== undefined) {
+    requireOwnerSide(db, t.project_id, 'seats');
+    if (seatFlag === '' || seatFlag === 'none') setTicketSeat(db, t.id, null);
+    else {
+      const seat = getSeat(db, t.project_id, seatFlag);
+      if (!seat) throw new CliError(`no seat called "${seatFlag}"`);
+      setTicketSeat(db, t.id, seat.id, { sender: localSender(db, t.project_id) });
+    }
+    if (Object.keys(patch).length === 0) {
+      console.log(`${green('✓')} #${t.id} ${t.name} ${dim('seat')}`);
+      return 0;
+    }
+  }
   const moveTo = flagStr(p, 'move-to') ?? flagStr(p, 'to-project');
   if (moveTo) patch.project_id = resolveProject(db, moveTo).id;
 
@@ -98,4 +116,15 @@ export async function change(p: Parsed): Promise<number> {
   const updated = updateTicket(db, t.id, patch);
   console.log(`${green('✓')} updated #${updated.id} ${updated.name} ${dim(Object.keys(patch).join(', '))}`);
   return 0;
+}
+
+/**
+ * Who is at this keyboard, for the checks that need a sender. On the owner side (a client computer is refused
+ * before this), a roster member is that member, with their role; anyone else is the admin, because a shell on
+ * the owner's machine can already change the roster and the box.
+ */
+function localSender(db: ReturnType<typeof openDb>, projectId: number): Sender {
+  const me = whoAmI();
+  const m = listMembers(db, projectId).find((x) => x.name.toLowerCase() === me.toLowerCase());
+  return m ? { name: m.name, role: m.role } : { name: null, role: 'admin' };
 }

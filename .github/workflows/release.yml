@@ -3,7 +3,17 @@ name: Release
 # Tag a version (git tag v0.1.0 && git push --tags) to build salu for every platform and
 # attach the binaries to a GitHub release. scripts/install.sh downloads from there; the box installer
 # (install-box.sh) downloads salu-box-linux-<arch>.tar.gz, one bundle with everything a box needs.
+# The macOS binaries are tested on real Macs (arm64 and x64) before anything is published: the compiled binary runs
+# end to end, and the worker fence (Seatbelt) is attacked for real by Claude Code driven by a mock model.
+# A pull request that touches the files below runs everything except publishing.
 on:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - scripts/fence-test.ts
+      - scripts/mock-claude-api.ts
+      - src/core/sandbox-check.ts
+      - src/core/kernel.ts
   push:
     tags: ['v*']
   workflow_dispatch:
@@ -25,12 +35,11 @@ jobs:
       - run: bunx tsc --noEmit
       - run: bun test
 
-  release:
+  build:
     needs: test
     runs-on: ubuntu-latest
     env:
       TAG: ${{ github.event.inputs.tag || github.ref_name }}
-      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -59,6 +68,55 @@ jobs:
           if [ -n "$SALU_RELEASE_KEY" ]; then dist/salu-linux-x64 release sign dist; fi
       - name: Test the compiled linux-x64 binary end to end (stub claude on PATH, and none)
         run: SALU_E2E_BIN=dist/salu-linux-x64 bun test test/e2e
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          retention-days: 3
+
+  # The same files that get published, run on the Macs they are for.
+  macos:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-14, arch: arm64 }
+          - { os: macos-15-intel, arch: x64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: The published binary matches its checksum and starts
+        run: |
+          cd dist
+          chmod +x salu-darwin-${{ matrix.arch }}
+          shasum -a 256 -c salu-darwin-${{ matrix.arch }}.sha256
+          ./salu-darwin-${{ matrix.arch }} --version
+          uname -m
+      - name: Test the compiled darwin binary end to end (stub claude on PATH, and none)
+        run: SALU_E2E_BIN=dist/salu-darwin-${{ matrix.arch }} bun test test/e2e
+      - name: The fence holds on macOS (real Claude Code and Seatbelt, mock model, no login)
+        run: bun scripts/fence-test.ts
+
+  release:
+    if: github.event_name != 'pull_request'
+    needs: [build, macos]
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
       - name: Publish release
         run: |
           if ! gh release view "$TAG" >/dev/null 2>&1; then

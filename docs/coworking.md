@@ -2,7 +2,7 @@
 
 A friend adds tickets to your box project and you both see them, with who added what.
 Tickets run on the box's one login (the admin's). This is shared tickets, not shared seats.
-Shared seats and borrowing a teammate's spare time are not built (see "Not built yet").
+For one seat per person, personal keys, roles and borrowing spare seat time (v2), see [teams.md](teams.md).
 
 ## Join (the friend, on their own computer)
 
@@ -27,14 +27,44 @@ status, results and replies follow the same way they do for your own tickets.
 ## What it is and is not
 
 - One shared signing key. Anyone who has it can send tickets as anyone. Fine for small groups
-  of trusted friends; per-person keys come with the team version.
+  of trusted friends. In v2 each person can have their own key (`salu team key`) and the admin can retire the
+  shared one (see [teams.md](teams.md) and [migrating-to-v2.md](migrating-to-v2.md)).
 - The name on a ticket is whatever `SALU_USER` says (default: login name). It is a label,
   not proof of identity.
 - The box's login pays for every ticket. Whether a friend's ticket may use the owner's
   seat is the open terms question.
 - A friend who joins late sees tickets from the box's history as the acknowledgements replay.
 
-## Not built yet
+## Team roster and seats (v2)
 
-Per-person keys and roles (admin owns the project), one Team/Enterprise seat per person,
-the scheduler spreading tickets across seats, borrowing a teammate's spare seat time.
+    salu team add alice          # the first person added owns the project
+    salu team add bob
+    salu seat add bob-team --owner bob --plan team
+    salu seat lend bob-team on --cap 25 --from 22 --to 7   # off until the owner turns it on
+
+`salu team` and `salu seat` keep the roster and the list of Claude seats (a seat is a name, never a login).
+Personal keys, roles, seat logins, per-seat usage and the seat-aware scheduler read them; all of that is in
+[teams.md](teams.md). Whether a subscription seat may serve a teammate's ticket has not been checked at the
+source: check the plan's terms before turning lending on.
+
+## Borrowing spare seat time (v2, off by default)
+
+> **Terms not checked.** Whether a Claude plan's terms allow your seat to serve a teammate's ticket was never
+> checked at the source. Lending is the lender's choice and the lender's responsibility.
+
+A teammate can lend a capped slice of their seat:
+
+    SALU_USER=bob salu seat lend bob-team on --cap 25 --from 22 --to 7
+
+- Lending is switched on or off with `salu seat lend`, on the box only; there is no remote way to do it. The
+  command refuses unless `SALU_USER` matches the seat's owner, but that is a guard against accidents, not a
+  security boundary: anyone with a shell on the box is the admin and can change it. A person who leaves the
+  project stops lending.
+- `--cap N` is the most percent of the 5-hour window borrowed tickets may use in total (counted over the last 5
+  hours, by each ticket's expected use). `--from/--to` are hours of the day on the box (22 to 7 wraps midnight).
+- A ticket first uses seats it is entitled to (the project's seats, its author's own, or an admin's for a ticket
+  with no author). Only when none has room does it try a lender's seat. The author comes from the ticket's signed
+  `by-` label. A ticket with none (made on the box, or sent with the shared key, which proves nobody) never
+  borrows: a borrow must name a lender and a borrower, so it can be attributed and revoked per person.
+- A ticket that started on a lender's seat stays there; if lending stops it waits.
+- `salu seat lent` lists every borrowed ticket: lender, borrower, expected use and the cost so far.
