@@ -148,6 +148,20 @@ describe('borrowing spare seat time', () => {
     expect(lendLog(db, p.id)).toEqual([]);
   });
 
+  test('a borrowed ticket that is dispatched again is one row, not two', async () => {
+    const { db, p, t } = setup();
+    setLend(db, p.id, 'bob-team', true);
+    const x = t('big');
+    await dispatch(['sched']);
+    await run(db);
+    expect(lendLog(db, p.id)).toHaveLength(1);
+    // retry: back to the queue, same seat, started again
+    db.query("UPDATE tickets SET status = 'todo' WHERE id = ?").run(x.id);
+    await run(db);
+    expect(getTicketById(db, x.id)!.status).toBe('done');
+    expect(lendLog(db, p.id)).toHaveLength(1);
+  });
+
   test('windowOpen wraps past midnight', () => {
     const at = (h: number) => new Date(2026, 9, 3, h, 30).getTime();
     expect(windowOpen({ lend_from: 22, lend_to: 7 }, at(23))).toBe(true);
@@ -170,7 +184,7 @@ describe('borrowing spare seat time', () => {
   test('only the seat\'s owner switches lending on; the warning is printed', async () => {
     const { p, db } = setup();
     process.env.SALU_USER = 'alice';
-    await expect(dispatch(['seat', 'lend', 'bob-team', 'on'])).rejects.toThrow(/only bob can switch lending on/);
+    await expect(dispatch(['seat', 'lend', 'bob-team', 'on'])).rejects.toThrow(/is bob's to switch on/);
     expect(getSeat(db, p.id, 'bob-team')!.lend).toBe(0);
     process.env.SALU_USER = 'bob';
     await dispatch(['seat', 'lend', 'bob-team', 'on', '--cap', '25', '--from', '22', '--to', '7']);

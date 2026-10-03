@@ -97,6 +97,7 @@ export function ensureTeamTables(db: Database): void {
       at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS lend_log_seat ON lend_log(seat_id, at);
+    CREATE UNIQUE INDEX IF NOT EXISTS lend_log_ticket ON lend_log(ticket_id, seat_id);
   `);
   // Which seat ran a ticket (null = the machine's own login, as in v1).
   if (!db.query<{ name: string }, []>('PRAGMA table_info(tickets)').all().some((c) => c.name === 'seat_id')) db.exec('ALTER TABLE tickets ADD COLUMN seat_id INTEGER REFERENCES seats(id) ON DELETE SET NULL;');
