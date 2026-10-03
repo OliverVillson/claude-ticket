@@ -139,7 +139,7 @@ export function workerSdkOptions(t: TicketView, project: Project | null, extra: 
   } else if (extra.kernel || extra.fence) {
     // The kernel (own copy) or the fence (real project): writes confined to the folder by the OS sandbox around shell
     // commands and by a hook on the file tools; credentials closed to the file tools; no logins in the environment.
-    const k = kernelOptions(extra.kernel ?? t.project_path, { mode: extra.kernel ? 'kernel' : 'fence' });
+    const k = kernelOptions(extra.kernel ?? t.project_path, { mode: extra.kernel ? 'kernel' : 'fence', project: t.project });
     if (extra.kernel || extra.fence?.osSandbox) opts.sandbox = k.sandbox;
     opts.disallowedTools = [...(opts.disallowedTools ?? []), ...k.disallowedTools];
     opts.env = scrubSecrets(opts.env ?? {});
@@ -251,7 +251,7 @@ function ensureEgressProxy(project: string, seat?: string | null): Promise<() =>
   if (!egressStops.has(key))
     egressStops.set(key, (async () => {
       const dir = projectSocketDir(project, seat);
-      const stops = [await startEgress({ path: join(dir, 'egress.sock'), allowedDomains: allowedDomains(), log })];
+      const stops = [await startEgress({ path: join(dir, 'egress.sock'), allowedDomains: allowedDomains(process.env, project), log })];
       if (kernelAuthMode() === 'socket') stops.push(await startApiProxy({ path: join(dir, 'api.sock'), log, seat: seat ?? undefined })); // the login stays on this side
       return () => stops.forEach((f) => f());
     })());

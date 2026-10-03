@@ -86,6 +86,9 @@ export function createArgs(o: CreateOpts): string[] {
     '-v', `${o.dir}:${WORKDIR}:rw`,
     // The socket's folder, not the socket file: a file mount keeps the inode it had at create time, and the filter
     // makes a new socket (new inode) every time it starts, which would leave a running container talking to a dead one.
+    // This per-project socket folder is the ONLY host path (and so the only host unix socket) mounted into the
+    // container; that is what keeps gVisor's `--host-uds=open` (see install-kernel-runtime.sh) scoped to this
+    // project's egress/login socket. Do not add another host socket to these mounts without revisiting that.
     '-v', `${dirname(o.socket ?? join(projectSocketDir(o.project, o.seat), 'egress.sock'))}:${EGRESS_DIR_IN}:rw`,
     ...Object.entries(env).flatMap(([k, v]) => ['--env', `${k}=${v}`]),
     o.image ?? KERNEL_IMAGE,
@@ -192,9 +195,13 @@ export function ensureContainer(project: string, dir: string, bin = engine(), on
     const rt = runtime();
     const disk = `${kernelDiskGb()}g`;
     let c = podman(bin, createArgs({ name, project, seat, dir, runtime: rt.name, disk }));
-    // The size limit needs a storage backend that can enforce it (overlay on xfs with quotas); without one, the
-    // per-ticket size check below is the limit.
-    if (c.status !== 0 && /storage-opt|quota|size/i.test(c.stderr + c.stdout)) c = podman(bin, createArgs({ name, project, seat, dir, runtime: rt.name, disk: null }));
+    // The size limit needs a storage backend that can enforce it (overlay on xfs with project quotas); without one,
+    // drop --storage-opt and fall back to the per-project checkDisk guard. Say so once, so an operator knows the hard
+    // per-container cap is off on this box rather than assuming it holds.
+    if (c.status !== 0 && /storage-opt|quota|size/i.test(c.stderr + c.stdout)) {
+      process.stderr.write(`salu kernel: this storage backend cannot enforce a ${disk} per-container disk cap; relying on the ${kernelDiskGb()} GB per-project folder check instead. For a hard cap, put the podman storage on xfs with project quotas.\n`);
+      c = podman(bin, createArgs({ name, project, seat, dir, runtime: rt.name, disk: null }));
+    }
     if (c.status !== 0) throw new CliError(`could not create the kernel container: ${(c.stderr || c.stdout).trim().split('\n').pop()}`);
   }
   if (state.text !== 'running') {
