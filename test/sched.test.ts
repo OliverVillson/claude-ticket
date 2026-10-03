@@ -18,7 +18,7 @@ let home: string;
 let db: ReturnType<typeof openDb>;
 let project: Project;
 const saved: Record<string, string | undefined> = {};
-const KEYS = ['SALU_HOME', 'SALU_WORKER', 'SALU_SCHED', 'SALU_FAKE_USAGE', 'SALU_BUDGET_USD_PER_DAY'];
+const KEYS = ['SALU_SCHED_MARGIN', 'SALU_SCHED_RESERVE', 'SALU_HOME', 'SALU_WORKER', 'SALU_SCHED', 'SALU_FAKE_USAGE', 'SALU_BUDGET_USD_PER_DAY'];
 
 beforeEach(() => {
   for (const k of KEYS) saved[k] = process.env[k];
@@ -94,7 +94,24 @@ describe('fits and decide', () => {
   test('no meter, no estimate: everything fits', () => {
     const t = ticket('a');
     expect(fits(db, plan(db, t), snap(), NOW).ok).toBe(true);
-    expect(fits(db, plan(db, t), snap(win('session', 99)), NOW).ok).toBe(true); // no percent learned yet
+    expect(fits(db, plan(db, t), snap(win('session', 50)), NOW).ok).toBe(true); // no percent learned yet, room left
+  });
+  test('no percent learned: a full window still holds, with the reset time', () => {
+    const t = ticket('a');
+    const f = fits(db, plan(db, t), snap(win('session', 100 - SESSION_MARGIN, 1_800_000)), NOW);
+    expect(f).toMatchObject({ ok: false, until: NOW + 1_800_000 });
+    expect(fits(db, plan(db, t), snap(win('session', 100 - SESSION_MARGIN - 1)), NOW).ok).toBe(true);
+  });
+  test('SALU_SCHED_MARGIN moves the line, and the decision names its seat', () => {
+    const t = ticket('a');
+    process.env.SALU_SCHED_MARGIN = '60';
+    try {
+      expect(fits(db, plan(db, t), snap(win('session', 45)), NOW).ok).toBe(false);
+      expect(decide(db, [t], snap(win('session', 45)), NOW).seat).toBe('self');
+    } finally {
+      delete process.env.SALU_SCHED_MARGIN;
+    }
+    expect(fits(db, plan(db, t), snap(win('session', 45)), NOW).ok).toBe(true);
   });
   test('the 5-hour window: fits with the margin, waits otherwise, with the reset time', () => {
     learnOpus();
