@@ -129,7 +129,7 @@ describe('per-person keys', () => {
     issueKey(box.db, box.project.id, 'Bob');
     for (const [name, key] of [['m', alice.token], ['s', SHARED]] as const) {
       const c = side(name, 'client');
-      const t = createTicket(c.db, { project_id: c.project.id, name: `t-${name}`, query: 'q', tags: {}, labels: ['by-bob', 'BY-Bob', ' by-bob', 'keep'], status: 'todo' });
+      const t = createTicket(c.db, { project_id: c.project.id, name: `t-${name}`, query: 'q', tags: {}, labels: ['by-bob', 'BY-Bob', ' by-bob', 'by\u2010bob', 'by\u2011bob', 'by\u2013bob', 'by\u2212bob', 'by\uFF0Dbob', 'b\u200Dy-bob', 'keep'], status: 'todo' });
       publishTicket(c.db, c.project, t, { queue: true });
       syncAs(c, key);
     }
