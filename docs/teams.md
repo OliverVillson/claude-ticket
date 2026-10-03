@@ -173,6 +173,15 @@ A ticket that started on a lender's seat stays there, and waits if lending stops
 seat, so a member's seat is open to it only while that member lends it, and that use is logged as borrowed.
 A person who leaves the project stops lending.
 
+## Security notes
+
+- Personal keys are HMAC secrets, so the box stores every member's secret (it has to recompute the
+  signatures). That gives you revocation and attribution: a revoked key stops working at once, and a ticket's
+  author comes from the verified signer. It does not protect against someone who can read the box's database;
+  treat box access as admin access.
+- A ticket's `by-<name>` label is set from the verified signer only. Tickets sent with the shared key or
+  unsigned carry no author label.
+
 ## What is verified
 
 - Roster, seats, keys, roles, scheduler placement and lending are covered by unit tests with fake meters
