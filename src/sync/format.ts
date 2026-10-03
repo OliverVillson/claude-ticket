@@ -279,7 +279,13 @@ export function personName(v: unknown): string | null {
 }
 
 /** Labels of the form `by-...` mark who owns a ticket (and which seat it runs on), so they are never taken from a file. */
-export const isByLabel = (l: string): boolean => /^\s*by-/i.test(l.normalize('NFKC'));
+export const isByLabel = (l: string): boolean =>
+  /^\s*by-/i.test(
+    l
+      .normalize('NFKC')
+      .replace(/[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]/g, '') // invisible characters
+      .replace(/[\u2010-\u2015\u2212\u2e3a\u2e3b\ufe58\ufe63\uff0d]/g, '-'), // hyphen look-alikes (NFKC leaves most of them)
+  );
 
 /** The label that marks a ticket as someone's (`by-bob`). */
 export function byLabel(name: string): string {
