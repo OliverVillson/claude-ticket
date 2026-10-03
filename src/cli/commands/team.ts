@@ -23,7 +23,8 @@ salu seat rm <label> [--yes]                     forget a seat
 salu seat off|on <label>                         switch a seat off or back on
 salu seat lend <label> on|off [--cap N] [--from H --to H]
                                                  let teammates' tickets use this seat's spare time. Off until the
-                                                 seat's owner turns it on (only they can). N = most percent of the
+                                                 seat's owner turns it on (it checks SALU_USER against the owner's
+                                                 name, a guard against slips, not a lock). N = most percent of the
                                                  5-hour window others may use; H = hours 0-23 the lending is open
 salu seat lent [--project P] [--json]            every borrowed ticket: lender, borrower, expected and actual cost
 
