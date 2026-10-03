@@ -1,7 +1,8 @@
 import { claudeExecutableOption } from '../core/claude-bin.ts';
 import { detectLimit, kindForWindow, limitFromRateLimitInfo, parseLimitText, toEpochMs } from './detect.ts';
 import type { LimitHit, ProbeResult } from './types.ts';
-import { existsSync, readFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ticketHome } from '../core/paths.ts';
 
@@ -35,6 +36,21 @@ export interface ProbeOptions {
   /** Replace the SDK's `query` (tests). */
   queryFn?: QueryLike;
   log?: (line: string) => void;
+}
+
+/**
+ * The directory a probe session starts in. A spawn whose cwd the user cannot enter fails with ENOENT, which the SDK
+ * reports as "native binary exists but failed to launch (libc)" (seen on the box: `sudo -u salu` kept the caller's
+ * unreadable home as cwd). Fall back to the temp dir rather than blame the binary.
+ */
+export function probeCwd(cwd?: string): string {
+  try {
+    const want = cwd ?? process.cwd();
+    accessSync(want, constants.R_OK | constants.X_OK);
+    return want;
+  } catch {
+    return tmpdir();
+  }
 }
 
 /** process.env without the variables that tie a child to the Claude Code session running us. */
@@ -177,7 +193,7 @@ export async function readUsageRaw(q: QueryLike, options: any, timeoutMs = 30_00
 /** SDK options for a session that only reads usage: no settings files, no tools, no transcript. */
 export function usageSessionOptions(cwd?: string, signal?: AbortController): Record<string, any> {
   const base: Record<string, any> = {
-    cwd: cwd ?? process.cwd(),
+    cwd: probeCwd(cwd),
     settingSources: [],
     tools: [],
     allowedTools: [],
@@ -275,7 +291,7 @@ export async function probeWindow(opts: ProbeOptions = {}): Promise<ProbeResult>
   const pause = opts.pause ?? (opts.model ? { models: [opts.model] } : undefined);
   const model = opts.model === undefined ? probeModelFor(pause) : opts.model;
   const base: Record<string, any> = {
-    cwd: opts.cwd ?? process.cwd(),
+    cwd: probeCwd(opts.cwd),
     abortController: ac,
     settingSources: [],
     tools: [],

@@ -76,6 +76,7 @@ export class TokenAware {
     const hold = this.mode === 'on' ? (this.decision?.hold ?? null) : null;
     const last: SchedLast = {
       at: this.now,
+      seat: this.decision?.seat,
       mode: this.mode,
       wouldPick: this.wouldPick,
       hold: this.decision?.hold ?? null,
