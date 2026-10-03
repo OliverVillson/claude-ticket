@@ -165,8 +165,9 @@ With an API key there is no plan meter; set `SALU_BUDGET_USD_PER_DAY` and the sa
     salu seat lend bob-team off
     salu seat lent                  # every borrowed ticket: lender, borrower, expected use, cost so far
 
-Only the seat's owner can switch lending on (`SALU_USER` must match the owner); anyone with box access can
-switch it off. `--cap N` is the most percent of the 5-hour window borrowed tickets may use in total, counted
+Lending is switched on or off with `salu seat lend` on the box only; it has no remote path. The command refuses
+to switch it on unless `SALU_USER` matches the seat's owner, but that is a guard against accidents, not a
+security boundary: anyone with a shell on the box is the admin and can change it. `--cap N` is the most percent of the 5-hour window borrowed tickets may use in total, counted
 over the last 5 hours by each ticket's expected use. `--from/--to` are hours of the day on the box (22 to 7 wraps
 midnight). A ticket tries its own seat and unowned seats first; a lender's seat only when none has room.
 A ticket that started on a lender's seat stays there, and waits if lending stops. Only named members borrow.
@@ -181,6 +182,8 @@ A person who leaves the project stops lending.
   signatures). That gives you revocation and attribution: a revoked key stops working at once, and a ticket's
   author comes from the verified signer. It does not protect against someone who can read the box's database;
   treat box access as admin access.
+- Anyone who can run salu on the box itself can mint any member's key (`salu team key`, `salu team invite
+  --with-key`), because a shell on the box is already admin. Limit shell access on the box to the admin.
 - A ticket's `by-<name>` label is set from the verified signer only. Tickets sent with the shared key prove
   nobody, so they carry no author label and show as unnamed (in v1.2.0 they carried the sender's `SALU_USER`).
 - Once any member has a personal key, a file with no key id is refused unless a shared key is really set;
