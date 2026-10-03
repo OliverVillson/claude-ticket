@@ -110,6 +110,12 @@ struct TicketRow: View {
                 .font(Salu.mono(.caption2))
                 .foregroundStyle(Salu.chrome)
                 .lineLimit(1)
+                if let who = t.whoLine {
+                    Text(who)
+                        .font(Salu.mono(.caption2))
+                        .foregroundStyle(Salu.chrome)
+                        .lineLimit(1)
+                }
             }
         }
         .padding(.vertical, 6)

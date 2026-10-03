@@ -12,6 +12,7 @@ import { SPINNER_FRAMES, STATUS_STYLE, paint, paintPriority, paintStatus } from 
 import { Frame, confirmText, hintsText, titleText } from './Frame.tsx';
 import { safeText, stripControl } from '../../core/ansi.ts';
 import { GLYPHS } from '../../ui/glyphs.ts';
+import { meterText, ticketWho, type TeamView } from '../../team/view.ts';
 
 export interface DetailViewProps {
   columns: number;
@@ -29,6 +30,8 @@ export interface DetailViewProps {
   extras?: ThreadExtras;
   /** outputs strip expanded (`o`) */
   showOutputs?: boolean;
+  /** the ticket's project team, when it has one: shows who added it and which seat runs it */
+  team?: TeamView;
 }
 
 export const DETAIL_HINTS: Array<[string, string]> = [
@@ -91,6 +94,11 @@ export function DetailView(p: DetailViewProps) {
       st.dim(`   updated ${ago(t.updated_at, p.now)}`),
   );
   if (tagBits.length) lines.push(st.dim(tagBits.join('   ')));
+  if (p.team?.active) {
+    const w = ticketWho(t, p.team);
+    const bits = [`by ${w.author ?? 'unnamed (shared key)'}`, w.seat ? `seat ${w.seat}${w.seatOwner ? ` (${w.seatOwner}'s)` : ''}${w.meter ? ' ' + meterText(w.meter) : ''}` : 'seat: this machine\'s login'];
+    lines.push(st.dim(bits.join('   ')));
+  }
   if (run) lines.push(st.dim(`last run · ${runBits.join(' · ')}${run.log_path ? ` · ${run.log_path}` : ''}`));
   lines.push('');
 

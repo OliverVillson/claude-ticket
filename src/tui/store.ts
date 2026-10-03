@@ -5,6 +5,7 @@ import { countUnread } from '../notif/index.ts';
 import { threadSummary, type ThreadSummary } from '../threads/store.ts';
 import { toolCounts } from './log-tail.ts';
 import { readStatus, type OrchestratorStatus } from '../orchestrator/status.ts';
+import { loadTeam, type TeamView } from '../team/view.ts';
 
 export interface Scope {
   /** null or undefined = every project */
@@ -23,6 +24,8 @@ export interface Snapshot {
   unread: number;
   /** tickets with a decision the worker asked and nobody answered yet */
   asking: Set<number>;
+  /** per project: members, seats and seat meters (empty roster = a v1 project, nothing extra is shown) */
+  teams: Record<number, TeamView>;
 }
 
 /** One consistent read of everything the list view shows. Cheap: four small queries. */
@@ -37,7 +40,21 @@ export function loadSnapshot(db: Database, scope: Scope = {}): Snapshot {
     loadedAt: now,
     unread: countUnread(db),
     asking: askingTickets(db),
+    teams: loadTeams(db, projectId),
   };
+}
+
+function loadTeams(db: Database, projectId?: number): Record<number, TeamView> {
+  const out: Record<number, TeamView> = {};
+  try {
+    for (const p of listProjects(db)) if (projectId == null || p.id === projectId) {
+      const t = loadTeam(db, p.id);
+      if (t.active) out[p.id] = t;
+    }
+  } catch {
+    // a database from before the team tables: no team, no extras
+  }
+  return out;
 }
 
 /**
@@ -52,6 +69,7 @@ export function snapshotKey(s: Snapshot): string {
   const o = s.status;
   const p = o.paused;
   out += `|a${[...s.asking].join(',')}|u${s.unread}|${o.alive ? 1 : 0}:${o.pid}:${p ? `${p.until}:${p.kind}:${p.manual ? 1 : 0}:${p.reason}:${p.models.join(',')}` : ''}`;
+  for (const [id, t] of Object.entries(s.teams ?? {})) out += `|t${id}:${t.members.map((m) => m.name).join(',')}:${t.seats.map((x) => `${x.id}.${x.disabled}.${x.meter.percentUsed}`).join(',')}`;
   for (const w of o.workers) out += `;${w.ticketId}:${w.turns}:${w.lastTool}`;
   return out;
 }

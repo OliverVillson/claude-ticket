@@ -222,7 +222,8 @@ export function App(p: AppProps) {
   const leftW = twoPane ? (threePane ? 22 : Math.max(22, Math.min(32, Math.round(columns * 0.26)))) : 0;
   const threadInner = threePane ? Math.max(40, Math.round(columns * 0.4)) : 0;
   const showProjectCol = scopeIds == null || scopeIds.size > 1;
-  const layout = useMemo(() => computeLayout((twoPane ? columns - leftW - 8 - (threePane ? paneWidth(threadInner) : 0) : listInnerWidth(columns)) - DEEPER_CELLS, { showProject: showProjectCol }), [columns, twoPane, leftW, showProjectCol]);
+  const showBy = Object.keys(snapshot.teams ?? {}).length > 0;
+  const layout = useMemo(() => computeLayout((twoPane ? columns - leftW - 8 - (threePane ? paneWidth(threadInner) : 0) : listInnerWidth(columns)) - DEEPER_CELLS, { showProject: showProjectCol, showBy: showBy }), [columns, twoPane, leftW, showProjectCol, showBy]);
   const now = Date.now();
   const working = snapshot.status.workers.length > 0 || snapshot.tickets.some((t) => t.status === 'running');
   const anyRunningVisible = (mode === 'list' && working) || (mode === 'list' ? visible.slice(top, top + rows).some((t) => t.status === 'running') : mode === 'detail' && selected?.status === 'running');
@@ -821,7 +822,7 @@ export function App(p: AppProps) {
   if (mode === 'help') return <HelpView columns={columns} scopeName={scopeName} />;
   if (mode === 'detail' && detail) {
     return (
-      <DetailView columns={columns} rows={viewportRows(termRows, 4)} detail={detail} log={log} scopeName={scopeName} now={now} spinner={frame} confirm={confirm} message={message} back={back} showOutputs={showOutputs} />
+      <DetailView columns={columns} rows={viewportRows(termRows, 4)} detail={detail} log={log} scopeName={scopeName} now={now} spinner={frame} confirm={confirm} message={message} back={back} showOutputs={showOutputs} team={snapshot.teams?.[detail.ticket.project_id]} />
     );
   }
   let sidebar: { width: number; lines: string[] } | undefined;
@@ -887,6 +888,7 @@ export function App(p: AppProps) {
       command={<CommandLine columns={columns} focused={cmdEditing} value={cmdValue} onChange={setCmdValue} busy={cmdBusy} nonce={cmdNonce} />}
       working={working}
       usage={usageSnap}
+      teams={snapshot.teams}
       ticketFocus={!twoPane || pane === 'tickets'}
       crumbs={scopeCrumbs}
       projectConfirm={projConfirm ? `remove project "${projConfirm.name}" and its tickets?` : allowAsk ? `Allow ${allowAsk.rules.join(', ')} for "${allowAsk.ticket.name}" and queue it again?` : null}

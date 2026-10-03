@@ -99,8 +99,23 @@ struct TicketSummary: Identifiable, Hashable {
     var replies: [SentReply] = []     // oldest first
     var lastSent: Date?        // the phone's latest write for it (the ticket or a reply) still waiting on the box
     var resolvePending = false // resolved from this phone, the box hasn't confirmed yet
+    var by: String?            // who added it (team projects)
+    var seat: SaluSeat?        // the seat that runs it, from its latest `ticket.started`
     var parent: String?        // TicketSummary.id of the thread whose worker started this one
     var parentName: String?
+
+    /// "by alice · seat bob-team 62% left": who added it and whose seat runs it. nil for a ticket on a project without a team.
+    var whoLine: String? {
+        var parts: [String] = []
+        if let by { parts.append("by \(by)") }
+        if let seat {
+            var s = "seat \(seat.label)"
+            if let owner = seat.owner, owner.lowercased() != (by ?? "").lowercased() { s += " (\(owner)'s)" }
+            if let left = seat.left { s += " \(left)% left" }
+            parts.append(s)
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
 
     /// The box queues a follow-up on any ticket it knows, except one in the backlog (`salu reply` refuses those).
     /// On a resolved ticket the reply revives it.
@@ -223,6 +238,8 @@ enum Tickets {
                 s.parent = p.ref ?? "box:\(m.project)#\(p.id)"  // made canonical below, once every alias is known
                 s.parentName = p.name
             }
+            if let by = m.by { s.by = by }
+            if let seat = m.seat?.value { s.seat = seat }
             s.updated = max(s.updated, m.date)
             s.lastSent = nil  // the box answered
             s.messages.insert(m, at: 0)
