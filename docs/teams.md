@@ -149,8 +149,8 @@ queued ticket would take, and why the others did not, for example
 held until the earliest reset and every seat is named.
 
 Whose seat a ticket may use: a seat nobody owns, its author's own seat (the member named by its signed `by-`
-label), or, for a ticket with no author, a seat nobody owns. A `by-` label naming nobody on the team gets
-project seats only. A seat already pinned on a ticket is checked the same way. The scheduler never reads a seat
+label), or, for a ticket with no author, a seat nobody owns or an admin's seat (as in v1). A `by-` label naming
+nobody on the team gets project seats only. A seat already pinned on a ticket is checked the same way. The scheduler never reads a seat
 from a ticket file or tag.
 
 With an API key there is no plan meter; set `SALU_BUDGET_USD_PER_DAY` and the same rules count dollars.
@@ -169,8 +169,10 @@ Only the seat's owner can switch lending on (`SALU_USER` must match the owner); 
 switch it off. `--cap N` is the most percent of the 5-hour window borrowed tickets may use in total, counted
 over the last 5 hours by each ticket's expected use. `--from/--to` are hours of the day on the box (22 to 7 wraps
 midnight). A ticket tries its own seat and unowned seats first; a lender's seat only when none has room.
-A ticket that started on a lender's seat stays there, and waits if lending stops. A ticket with no author owns no
-seat, so a member's seat is open to it only while that member lends it, and that use is logged as borrowed.
+A ticket that started on a lender's seat stays there, and waits if lending stops. Only named members borrow.
+A ticket with no named requester never borrows, whether it was sent with the shared key, made on the box, or
+its `by-` label names nobody on the team; it runs on the project's ownerless seats or the admin's seat, the same
+as v1. Retiring the shared key ends that path (the phone still signs with the shared key).
 A person who leaves the project stops lending.
 
 ## Security notes

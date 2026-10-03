@@ -82,4 +82,4 @@ key until it is, which means you cannot retire the shared key while the phone is
   whose names collide as labels are refused.
 - `salu team`/`salu seat` refuse on a computer that is only a client of the box.
 - In enforce mode (`salu sched on`) a full or rejected 5-hour window now holds the queue even with no learned estimate.
-- A ticket made on the box or sent with the shared key owns no seat; it uses unowned seats, and a member's seat only while they lend it.
+- Only named members borrow. A ticket made on the box or sent with the shared key never borrows; it runs on the project's ownerless seats or the admin's seat, as in v1. The phone still signs with the shared key.
