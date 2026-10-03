@@ -14,17 +14,26 @@ set -uo pipefail
 SALU_USER="${SALU_BOX_USER:-salu}"
 if [ "$(id -un)" != "$SALU_USER" ] && [ -z "${SCHED_RUN_REEXEC:-}" ]; then
   COPY="$(mktemp /tmp/sched-window-run.XXXXXX)"; cp "$0" "$COPY"; chmod 644 "$COPY"
+  TMPOUT="/tmp/sched-window-run-$(date +%Y%m%d-%H%M%S).txt"; FINAL="$HOME/$(basename "$TMPOUT")"
   echo "running as the $SALU_USER user (sudo -u $SALU_USER -H)"
-  sudo -u "$SALU_USER" -H env SALU="${SALU:-salu}" SCHED_RUN_REEXEC=1 SCHED_RUN_OUT="$HOME/sched-window-run-$(date +%Y%m%d-%H%M%S).txt" bash "$COPY"
-  rc=$?; rm -f "$COPY"; exit $rc
+  sudo -u "$SALU_USER" -H env SALU="${SALU:-salu}" SCHED_RUN_REEXEC=1 SCHED_RUN_OUT="$TMPOUT" bash "$COPY"
+  rc=$?; rm -f "$COPY"
+  [ -f "$TMPOUT" ] && cp "$TMPOUT" "$FINAL" && echo "report copied to $FINAL"
+  exit $rc
 fi
 SALU="${SALU:-salu}"
-OUT="${SCHED_RUN_OUT:-$HOME/sched-window-run-$(date +%Y%m%d-%H%M%S).txt}"
+OUT="${SCHED_RUN_OUT:-/tmp/sched-window-run-$(date +%Y%m%d-%H%M%S).txt}"; chmod 644 "$OUT" 2>/dev/null; : >>"$OUT"; chmod 644 "$OUT"
 SCRATCH="$(mktemp -d /tmp/sched-run.XXXXXX)"
 trap 'rm -rf "$SCRATCH"' EXIT
 export SALU_HOME="$SCRATCH/home" SALU_SCHED=on
 mkdir -p "$SALU_HOME" "$SCRATCH/proj"
 git -C "$SCRATCH/proj" init -q && git -C "$SCRATCH/proj" -c user.name=s -c user.email=s@s commit -q --allow-empty -m init
+# The box login the runner units read (box-login.env, or the kernel-token file); without it the meter has no login.
+ROOT="${SALU_RUNNER_ROOT:-/var/lib/salu}"
+if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+  if [ -r "$ROOT/box-login.env" ]; then set -a; . "$ROOT/box-login.env"; set +a
+  elif [ -r "$ROOT/kernel-token" ]; then CLAUDE_CODE_OAUTH_TOKEN="$(tr -d '\n' <"$ROOT/kernel-token")"; export CLAUDE_CODE_OAUTH_TOKEN; fi
+fi
 FAILS=0
 say() { printf '%s\n' "$*" | tee -a "$OUT"; }
 ok() { say "PASS  $*"; }
@@ -48,8 +57,11 @@ say "scratch home $SALU_HOME (deleted at the end)"
 
 say "== 1 meter"
 M0="$(usage_line)"; say "$M0"
-case "$M0" in *available=true*) ok "the meter reads from this login" ;; *) bad "no meter: need a subscription login (salu kernel login --box) for the salu user"; say "wrote $OUT"; exit 1 ;; esac
 RESET="$(resets)"; say "5-hour window resets at epoch ms $RESET"
+case "$M0" in *available=true*) ok "the meter reads from this login" ;;
+  *) say "NOTE  no meter yet: $("$SALU" usage --json 2>/dev/null | jq -rc '[.reasonKind,.reason,.error]|map(select(.))|join(" | ")')"
+     say "      (a token from claude setup-token may not be allowed to read usage; the first ticket's own rate-limit events may still fill it)" ;;
+esac
 
 "$SALU" add project scratch "$SCRATCH/proj" --model haiku --effort low --default >/dev/null 2>&1
 "$SALU" sched on >/dev/null
@@ -65,6 +77,8 @@ for i in 1 2 3; do
   say "probe$i status=$S 5h meter $B% -> $A%"
   [ "$S" = "done" ] && ok "probe$i ran to the end" || bad "probe$i is $S (see below)"
 done
+case "$(usage_line)" in *available=true*) ok "the meter is readable after the probes" ;;
+  *) bad "no meter even after real runs: the box login cannot read plan usage, so enforce has nothing to enforce on"; say "wrote $OUT"; exit 1 ;; esac
 say "learned (salu sched):"; "$SALU" sched 2>&1 | head -8 | sed 's/^/    /' | tee -a "$OUT" >/dev/null
 
 say "== 3 hold test (SALU_SCHED_MARGIN=100: nothing may start)"
