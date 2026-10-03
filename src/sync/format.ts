@@ -48,6 +48,7 @@ export interface TicketFile {
   priority: number;
   queue: boolean; // true: run it as soon as the box can; false: save it in the backlog
   by?: string; // who added it (co-working: several people send tickets to one project)
+  sender?: Sender; // box only: who the signature proves (set by the verifier, never read from the file)
   at: number;
 }
 
@@ -62,6 +63,7 @@ export interface ReplyFile {
   body: string;
   now: boolean; // move the ticket to the front of the queue
   decision?: { id: string; option?: number }; // this reply answers that decision (and picks option n, 0-based)
+  sender?: Sender;
   at: number;
 }
 
@@ -74,6 +76,7 @@ export interface ActionFile {
   ticketId?: number;
   name?: string;
   action: 'resolve' | 'reopen';
+  sender?: Sender;
   at: number;
 }
 
@@ -266,7 +269,8 @@ export function signatureOk(o: any, key = remoteKey()): boolean {
 export const memberSigOk = (o: any, secret: string): boolean => hexEq(mac(secret, o), o?.sig);
 
 /** Who verifies a file and, when its key belongs to one person, who that is. */
-export type Verifier = (o: any) => { ok: boolean; by?: string };
+export type Sender = { name: string | null; role: 'admin' | 'member' | null };
+export type Verifier = (o: any) => { ok: boolean; by?: string; sender?: Sender };
 export const sharedVerifier: Verifier = (o) => ({ ok: signatureOk(o) });
 
 /** A person's name from the remote: short, printable, no control characters. Null when it is not usable. */
@@ -306,7 +310,7 @@ export function parseTicketFile(text: string, verify: Verifier = sharedVerifier)
   const labels = Array.isArray(o.labels) ? o.labels.filter((l: unknown): l is string => typeof l === 'string' && l.length <= 64).slice(0, 50).map(stripControl) : [];
   const priority = Number.isInteger(o.priority) && o.priority >= 1 && o.priority <= 5 ? o.priority : 3;
   const by = who.by ?? personName(o.by); // a member's key decides who sent it, whatever the file says
-  return { v: 1, id: o.id, project: str(o.project, 200) ?? '', name: name.trim(), query, tags, labels, priority, queue: o.queue !== false, ...(by ? { by } : {}), at: Number.isFinite(o.at) ? o.at : 0 };
+  return { v: 1, id: o.id, project: str(o.project, 200) ?? '', name: name.trim(), query, tags, labels, priority, queue: o.queue !== false, ...(by ? { by } : {}), ...(who.sender ? { sender: who.sender } : {}), at: Number.isFinite(o.at) ? o.at : 0 };
 }
 
 export function parseReplyFile(text: string, verify: Verifier = sharedVerifier): ReplyFile | null {
@@ -329,7 +333,7 @@ export function parseReplyFile(text: string, verify: Verifier = sharedVerifier):
     const did = str(o.decision.id, 64);
     if (did) decision = { id: did, ...(Number.isInteger(o.decision.option) && o.decision.option >= 0 && o.decision.option < 10 ? { option: o.decision.option as number } : {}) };
   }
-  return { v: 1, id: o.id, project: str(o.project, 200) ?? '', ...t, body, now: o.now === true, ...(decision ? { decision } : {}), at: Number.isFinite(o.at) ? o.at : 0 };
+  return { v: 1, id: o.id, project: str(o.project, 200) ?? '', ...t, body, now: o.now === true, ...(decision ? { decision } : {}), ...(who.sender ? { sender: who.sender } : {}), at: Number.isFinite(o.at) ? o.at : 0 };
 }
 
 /**
@@ -360,7 +364,7 @@ export function parseActionFile(text: string, verify: Verifier = sharedVerifier)
   if (o.action !== 'resolve' && o.action !== 'reopen') return null;
   const t = ticketRef(o);
   if (!t) return null;
-  return { v: 1, id: o.id, project: str(o.project, 200) ?? '', ...t, action: o.action, at: Number.isFinite(o.at) ? o.at : 0 };
+  return { v: 1, id: o.id, project: str(o.project, 200) ?? '', ...t, action: o.action, ...(who.sender ? { sender: who.sender } : {}), at: Number.isFinite(o.at) ? o.at : 0 };
 }
 
 export function parseMessageFile(text: string, verify: Verifier = sharedVerifier): MessageFile | null {

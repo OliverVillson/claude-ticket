@@ -1,6 +1,6 @@
 import type { Database } from 'bun:sqlite';
 import { CliError } from '../core/errors.ts';
-import { personName } from '../sync/format.ts';
+import { byLabel, personName } from '../sync/format.ts';
 
 /**
  * The team of a project: who is on it, who owns it, and which Claude seats it can run tickets on.
@@ -100,6 +100,9 @@ export function addMember(db: Database, projectId: number, name: string, role?: 
   const n = cleanName(name, 'the member');
   if (role && !ROLES.includes(role)) throw new CliError(`role is admin or member, not "${role}"`);
   if (getMember(db, projectId, n)) throw new CliError(`${n} is already on this project`);
+  // A person's tickets are marked by-<name>, and resolve and reopen rights follow that mark: two names may not share one.
+  const clash = listMembers(db, projectId).find((m) => byLabel(m.name) === byLabel(n));
+  if (clash) throw new CliError(`${n} is too close to ${clash.name} (their tickets would share a mark): pick another name`);
   const first = listMembers(db, projectId).length === 0;
   db.query('INSERT INTO members (project_id, name, role, added_at) VALUES (?, ?, ?, ?)').run(projectId, n, first ? 'admin' : (role ?? 'member'), Date.now());
   return getMember(db, projectId, n)!;

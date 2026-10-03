@@ -1,7 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import { CliError } from '../core/errors.ts';
 import { memberSigOk, newMemberToken, remoteKey, signatureOk, type Verifier } from '../sync/format.ts';
-import { getMember } from './store.ts';
+import { getMember, type Role } from './store.ts';
 
 /**
  * Per-person signing keys, kept on the box (the one place that checks them). One key per member: issuing a
@@ -56,10 +56,11 @@ export function boxVerifier(db: Database, projectId: number): Verifier {
   return (o) => {
     if (o && typeof o === 'object' && o.kid !== undefined) {
       if (typeof o.kid !== 'string' || !/^[0-9a-f]{8}$/.test(o.kid)) return { ok: false };
-      const row = db.query<{ secret: string; name: string }, [string, number]>('SELECT k.secret, m.name FROM member_keys k JOIN members m ON m.id = k.member_id WHERE k.kid = ? AND m.project_id = ?').get(o.kid, projectId);
-      return row && memberSigOk(o, row.secret) ? { ok: true, by: row.name } : { ok: false };
+      const row = db.query<{ secret: string; name: string; role: Role }, [string, number]>('SELECT k.secret, m.name, m.role FROM member_keys k JOIN members m ON m.id = k.member_id WHERE k.kid = ? AND m.project_id = ?').get(o.kid, projectId);
+      return row && memberSigOk(o, row.secret) ? { ok: true, by: row.name, sender: { name: row.name, role: row.role } } : { ok: false };
     }
     if (sharedKeyRetired(db, projectId)) return { ok: false };
-    return { ok: signatureOk(o, remoteKey()) };
+    // The shared key proves nobody in particular, so it never carries a role: see src/team/perms.ts.
+    return { ok: signatureOk(o, remoteKey()), sender: { name: null, role: null } };
   };
 }
