@@ -7,11 +7,13 @@ import { CliError } from '../../core/errors.ts';
 import { bold, dim, green, red } from '../../core/ansi.ts';
 import { insideWorker, originUrl } from '../../core/kernel.ts';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { rmSync } from 'node:fs';
 import { ensureHome } from '../../core/paths.ts';
 import { loadNtfy, newTopic, publishNtfy, saveNtfy } from '../../sync/ntfy.ts';
 import { generateKey, keyFilePath, remoteKey, requireKey, saveKey, unsignedAllowed, unsignedWarning } from '../../sync/format.ts';
 import { checkRemote } from '../../sync/git.ts';
+import { githubRepo, tokenUrl } from '../../sync/phone.ts';
 import { getRemote, listRemotes, pendingMessages, pendingOutActions, pendingOutReplies, pendingOutTickets, removeRemote, setRemote, unreadCount } from '../../sync/store.ts';
 import { boxName, rotateKey, syncAll, syncProject, type SyncSummary } from '../../sync/sync.ts';
 import { helpIf } from './_shared.ts';
@@ -22,6 +24,7 @@ salu remote list [--json]
 salu remote remove <project>
 salu remote sync [project] [--watch] [--interval seconds]
 salu remote ntfy [--topic NAME | --off | --test] [--server URL]
+salu remote phone [project] [--open]         what to type into the Salu iPhone app (--open: the token page)
 
 Run a project on another computer (an always-on Linux box) with git as the only link: no server, no open
 port. Tickets go to the box, results and messages come back, all through the project's own git remote
@@ -33,6 +36,8 @@ On the box:        salu remote add web <url> --box     this machine runs them an
 
 Phone notifications (on the box): \`salu remote ntfy\` makes a private topic name; subscribe to it in the free ntfy
 app. From then on each message the box posts also goes to ntfy as one line (the title only, never the body).
+Tapping one opens the Salu iPhone app on that ticket. \`salu remote phone\` (on your computer) lists the app's settings
+and opens a link that makes a GitHub token for the project's repo only.
 
 Everything on the inbox is signed with one shared secret (HMAC), and sync refuses to run without it, so
 that pushing to the git remote is not enough to send the box tickets. \`salu remote add <project> --box\`
@@ -194,6 +199,28 @@ export async function remote(p: Parsed): Promise<number> {
         const err = publishNtfy({ title: 'It works: salu can reach your phone', level: 'success', project: 'test', type: 'note' }, cfg);
         if (err) throw new CliError(`could not publish: ${err}`);
         console.log(`${green('✓')} sent a test notification`);
+      }
+      return 0;
+    }
+    case 'phone': {
+      const project = resolveProject(db, rest[0]);
+      const url = getRemote(db, project.id)?.url ?? originUrl(project.path);
+      const gh = url ? githubRepo(url) : null;
+      if (!gh) throw new CliError(`the phone app talks to GitHub, and "${project.name}" has ${url ? `a remote that is not on github.com (${url})` : 'no git remote'}`);
+      const row = (k: string, v: string) => console.log(`  ${bold(k.padEnd(12))}${v}`);
+      console.log(`Salu phone app, Settings, for ${bold(project.name)}:`);
+      row('repo', `${gh.owner}/${gh.repo}`);
+      row('project', project.name);
+      row('token', 'a fine-grained token for this repo only:');
+      console.log(`    ${tokenUrl(gh.owner, gh.repo)}`);
+      console.log(dim(`    Name, owner, 90 days and Contents read and write are filled in. Under Repository access pick`));
+      console.log(dim(`    "Only select repositories" and ${gh.repo}, then Generate token and copy it.`));
+      row('signing key', remoteKey() ? 'salu remote key | pbcopy   (then paste on the phone)' : 'none here yet: on the box, salu remote key');
+      console.log(dim('  On an iPhone with the same Apple ID, what you copy on the Mac pastes on the phone.'));
+      console.log(dim('  Push: on the box, salu remote ntfy --test, then subscribe to the topic in the ntfy app.'));
+      if (flagBool(p, 'open')) {
+        const r = spawnSync(process.platform === 'darwin' ? 'open' : 'xdg-open', [tokenUrl(gh.owner, gh.repo)], { stdio: 'ignore' });
+        if (r.status !== 0) console.error(`${red('!')} could not open a browser here: copy the link above`);
       }
       return 0;
     }
