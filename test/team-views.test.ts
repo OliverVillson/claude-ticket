@@ -93,7 +93,7 @@ describe('team views', () => {
 
   test('salu team invite adds the person, prints a join block and mints a personal key only when asked', async () => {
     const { db, p } = await setup();
-    db.query('INSERT INTO remotes (project_id, url, role, name) VALUES (?, ?, ?, ?)').run(p.id, 'https://github.com/o/web', 'client', '');
+    db.query('INSERT INTO remotes (project_id, url, role, name) VALUES (?, ?, ?, ?)').run(p.id, 'https://github.com/o/web', 'box', '');
     await dispatch(['team', 'invite', 'Cy']);
     const plain = out.join('\n');
     expect(plain).toContain('export SALU_USER="Cy"');
