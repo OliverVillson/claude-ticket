@@ -5,12 +5,16 @@ import { resolveProject } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
 import { bold, dim, green } from '../../core/ansi.ts';
 import { SEAT_PLANS, addMember, addSeat, listMembers, listSeats, removeMember, removeSeat, setLend, setRole, setSeatDisabled, type Role, type SeatPlan } from '../../team/store.ts';
+import { issueKey, listKeys, revokeKey, setSharedRetired, sharedKeyRetired } from '../../team/keys.ts';
 import { confirm, helpIf } from './_shared.ts';
 
 const TEAM_HELP = `salu team [list] [--project P] [--json]       who is on the project and who owns it
 salu team add <name> [--admin]                 add a person (the first person added owns the project)
 salu team role <name> admin|member             change someone's role (a project always keeps one admin)
-salu team rm <name> [--yes]                    take someone off; their seats are switched off
+salu team rm <name> [--yes]                    take someone off; their seats are switched off and their key stops working
+salu team key <name> [--revoke]                make a personal signing key for them (shown once; replaces the old one)
+salu team key --list                           who has a key
+salu team key --retire-shared [--undo]         stop accepting the old shared key for this project
 
 The admin owns the project and the box. Members add tickets and reply. This is the roster only: it does
 not yet sign, restrict or schedule anything, so a project without a team runs exactly as before.`;
@@ -75,6 +79,29 @@ export async function team(p: Parsed): Promise<number> {
       if (!(await confirm(p, `Take ${a} off ${proj.name}? Their seats are switched off.`))) return 1;
       const m = removeMember(db, proj.id, a);
       console.log(`${green('✓')} ${m.name} is off ${proj.name}`);
+      return 0;
+    }
+    case 'key': {
+      if (flagBool(p, 'list') || (!a && !flagBool(p, 'retire-shared'))) {
+        const keys = listKeys(db, proj.id);
+        console.log(bold(`${proj.name} keys`));
+        console.log(keys.length ? table(keys.map((k) => [k.member, k.kid])) : 'no personal keys yet: salu team key <name>');
+        console.log(dim(sharedKeyRetired(db, proj.id) ? 'the shared key is retired: only personal keys are accepted' : 'the shared key is still accepted (salu team key --retire-shared stops that)'));
+        return 0;
+      }
+      if (flagBool(p, 'retire-shared')) {
+        const undo = flagBool(p, 'undo');
+        if (!undo && !listKeys(db, proj.id).length) throw new CliError('nobody has a personal key yet, so retiring the shared key would lock everyone out: salu team key <name> first');
+        setSharedRetired(db, proj.id, !undo);
+        console.log(`${green('✓')} the shared key is ${undo ? 'accepted again' : 'retired'} for ${proj.name}`);
+        return 0;
+      }
+      if (flagBool(p, 'revoke')) {
+        console.log(revokeKey(db, proj.id, a!) ? `${green('✓')} ${a}'s key no longer works` : `${a} had no key`);
+        return 0;
+      }
+      const k = issueKey(db, proj.id, a!);
+      console.log(`${green('✓')} key for ${k.member} ${dim(`(id ${k.kid}; any earlier key of theirs stopped working)`)}\n  ${k.token}\n${dim('  Give it to them privately. On their computer: salu remote key --set <key>. It is shown only now.')}`);
       return 0;
     }
     default:
