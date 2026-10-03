@@ -22,6 +22,8 @@ export interface Sample {
   /** Plan-percent the 5-hour window moved during the run; null when it could not be attributed. */
   pct: number | null;
   at: number;
+  /** The seat the run used (v2); absent for runs on the machine's own login. */
+  seat?: number;
 }
 
 export const MAX_SAMPLES = 20;
@@ -90,14 +92,14 @@ export interface Estimate {
   learned: boolean;
 }
 
-/** Plan-percent per dollar, pooled over every attributed run. Null until {@link RATIO_AFTER} of them exist. */
-export function percentPerUsd(db: Database, stats: Stats = readStats(db)): number | null {
+/** Plan-percent per dollar, pooled over every attributed run (only one seat's runs when `seatId` is given: seats differ in plan size). Null until {@link RATIO_AFTER} of them exist. */
+export function percentPerUsd(db: Database, stats: Stats = readStats(db), seatId?: number): number | null {
   let pct = 0;
   let usd = 0;
   let n = 0;
   for (const list of Object.values(stats))
     for (const s of list)
-      if (s.pct != null && s.usd > 0) {
+      if (s.pct != null && s.usd > 0 && (seatId == null || s.seat === seatId)) {
         pct += s.pct;
         usd += s.usd;
         n++;
@@ -105,12 +107,12 @@ export function percentPerUsd(db: Database, stats: Stats = readStats(db)): numbe
   return n >= RATIO_AFTER && usd > 0 && pct > 0 ? pct / usd : null;
 }
 
-export function estimateTicket(db: Database, model: string | null | undefined, effort: string | null | undefined, stats: Stats = readStats(db)): Estimate {
+export function estimateTicket(db: Database, model: string | null | undefined, effort: string | null | undefined, stats: Stats = readStats(db), seatId?: number): Estimate {
   const fam = modelFamily(model);
   const own = (stats[statKey(model, effort)] ?? []).filter((s) => s.usd > 0);
   const learned = own.length >= LEARNED_AFTER;
   const usd = learned ? median(own.map((s) => s.usd)) : (GUESS_USD[fam] ?? GUESS_USD.default!) * (EFFORT_FACTOR[effort ?? 'medium'] ?? 1);
-  const ratio = percentPerUsd(db, stats);
+  const ratio = (seatId != null ? percentPerUsd(db, stats, seatId) : null) ?? percentPerUsd(db, stats);
   return { usd, pct: ratio == null ? null : usd * ratio, samples: own.length, learned };
 }
 

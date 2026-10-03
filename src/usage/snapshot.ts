@@ -30,6 +30,9 @@ export const SNAPSHOT_STATE = {
 } as const;
 
 /** Stable window ids. Model windows other than Opus/Sonnet/Fable are `model:<name>`. */
+/** A scope names one seat's own copy of the snapshot (`seat:3`); no scope is the machine's own login, as in v1. */
+const key = (base: string, scope?: string) => (scope ? `${base}:${scope}` : base);
+
 export type UsageWindowId = 'session' | 'weekly' | 'opus' | 'sonnet' | 'fable' | 'credits' | `model:${string}`;
 export type UsageWindowStatus = 'allowed' | 'warning' | 'rejected' | 'unknown';
 export type UnavailableReason = 'no-subscription' | 'not-logged-in' | 'offline' | 'error';
@@ -261,13 +264,15 @@ function fakeFetch(now = Date.now()): UsageFetch {
 }
 
 /** Read `/usage` through the SDK. Never throws. */
-export function sdkFetcher(opts: { queryFn?: QueryLike; cwd?: string; timeoutMs?: number } = {}): UsageFetcher {
+export function sdkFetcher(opts: { queryFn?: QueryLike; cwd?: string; timeoutMs?: number; env?: Record<string, string> } = {}): UsageFetcher {
   return async () => {
     const now = Date.now();
     if (process.env.SALU_WORKER === 'fake' && !opts.queryFn) return fakeFetch(now);
     try {
       const q = opts.queryFn ?? (await loadSdkQuery());
-      const raw = await readUsageRaw(q, usageSessionOptions(opts.cwd), opts.timeoutMs ?? 30_000);
+      const so = usageSessionOptions(opts.cwd);
+      if (opts.env) so.env = { ...so.env, ...opts.env };
+      const raw = await readUsageRaw(q, so, opts.timeoutMs ?? 30_000);
       return parseUsage(raw, Date.now());
     } catch (e) {
       return { ok: false, at: now, plan: null, windows: [], ...classifyFetchError(e) };
@@ -288,7 +293,14 @@ function readJson<T>(db: Database, key: string): T | null {
 }
 
 const listeners = new Set<() => void>();
-const needsRefresh = new WeakSet<Database>();
+const needsRefresh = new Set<string>();
+const dbIds = new WeakMap<Database, number>();
+let nextDbId = 1;
+function refreshKey(db: Database, scope?: string): string {
+  let id = dbIds.get(db);
+  if (!id) dbIds.set(db, (id = nextDbId++));
+  return `${id}|${scope ?? ''}`;
+}
 
 function notify() {
   for (const l of [...listeners]) {
@@ -305,11 +317,11 @@ function notify() {
  * snapshot. Keeps the last event per window in the `state` table, marks the snapshot for an
  * immediate refresh, and calls subscribers. Cheap and safe to call for every message; never throws.
  */
-export function recordRateLimitEvent(db: Database, msgOrInfo: any, now = Date.now()): boolean {
+export function recordRateLimitEvent(db: Database, msgOrInfo: any, now = Date.now(), scope?: string): boolean {
   try {
     const info = msgOrInfo?.type === 'rate_limit_event' ? msgOrInfo.rate_limit_info : msgOrInfo;
     if (!info || typeof info !== 'object' || typeof info.status !== 'string') return false;
-    const stored = readJson<Record<string, StoredWindow>>(db, SNAPSHOT_STATE.events) ?? {};
+    const stored = readJson<Record<string, StoredWindow>>(db, key(SNAPSHOT_STATE.events, scope)) ?? {};
     let changed = false;
     const put = (id: string, status: string, util: number | null, resetsAt: number | null) => {
       const prev = stored[id];
@@ -333,8 +345,8 @@ export function recordRateLimitEvent(db: Database, msgOrInfo: any, now = Date.no
       }
     }
     if (!id && !uw) return false;
-    setState(db, SNAPSHOT_STATE.events, JSON.stringify(stored));
-    needsRefresh.add(db);
+    setState(db, key(SNAPSHOT_STATE.events, scope), JSON.stringify(stored));
+    needsRefresh.add(refreshKey(db, scope));
     if (changed) notify();
     return true;
   } catch {
@@ -346,9 +358,9 @@ export function recordRateLimitEvent(db: Database, msgOrInfo: any, now = Date.no
 // Building and caching the snapshot
 
 /** Build a snapshot from what is stored, without any I/O beyond the state table. Exported for tests. */
-export function buildSnapshot(db: Database, now = Date.now(), lastError: string | null = null, staleAfterMs = STALE_AFTER_MS): UsageSnapshot {
-  const fetched = readJson<StoredFetch>(db, SNAPSHOT_STATE.fetched);
-  const events = readJson<Record<string, StoredWindow>>(db, SNAPSHOT_STATE.events) ?? {};
+export function buildSnapshot(db: Database, now = Date.now(), lastError: string | null = null, staleAfterMs = STALE_AFTER_MS, scope?: string): UsageSnapshot {
+  const fetched = readJson<StoredFetch>(db, key(SNAPSHOT_STATE.fetched, scope));
+  const events = readJson<Record<string, StoredWindow>>(db, key(SNAPSHOT_STATE.events, scope)) ?? {};
   const byId = new Map<string, UsageWindow>();
   for (const w of fetched?.ok ? fetched.windows : []) byId.set(w.id, w);
   for (const [id, e] of Object.entries(events)) {
@@ -395,10 +407,12 @@ export interface GetUsageOptions {
   minIntervalMs?: number;
   fetcher?: UsageFetcher;
   now?: number;
+  /** Read and keep this snapshot apart from the machine's own (one per seat: `seat:<id>`). */
+  scope?: string;
 }
 
-const inflight = new WeakMap<Database, Promise<void>>();
-const lastAttempt = new WeakMap<Database, { at: number; error: string | null }>();
+const inflight = new Map<string, Promise<void>>();
+const lastAttempt = new Map<string, { at: number; error: string | null }>();
 
 /**
  * The usage snapshot. Always returns quickly from the cache when a read happened in the last
@@ -410,15 +424,16 @@ export async function getUsageSnapshot(o: GetUsageOptions): Promise<UsageSnapsho
   const { db } = o;
   const now = o.now ?? Date.now();
   const min = o.minIntervalMs ?? MIN_REFRESH_MS;
-  const last = lastAttempt.get(db);
-  const fetched = readJson<StoredFetch>(db, SNAPSHOT_STATE.fetched);
+  const rk = refreshKey(db, o.scope);
+  const last = lastAttempt.get(rk);
+  const fetched = readJson<StoredFetch>(db, key(SNAPSHOT_STATE.fetched, o.scope));
   const lastAt = Math.max(last?.at ?? 0, fetched?.at ?? 0);
   const due = o.force || now - lastAt >= min;
-  const eventPending = needsRefresh.has(db) && now - lastAt >= 5_000; // a burst of events costs one read
+  const eventPending = needsRefresh.has(rk) && now - lastAt >= 5_000; // a burst of events costs one read
   if (o.refresh !== false && (due || eventPending)) {
-    let p = inflight.get(db);
+    let p = inflight.get(rk);
     if (!p) {
-      needsRefresh.delete(db);
+      needsRefresh.delete(rk);
       p = (async () => {
         const fetcher = o.fetcher ?? sdkFetcher();
         let r: UsageFetch;
@@ -427,24 +442,25 @@ export async function getUsageSnapshot(o: GetUsageOptions): Promise<UsageSnapsho
         } catch (e) {
           r = { ok: false, at: Date.now(), plan: null, windows: [], ...classifyFetchError(e) };
         }
-        lastAttempt.set(db, { at: o.now ?? Date.now(), error: r.ok ? null : (r.reason ?? 'usage read failed') });
-        const prev = readJson<StoredFetch>(db, SNAPSHOT_STATE.fetched);
-        if (r.ok) setState(db, SNAPSHOT_STATE.fetched, JSON.stringify({ ...r, error: null } satisfies StoredFetch));
-        else if (r.reasonKind === 'no-subscription' || !prev?.ok) setState(db, SNAPSHOT_STATE.fetched, JSON.stringify({ ...r, error: r.reason ?? null } satisfies StoredFetch));
-        else setState(db, SNAPSHOT_STATE.fetched, JSON.stringify({ ...prev, error: r.reason ?? 'usage read failed' } satisfies StoredFetch));
+        lastAttempt.set(rk, { at: o.now ?? Date.now(), error: r.ok ? null : (r.reason ?? 'usage read failed') });
+        const fk = key(SNAPSHOT_STATE.fetched, o.scope);
+        const prev = readJson<StoredFetch>(db, fk);
+        if (r.ok) setState(db, fk, JSON.stringify({ ...r, error: null } satisfies StoredFetch));
+        else if (r.reasonKind === 'no-subscription' || !prev?.ok) setState(db, fk, JSON.stringify({ ...r, error: r.reason ?? null } satisfies StoredFetch));
+        else setState(db, fk, JSON.stringify({ ...prev, error: r.reason ?? 'usage read failed' } satisfies StoredFetch));
         notify();
-      })().finally(() => inflight.delete(db));
-      inflight.set(db, p);
+      })().finally(() => inflight.delete(rk));
+      inflight.set(rk, p);
     }
     await p;
   }
-  return buildSnapshot(db, o.now ?? Date.now(), null);
+  return buildSnapshot(db, o.now ?? Date.now(), null, STALE_AFTER_MS, o.scope);
 }
 
 /** Forget in-memory throttle and pending-event marks for a database (tests, `salu usage --refresh`). */
-export function resetUsageCache(db: Database): void {
-  lastAttempt.delete(db);
-  needsRefresh.delete(db);
+export function resetUsageCache(db: Database, scope?: string): void {
+  lastAttempt.delete(refreshKey(db, scope));
+  needsRefresh.delete(refreshKey(db, scope));
 }
 
 /** The cached snapshot right now, no I/O beyond the state table. For render paths. */
