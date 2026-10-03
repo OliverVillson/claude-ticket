@@ -13,6 +13,7 @@
 set -uo pipefail
 SALU_USER="${SALU_BOX_USER:-salu}"
 if [ "$(id -un)" != "$SALU_USER" ] && [ -z "${SCHED_RUN_REEXEC:-}" ]; then
+  cd /tmp # the salu user cannot enter the caller's home, and a spawn from an unreadable cwd fails
   COPY="$(mktemp /tmp/sched-window-run.XXXXXX)"; cp "$0" "$COPY"; chmod 644 "$COPY"
   TMPOUT="/tmp/sched-window-run-$(date +%Y%m%d-%H%M%S).txt"; FINAL="$HOME/$(basename "$TMPOUT")"
   echo "running as the $SALU_USER user (sudo -u $SALU_USER -H)"
@@ -26,7 +27,7 @@ OUT="${SCHED_RUN_OUT:-/tmp/sched-window-run-$(date +%Y%m%d-%H%M%S).txt}"; chmod 
 SCRATCH="$(mktemp -d /tmp/sched-run.XXXXXX)"
 trap 'rm -rf "$SCRATCH"' EXIT
 export SALU_HOME="$SCRATCH/home" SALU_SCHED=on
-mkdir -p "$SALU_HOME" "$SCRATCH/proj"
+mkdir -p "$SALU_HOME" "$SCRATCH/proj"; cd "$SCRATCH"
 git -C "$SCRATCH/proj" init -q && git -C "$SCRATCH/proj" -c user.name=s -c user.email=s@s commit -q --allow-empty -m init
 # The box login the runner units read (box-login.env, or the kernel-token file); without it the meter has no login.
 ROOT="${SALU_RUNNER_ROOT:-/var/lib/salu}"
