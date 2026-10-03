@@ -17,6 +17,8 @@ export interface RowOptions {
   asking?: boolean;
   /** spinner frame for running tickets; undefined shows the static glyph */
   spinner?: number;
+  /** who added the ticket (team projects); shown when the layout has a `by` column */
+  by?: string | null;
 }
 
 /**
@@ -44,6 +46,7 @@ export function renderRow(t: TicketView, o: RowOptions): string {
   if (o.asking) out += st.accent(' ?');
   if (nc.labels) out += st.dim(nc.labels);
   if (layout.project) out += '  ' + st.dim(fit(t.project, layout.project));
+  if (layout.by) out += '  ' + st.dim(fit(o.by ?? '-', layout.by));
   if (layout.priority) out += '  ' + paintPriority(st, t.priority, fit(priorityText(t.priority), layout.priority));
   if (layout.model) out += '  ' + st.dim(fit(modelEffort(t), layout.model));
   out += '  ' + paintStatus(st, t.status, fit(info.label, layout.status));
@@ -58,6 +61,7 @@ export function renderHeader(o: { layout: RowLayout; style: Style; gutter?: bool
   let out = o.gutter === false ? '' : '  ';
   out += '  ' + fit('name', layout.name);
   if (layout.project) out += '  ' + fit('project', layout.project);
+  if (layout.by) out += '  ' + fit('by', layout.by);
   if (layout.priority) out += '  ' + fit('pr', layout.priority);
   if (layout.model) out += '  ' + fit('model', layout.model);
   out += '  ' + fit('status', layout.status);

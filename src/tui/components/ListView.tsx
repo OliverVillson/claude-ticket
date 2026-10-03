@@ -17,6 +17,7 @@ import { Frame, confirmText, hintsText, titleText, titleWidth } from './Frame.ts
 import { statusBadge, statusText } from './Status.tsx';
 import { blinkOn } from '../blink.ts';
 import { TextField } from './TextField.tsx';
+import { byCell, meterText, type TeamView } from '../../team/view.ts';
 
 export type { Message } from '../messages.ts';
 
@@ -61,6 +62,8 @@ export interface ListViewProps {
   working?: boolean;
   /** usage left (undefined = no source, nothing shown; null = no data, shows `usage n/a`) */
   usage?: UsageSnapshot | null;
+  /** teams by project id; adds the `by` column's names and the seat meters in the tickets pane title */
+  teams?: Record<number, TeamView>;
   /** live-activity box under the panes */
   activity?: { title: string; lines: string[]; height: number };
   /** the boxed command-line window, drawn under the panes and the activity area */
@@ -145,6 +148,7 @@ export function ListView(p: ListViewProps) {
     footer = { left: hintsText(p.hints ?? LIST_HINTS, Math.max(10, cols - 2 - displayWidth(position) - 3)), right: st.dim(position) };
   }
 
+  const ticketsTitle = seatStrip(p.teams, p.tickets, Math.max(0, (p.sidebar ? cols - paneWidth(p.sidebar.width) - 4 : cols - 4) - 12));
   const threadW = p.thread ? paneWidth(p.thread.inner) : 0;
   const rightInner = p.sidebar ? Math.max(10, cols - paneWidth(p.sidebar.width) - 4 - threadW) : Math.max(10, cols - 4);
   const treeFocus = p.ticketFocus === false && !p.threadFocus;
@@ -161,7 +165,7 @@ export function ListView(p: ListViewProps) {
     for (let i = p.top; i < end; i++) {
       const t = p.tickets[i]!;
       const on = p.ticketFocus !== false && i === p.cursor;
-      const row = renderRow(t, { layout: p.layout, now: p.now, style: st, selected: on, asking: p.asking?.has(t.id), spinner: t.status === 'running' ? p.spinner : undefined });
+      const row = renderRow(t, { layout: p.layout, now: p.now, style: st, selected: on, by: p.layout.by ? byCell(t, p.teams?.[t.project_id]) : null, asking: p.asking?.has(t.id), spinner: t.status === 'running' ? p.spinner : undefined });
       right.push(on ? endCell(row, rightInner, st, true) : row);
     }
     if (overflow) {
@@ -180,7 +184,7 @@ export function ListView(p: ListViewProps) {
     const { width, lines: left } = p.sidebar;
     const l = drawPane({ title: 'projects', lines: left, inner: width, active: !cmdFocus && treeFocus, height }, st);
     const padRight = right.map((r) => r + ' '.repeat(Math.max(0, rightInner - displayWidth(r))));
-    const r = drawPane({ title: 'tickets', lines: padRight, inner: rightInner, active: !cmdFocus && p.ticketFocus !== false && !p.threadFocus, height }, st);
+    const r = drawPane({ title: ticketsTitle, lines: padRight, inner: rightInner, active: !cmdFocus && p.ticketFocus !== false && !p.threadFocus, height }, st);
     lines = l.map((x, i) => x + r[i]!);
     if (p.thread) {
       const th = p.thread;
@@ -189,7 +193,7 @@ export function ListView(p: ListViewProps) {
     }
   } else {
     const inner = Math.max(10, cols - 4);
-    lines = drawPane({ title: 'tickets', lines: right.map((r) => r + ' '.repeat(Math.max(0, inner - displayWidth(r)))), inner, active: !cmdFocus, height }, st);
+    lines = drawPane({ title: ticketsTitle, lines: right.map((r) => r + ' '.repeat(Math.max(0, inner - displayWidth(r)))), inner, active: !cmdFocus, height }, st);
   }
   if (p.activity) {
     const inner = Math.max(10, cols - 4);
@@ -211,3 +215,18 @@ export function ListView(p: ListViewProps) {
 }
 
 export const listInnerWidth = (columns: number) => Math.max(16, columns - 4);
+
+/** `tickets · alice ▰▰▰▱▱ 62% left · bob n/a`: the seats of the projects on screen, cut to the room there is. */
+export function seatStrip(teams: Record<number, TeamView> | undefined, tickets: Array<{ project_id: number }>, room: number): string {
+  if (!teams) return 'tickets';
+  const ids = new Set(tickets.map((t) => t.project_id));
+  const seats = Object.entries(teams).filter(([id]) => ids.size === 0 || ids.has(Number(id))).flatMap(([, t]) => t.seats.filter((s) => !s.disabled));
+  if (!seats.length) return 'tickets';
+  let out = '';
+  for (const s of seats) {
+    const part = ` · ${s.owner ?? s.label} ${meterText(s.meter)}`;
+    if (displayWidth('tickets' + out + part) > room + 7) break;
+    out += part;
+  }
+  return 'tickets' + out;
+}

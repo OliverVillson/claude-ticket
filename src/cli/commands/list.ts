@@ -9,6 +9,7 @@ import { resolveProject } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
 import { dim, safeText, yellow } from '../../core/ansi.ts';
 import { formatAgo, formatCost, parseStatus, statusColor, statusIcon, statusLabel, table } from '../../core/format.ts';
+import { loadTeam, ticketWho, type TeamView } from '../../team/view.ts';
 import { helpIf, isTTY } from './_shared.ts';
 
 const HELP = `salu list [project] [--plain] [--status S[,S]] [--all] [--projects] [--json]
@@ -78,10 +79,14 @@ export async function list(p: Parsed): Promise<number> {
   }
 
   const tickets = listTickets(db, { projectId: project?.id, status: statuses });
+  const teams = new Map<number, TeamView>();
+  const teamOf = (id: number) => teams.get(id) ?? (teams.set(id, loadTeam(db, id)), teams.get(id)!);
+  const whoOf = (t: (typeof tickets)[number]) => ticketWho(t, teamOf(t.project_id));
+  const showTeam = tickets.some((t) => teamOf(t.project_id).active);
   if (json) {
     console.log(
       JSON.stringify(
-        tickets.map((t) => ({ ...t, tags: ticketTags(t), labels: ticketLabels(t), denied: ticketDenials(t) })),
+        tickets.map((t) => ({ ...t, tags: ticketTags(t), labels: ticketLabels(t), denied: ticketDenials(t), ...(teamOf(t.project_id).active ? { who: whoOf(t) } : {}) })),
         null,
         2,
       ),
@@ -103,6 +108,7 @@ export async function list(p: Parsed): Promise<number> {
         { key: 'name', title: 'name', max: 32 },
         ...(multi ? [{ key: 'project', title: 'project' }] : []),
         { key: 'tags', title: 'tags', max: 40 },
+        ...(showTeam ? [{ key: 'by', title: 'by' }, { key: 'seat', title: 'seat' }] : []),
         { key: 'when', title: 'updated' },
         { key: 'cost', title: 'cost', align: 'right' },
       ],
@@ -113,6 +119,8 @@ export async function list(p: Parsed): Promise<number> {
         name: safeText(t.name),
         project: t.project,
         tags: dim(formatTags(ticketTags(t), ticketLabels(t))),
+        by: (showTeam && whoOf(t).author) || dim('-'),
+        seat: showTeam ? seatCell(whoOf(t)) : '',
         when: dim(formatAgo(t.updated_at, now)),
         cost: t.cost_usd ? formatCost(t.cost_usd) : '',
       })),
@@ -123,4 +131,11 @@ export async function list(p: Parsed): Promise<number> {
     if (rules.length) console.log(`${yellow('!')} ${safeText(t.name)} is blocked: needs permission ${rules.join(', ')}  ${dim(`→ salu allow "${safeText(t.name)}"`)}`);
   }
   return 0;
+}
+
+/** `alice 62% left` for a ticket run on a seat, `-` while it has none. A borrowed seat names its owner. */
+function seatCell(w: ReturnType<typeof ticketWho>): string {
+  if (!w.seat) return dim('-');
+  const left = w.meter && w.meter.percentUsed != null ? ` ${100 - w.meter.percentUsed}% left` : '';
+  return `${w.seat}${w.seatOwner ? dim(` (${w.seatOwner}'s)`) : ''}${dim(left)}`;
 }

@@ -22,6 +22,8 @@ struct SaluMessage: Codable, Identifiable, Hashable {
     var checklist: Lenient<[ChecklistItem]>?  // ticket.status: the worker's whole checklist, replacing the last one
     var decision: Lenient<SaluDecision>?      // ticket.decision: a question with options
     var outputs: Lenient<[SaluOutput]>?       // ticket.output: branches, PRs, files, links it made
+    var by: String?                           // ticket.accepted: who added the ticket (team projects)
+    var seat: Lenient<SaluSeat>?              // ticket.started: the Claude seat running it, with how much of its window is left
     var parent: TicketRef?                    // ticket.spawned: `ticket` is a sub-thread this ticket's worker started
 
     /// What the worker said, as fully as the box sent it.
@@ -87,6 +89,13 @@ struct SaluDecision: Codable, Hashable, Identifiable {
 }
 
 /// Something the worker attached to its thread. `kind`: branch, pr, file or link.
+/// The Claude seat a ticket runs on (MessageFile.seat in format.ts). `owner` differs from the author on a borrowed seat.
+struct SaluSeat: Codable, Hashable {
+    var label: String
+    var owner: String?
+    var left: Int?  // percent of the seat's 5-hour window still free
+}
+
 struct SaluOutput: Codable, Hashable {
     var kind: String
     var ref: String

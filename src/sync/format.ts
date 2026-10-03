@@ -136,6 +136,7 @@ export interface MessageFile {
   decision?: Decision; // ticket.decision: a question with options; answer it with a reply file carrying `decision`
   outputs?: Output[]; // ticket.output: what the worker made (branch, PR, files, links)
   by?: string; // ticket.accepted: who added the ticket (so teammates can show it as theirs)
+  seat?: { label: string; owner?: string; left?: number }; // ticket.started: the Claude seat running it, and how many percent of its window is left
   parent?: { ref?: string; name: string; id: number }; // ticket.spawned: `ticket` is a sub-thread a worker started; this is the thread that started it
 }
 
@@ -341,6 +342,11 @@ export function parseMessageFile(text: string): MessageFile | null {
   }
   const by = personName(o.by);
   if (by) m.by = by;
+  const seatLabel = o.seat && typeof o.seat === 'object' ? personName(o.seat.label) : null;
+  if (seatLabel) {
+    const owner = personName(o.seat.owner);
+    m.seat = { label: seatLabel, ...(owner ? { owner } : {}), ...(Number.isFinite(o.seat.left) ? { left: Math.max(0, Math.min(100, Math.round(o.seat.left))) } : {}) };
+  }
   const branch = str(o.branch, 200);
   if (branch) m.branch = branch;
   const question = str(o.question, 20000);
