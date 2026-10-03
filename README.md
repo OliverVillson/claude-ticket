@@ -24,6 +24,8 @@ salu new web
 The first installs salu and tells you if `gh` or Claude Code is missing. The second sets up the box over
 ssh, once. The third makes a private repo and a runner for a project. More in [docs/quickstart.md](docs/quickstart.md).
 
+Working as a team, one Claude seat per person: [docs/teams.md](docs/teams.md). Coming from v1.2.0: [docs/migrating-to-v2.md](docs/migrating-to-v2.md).
+
 ## Install
 
 One command on macOS or Linux (x64 or arm64). It needs nothing else, not even Bun: it downloads a
