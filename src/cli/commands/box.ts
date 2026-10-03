@@ -6,6 +6,7 @@ import { dim, green, red } from '../../core/ansi.ts';
 import { realExec } from '../../boxmac/exec.ts';
 import { controlApi } from '../../boxmac/control.ts';
 import { addBox, loginViaControl, makeTokenReader, statusLines, type Deps } from '../../boxmac/pair.ts';
+import { updateBox } from '../../boxmac/update.ts';
 import { listBoxes, pickBox, removeBoxFile } from '../../boxmac/state.ts';
 import { spawnSync } from 'node:child_process';
 import { boxDir, boxInit, readBoxName } from '../../box/init.ts';
@@ -30,7 +31,8 @@ add       pairs with the box over ssh once: installs salu there, makes a private
           (salu-control) for commands, gives the box a login for Claude, and checks it answers.
           Run it again if it stops half way: it carries on where it was.
 status    asks the box how it is doing (version, disk, tickets, the safety check).
-update    updates salu on the box to the latest release (or a given version).
+update    updates salu on the box to the latest signed release (or a given version), waits for it,
+          and shows the version before and after and the box's own check. Unsigned releases are refused.
 relogin   gives the box a fresh Claude login (when the old one ran out).
 init      the box's own side of pairing: makes its keys, once. --json prints them on one line;
           --no-secret leaves the box's secret key out of it (safe to print).
@@ -144,9 +146,7 @@ export async function box(p: Parsed, deps: Deps = realDeps()): Promise<number> {
     }
     case 'update': {
       const b = pickBox(on);
-      console.log('Asking the box to update (this can take several minutes)...');
-      const r = await deps.control().call(b, 'update', rest[0] ? { version: rest[0] } : {}, { timeoutMs: 15 * 60_000 });
-      console.log(r.ok ? `${green('✓')} ${r.message}` : `${red('✗')} ${r.message}`);
+      const r = await updateBox({ control: deps.control, say: deps.say }, b, rest[0]);
       return r.ok ? 0 : 1;
     }
     case 'login':
