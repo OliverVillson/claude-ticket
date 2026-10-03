@@ -25,7 +25,7 @@ import { clearAllWorkerInfo, clearWorkerInfo, HEARTBEAT_MS, readStatus, setPause
 import { clearChecklist } from '../threads/store.ts';
 import { runWorker as defaultRunWorker, selectRunner, type RunWorkerParams } from './worker.ts';
 import type { EventListener, OrchestratorEvent, WorkerLive, WorkerResult, WorkerRunner } from './types.ts';
-import { recordRateLimitEvent } from '../usage/index.ts';
+import { recordRateLimitEvent, seatScope } from '../usage/index.ts';
 import { TokenAware, type RunWatch } from '../sched/pass.ts';
 
 export const DEFAULT_CONCURRENCY = 2;
@@ -345,7 +345,7 @@ export class Orchestrator {
       history: followUp && !resumed ? listTurns(db, t.id).filter((x) => x.delivered).map((x) => ({ role: x.role, body: x.body })) : undefined,
       resumeReason: t.error ? t.error : 'it was paused or the orchestrator restarted',
       abort,
-      onRateLimit: (info) => recordRateLimitEvent(this.db, info),
+      onRateLimit: (info) => recordRateLimitEvent(this.db, info, Date.now(), t.seat_id != null ? seatScope(t.seat_id) : undefined), // a seat's limits are that seat's, not the machine's
       onLive: (l) => {
         entry.live = l;
         this.writeLive(entry, false);
