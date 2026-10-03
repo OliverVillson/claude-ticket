@@ -18,7 +18,7 @@ function run(script: Array<ControlReply | 'down'>, version?: string) {
       return r;
     },
   };
-  return { sent, out, go: () => updateBox({ control: () => api, say: (l) => out.push(l), sleep: async () => {}, pollMs: 0, waitMs: 5000 }, cfg, version) };
+  return { sent, out, go: () => updateBox({ control: () => api, say: (l) => out.push(l), sleep: async () => {}, pollMs: 0, waitMs: 50 }, cfg, version) };
 }
 
 describe('salu box update', () => {
