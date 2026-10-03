@@ -1,6 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import { CliError } from '../core/errors.ts';
-import { byLabel, personName } from '../sync/format.ts';
+import { byLabel, personName, type Sender } from '../sync/format.ts';
+import { whyNotSeat } from './perms.ts';
 
 /**
  * The team of a project: who is on it, who owns it, and which Claude seats it can run tickets on.
@@ -209,8 +210,20 @@ export function setSeatDisabled(db: Database, projectId: number, label: string, 
   return getSeat(db, projectId, label)!;
 }
 
-/** Record which seat a ticket ran on. */
-export function setTicketSeat(db: Database, ticketId: number, seatId: number | null): void {
+/**
+ * Record which seat a ticket ran on. The scheduler calls this with no `by`: it has already judged whose seat the
+ * ticket may take (src/sched/seats.ts). Anything that pins a seat for a person passes `by: { sender }`, the sender
+ * the signature or the local login proves, and the pin is refused unless whyNotSeat allows it (admin any seat,
+ * member only their own, the shared key none; no roster, no restriction). Clearing a pin (`seatId` null) is always allowed.
+ */
+export function setTicketSeat(db: Database, ticketId: number, seatId: number | null, by?: { sender: Sender | undefined }): void {
+  if (by && seatId != null) {
+    const t = db.query<{ project_id: number }, [number]>('SELECT project_id FROM tickets WHERE id = ?').get(ticketId);
+    const seat = t ? db.query<{ label: string }, [number, number]>('SELECT label FROM seats WHERE id = ? AND project_id = ?').get(seatId, t.project_id) : null;
+    if (!t || !seat) throw new CliError('that seat is not on the ticket\'s project');
+    const why = whyNotSeat(db, t.project_id, by.sender, seat.label);
+    if (why) throw new CliError(why);
+  }
   db.query('UPDATE tickets SET seat_id = ? WHERE id = ?').run(seatId, ticketId);
 }
 
