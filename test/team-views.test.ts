@@ -134,3 +134,13 @@ describe('phone wire', () => {
     expect(bad.seat).toEqual({ label: 'xy', left: 100 });
   });
 });
+
+describe('tickets with no by- label (shared key)', () => {
+  test('CLI shows a dash, nothing throws', async () => {
+    const { db, p } = await setup();
+    createTicket(db, { project_id: p.id, name: 'anon', query: 'x' });
+    expect(await dispatch(['list', '--plain'])).toBe(0);
+    expect(stripAnsi(out.join('\n'))).toMatch(/anon\s.*-\s+-/);
+    expect(ticketWho({ labels: '[]', seat_id: null }, loadTeam(db, p.id)).author).toBeNull();
+  });
+});

@@ -96,7 +96,7 @@ export function DetailView(p: DetailViewProps) {
   if (tagBits.length) lines.push(st.dim(tagBits.join('   ')));
   if (p.team?.active) {
     const w = ticketWho(t, p.team);
-    const bits = [`by ${w.author ?? 'nobody yet'}`, w.seat ? `seat ${w.seat}${w.seatOwner ? ` (${w.seatOwner}'s)` : ''}${w.meter ? ' ' + meterText(w.meter) : ''}` : 'seat: this machine\'s login'];
+    const bits = [`by ${w.author ?? 'unnamed (shared key)'}`, w.seat ? `seat ${w.seat}${w.seatOwner ? ` (${w.seatOwner}'s)` : ''}${w.meter ? ' ' + meterText(w.meter) : ''}` : 'seat: this machine\'s login'];
     lines.push(st.dim(bits.join('   ')));
   }
   if (run) lines.push(st.dim(`last run · ${runBits.join(' · ')}${run.log_path ? ` · ${run.log_path}` : ''}`));
