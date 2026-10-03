@@ -182,6 +182,8 @@ A person who leaves the project stops lending.
   signatures). That gives you revocation and attribution: a revoked key stops working at once, and a ticket's
   author comes from the verified signer. It does not protect against someone who can read the box's database;
   treat box access as admin access.
+- Anyone who can run salu on the box itself can mint any member's key (`salu team key`, `salu team invite
+  --with-key`), because a shell on the box is already admin. Limit shell access on the box to the admin.
 - A ticket's `by-<name>` label is set from the verified signer only. Tickets sent with the shared key prove
   nobody, so they carry no author label and show as unnamed (in v1.2.0 they carried the sender's `SALU_USER`).
 - Once any member has a personal key, a file with no key id is refused unless a shared key is really set;
