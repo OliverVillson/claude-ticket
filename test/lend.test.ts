@@ -9,7 +9,7 @@ import { fakeRunner } from '../src/orchestrator/fake.ts';
 import { Orchestrator } from '../src/orchestrator/scheduler.ts';
 import { readLast } from '../src/sched/policy.ts';
 import { recordRunStats, setSchedMode } from '../src/sched/stats.ts';
-import { lendLog, NO_ONE, windowOpen } from '../src/team/lend.ts';
+import { lendLog, windowOpen } from '../src/team/lend.ts';
 import { addMember, addSeat, getSeat, setLend } from '../src/team/store.ts';
 
 const H = 3_600_000;
@@ -57,6 +57,7 @@ function setup() {
   const t = (name: string, by = 'alice') => createTicket(db, { status: 'todo', project_id: p.id, name, query: 'FAKE:done', labels: [`by-${by}`] });
   return { db, p, t };
 }
+const t2 = (db: ReturnType<typeof openDb>, projectId: number, by: string) => createTicket(db, { status: 'todo', project_id: projectId, name: `by-${by}`, query: 'FAKE:done', labels: [`by-${by}`] });
 const run = (db: ReturnType<typeof openDb>, ms = 0) => {
   const o = new Orchestrator({ db, concurrency: 1, exitWhenEmpty: ms === 0, heartbeatMs: 100, runner: fakeRunner });
   const started = o.start();
@@ -130,17 +131,21 @@ describe('borrowing spare seat time', () => {
     expect(readLast(db)!.hold?.reason).toMatch(/lending is closed now/);
   });
 
-  test('a ticket with no named requester (shared key) borrows only a seat that is lent, and is logged as unnamed', async () => {
+  test('a ticket with no named requester (shared key) never borrows, even from a seat that is lent', async () => {
     const { db, p } = setup();
-    process.env.SALU_FAKE_SEAT_USAGE = JSON.stringify({ 'alice-team': raw(80), 'bob-team': raw(10) });
-    const x = createTicket(db, { status: 'todo', project_id: p.id, name: 'anon', query: 'FAKE:done' }); // alice is the admin: her seat is its own, but it is full
+    setLend(db, p.id, 'bob-team', true);
+    // alice is the admin, so her seat is open to an author-less ticket, but it is full; bob's is lent but is not for the shared key
+    const x = createTicket(db, { status: 'todo', project_id: p.id, name: 'anon', query: 'FAKE:done' });
     await dispatch(['sched']);
     await run(db, 400);
     expect(getTicketById(db, x.id)!.status).toBe('todo');
-    setLend(db, p.id, 'bob-team', true);
-    await run(db);
-    expect(getTicketById(db, x.id)!.seat_id).toBe(getSeat(db, p.id, 'bob-team')!.id);
-    expect(lendLog(db, p.id)[0]).toMatchObject({ ticket: 'anon', lender: 'bob', borrower: NO_ONE });
+    expect(readLast(db)!.hold?.reason).toMatch(/no named requester/);
+    expect(lendLog(db, p.id)).toEqual([]);
+    // a by- label that names nobody on the team is no requester either
+    const y = t2(db, p.id, 'ghost');
+    await run(db, 400);
+    expect(getTicketById(db, y.id)!.status).toBe('todo');
+    expect(lendLog(db, p.id)).toEqual([]);
   });
 
   test('windowOpen wraps past midnight', () => {

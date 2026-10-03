@@ -122,7 +122,7 @@ export function place(db: Database, t: TicketView, seats: SeatView2[], now: numb
     }
     const p = plan(db, t, stats, v.seat.id);
     // A seat that is closed to the ticket can still be borrowed, if its owner lends it (team/lend.ts, off by default).
-    const lent = closed ? borrowUse(db, v.seat, now, p.est.pct) : null;
+    const lent = closed ? borrowUse(db, t, v.seat, now, p.est.pct) : null;
     if (lent && !lent.ok) {
       others.push({ seat: label, why: v.seat.lend ? lent.why : closed!, until: null });
       continue;
