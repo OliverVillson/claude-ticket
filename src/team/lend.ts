@@ -70,6 +70,8 @@ export function borrowUse(db: Database, t: Pick<TicketView, 'project_id' | 'labe
 export function logBorrow(db: Database, t: TicketView, seat: SeatView, est: { pct: number | null; usd: number }, now = Date.now()): boolean {
   const who = requesterOf(db, t);
   if (!who || seat.owner_id == null) return false;
+  // One row per ticket and seat: a re-dispatched ticket (retry, resume) is the same borrow, not a second one.
+  if (db.query('SELECT 1 FROM lend_log WHERE ticket_id = ? AND seat_id = ?').get(t.id, seat.id)) return false;
   db.query('INSERT INTO lend_log (project_id, ticket_id, ticket_name, seat_id, lender, borrower, est_pct, est_usd, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(t.project_id, t.id, t.name, seat.id, seat.owner, who.name, est.pct ?? 0, est.usd, now);
   return true;
 }
@@ -97,12 +99,16 @@ export function lendLog(db: Database, projectId: number, limit = 50): LendRow[] 
     .all(projectId, limit);
 }
 
-/** Only the seat's owner switches lending ON for it (the admin may switch it off). `me` is who is at the keyboard. */
+/**
+ * The owner's name must match who is at the keyboard (`SALU_USER`, else the login name) to switch lending ON; switching
+ * it off is open. This guards against mistakes (the wrong person typing it), not against anyone: whoever has a shell on
+ * the box can edit its database, so box access is the real boundary.
+ */
 export function requireLender(db: Database, projectId: number, label: string, on: boolean, me = whoAmI()): SeatView {
   const s = getSeat(db, projectId, label);
   if (!s) throw new CliError(`no seat called "${label}"`);
   if (!on) return s;
   if (!s.owner) throw new CliError(`seat "${s.label}" has no owner, so nobody can lend it`);
-  if (s.owner.toLowerCase() !== me.toLowerCase()) throw new CliError(`only ${s.owner} can switch lending on for "${s.label}" (you are ${me}; set SALU_USER if that is wrong). Lending is the lender's choice and responsibility.`);
+  if (s.owner.toLowerCase() !== me.toLowerCase()) throw new CliError(`lending on "${s.label}" is ${s.owner}'s to switch on (you are ${me}; set SALU_USER if that is wrong). Lending is the lender's choice and responsibility.`);
   return s;
 }
