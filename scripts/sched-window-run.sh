@@ -35,6 +35,9 @@ if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; the
   if [ -r "$ROOT/box-login.env" ]; then set -a; . "$ROOT/box-login.env"; set +a
   elif [ -r "$ROOT/kernel-token" ]; then CLAUDE_CODE_OAUTH_TOKEN="$(tr -d '\n' <"$ROOT/kernel-token")"; export CLAUDE_CODE_OAUTH_TOKEN; fi
 fi
+# Container tickets read the agents' login here (the scratch home has none) and rootless podman needs its runtime dir.
+[ -r "$ROOT/kernel-token" ] && export SALU_KERNEL_TOKEN_FILE="$ROOT/kernel-token"
+[ -z "${XDG_RUNTIME_DIR:-}" ] && [ -d "/run/user/$(id -u)" ] && export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 FAILS=0
 say() { printf '%s\n' "$*" | tee -a "$OUT"; }
 ok() { say "PASS  $*"; }
@@ -76,8 +79,16 @@ for i in 1 2 3; do
   A="$(sess)"
   S="$(status_of "probe$i")"
   say "probe$i status=$S 5h meter $B% -> $A%"
-  [ "$S" = "done" ] && ok "probe$i ran to the end" || bad "probe$i is $S (see below)"
+  if [ "$S" = "done" ]; then ok "probe$i ran to the end"
+  else
+    bad "probe$i is $S"
+    say "    why: $("$SALU" show "probe$i" 2>&1 | grep -i "error\|fail\|reason\|login\|container" | head -4 | cut -c1-220)"
+    say "    run log tail:"; tail -n 6 "$SCRATCH/run$i.log" | cut -c1-220 | sed 's/^/      /' | tee -a "$OUT"
+  fi
 done
+EV="$(grep -rh '"rate_limit_event"' "$SALU_HOME" 2>/dev/null | head -2 | cut -c1-400)"
+say "rate_limit_events in the worker logs: $([ -n "$EV" ] && echo yes || echo none)"
+[ -n "$EV" ] && say "$EV"
 case "$(usage_line)" in *available=true*) ok "the meter is readable after the probes" ;;
   *) bad "no meter even after real runs: the box login cannot read plan usage, so enforce has nothing to enforce on"; say "wrote $OUT"; exit 1 ;; esac
 say "learned (salu sched):"; "$SALU" sched 2>&1 | head -8 | sed 's/^/    /' | tee -a "$OUT" >/dev/null
