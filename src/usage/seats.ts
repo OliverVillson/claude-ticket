@@ -73,6 +73,13 @@ function fakeFor(label: string): { fetch: UsageFetch } | 'no-login' | null {
   }
 }
 
+/** Does this machine hold a login for the seat? Sync, so the scheduler can ask on every tick (a ticket on a seat without one is refused). */
+export function seatHasLogin(seat: SeatView): boolean {
+  const fake = fakeFor(seat.label);
+  if (fake) return fake !== 'no-login';
+  return Object.keys(seatAuth(String(seat.id))).length > 0;
+}
+
 /** One seat's usage. Never throws. */
 export async function seatUsage(db: Database, seat: SeatView, o: { refresh?: boolean; force?: boolean; fetcher?: UsageFetcher; now?: number } = {}): Promise<SeatUsage> {
   const done = (state: SeatUsageState, detail: string | null, snapshot: UsageSnapshot = EMPTY): SeatUsage => ({ seat, state, detail, snapshot });
