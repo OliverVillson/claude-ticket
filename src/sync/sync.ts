@@ -12,7 +12,8 @@ import * as core from '../db/queries.ts';
 import { announceAllSpawned } from './events.ts';
 import { addDecision, addOutput, answerDecision, getDecision, setChecklist } from '../threads/store.ts';
 import { answerFromReply, answerOpenWithText } from '../threads/decide.ts';
-import { ACTIONS_DIR, parseActionFile, type ActionFile, MESSAGES_DIR, byLabel, remoteForbiddenTags, requireKey, whoAmI, signFile, signatureOk, REPLIES_DIR, TICKETS_DIR, newId, parseMessageFile, parseReplyFile, parseTicketFile, type MessageFile, type ReplyFile, type TicketFile } from './format.ts';
+import { activeKeys, boxVerifier, sharedKeyRetired } from '../team/keys.ts';
+import { ACTIONS_DIR, parseActionFile, type ActionFile, MESSAGES_DIR, byLabel, remoteForbiddenTags, requireKey, whoAmI, remoteKey, signFile, signMessageFor, signatureOk, REPLIES_DIR, TICKETS_DIR, newId, parseMessageFile, parseReplyFile, parseTicketFile, type MessageFile, type ReplyFile, type TicketFile } from './format.ts';
 import {
   addOutAction,
   localDecisionFor,
@@ -272,6 +273,11 @@ function notifyPhone(sent: { body: string }[]): void {
   }
 }
 
+/** The shared key the box signs with: none once the admin has retired it for this project. */
+function sharedForBox(db: Database, projectId: number): string | null {
+  return sharedKeyRetired(db, projectId) ? null : remoteKey();
+}
+
 /** One round trip with the project's remote: send what is waiting, read what arrived, act on it. */
 export function syncProject(db: Database, project: Project, remote: Remote = getRemote(db, project.id)!): SyncSummary {
   if (!remote) throw new CliError(`project "${project.name}" has no remote (salu remote add "${project.name}" <git-url>)`);
@@ -291,7 +297,7 @@ export function syncProject(db: Database, project: Project, remote: Remote = get
     const outActions = remote.role === 'client' ? pendingOutActions(db, project.id) : [];
     for (const a of outActions) files[`${ACTIONS_DIR}/${a.id}.json`] = JSON.stringify(signFile({ ...a, project: project.name }), null, 2) + '\n';
     const outMessages = remote.role === 'box' ? pendingMessages(db, project.id) : [];
-    for (const m of outMessages) files[`${MESSAGES_DIR}/${m.id}.json`] = JSON.stringify(signFile(JSON.parse(m.body)), null, 2) + '\n';
+    for (const m of outMessages) files[`${MESSAGES_DIR}/${m.id}.json`] = JSON.stringify(signMessageFor(JSON.parse(m.body), sharedForBox(db, project.id), activeKeys(db, project.id)), null, 2) + '\n';
     exchange(dir, remote.url, files);
     markTicketsSent(db, outTickets.map((t) => t.uuid));
     markMessagesPosted(db, outMessages.map((m) => m.id));
@@ -304,8 +310,9 @@ export function syncProject(db: Database, project: Project, remote: Remote = get
     s.messagesSent = outMessages.length;
 
     if (remote.role === 'box') {
+      const verify = boxVerifier(db, project.id);
       for (const { text } of readDir(dir, TICKETS_DIR, () => true)) {
-        const f = parseTicketFile(text);
+        const f = parseTicketFile(text, verify);
         if (!f || knownRemoteTicket(db, f.id)) continue;
         const t = acceptTicket(db, project, f);
         s.ticketsReceived++;
@@ -322,12 +329,12 @@ export function syncProject(db: Database, project: Project, remote: Remote = get
       // phone in one sync ends with the ticket working again, not resolved with the reply lost.
       const todo: Array<{ id: string; run: () => void }> = [];
       for (const { text } of readDir(dir, REPLIES_DIR, () => true)) {
-        const r = parseReplyFile(text);
+        const r = parseReplyFile(text, verify);
         if (!r || knownReply(db, r.id)) continue;
         todo.push({ id: r.id, run: () => (recordInReply(db, project.id, r), applyReply(db, project, r), void s.repliesReceived++) });
       }
       for (const { text } of readDir(dir, ACTIONS_DIR, () => true)) {
-        const a = parseActionFile(text);
+        const a = parseActionFile(text, verify);
         if (!a || knownAction(db, a.id)) continue;
         todo.push({ id: a.id, run: () => (recordInAction(db, project.id, a), applyAction(db, project, a), void s.actionsReceived++) });
       }
@@ -337,7 +344,7 @@ export function syncProject(db: Database, project: Project, remote: Remote = get
       const more = pendingMessages(db, project.id);
       if (more.length) {
         const extra: Record<string, string> = {};
-        for (const m of more) extra[`${MESSAGES_DIR}/${m.id}.json`] = JSON.stringify(signFile(JSON.parse(m.body)), null, 2) + '\n';
+        for (const m of more) extra[`${MESSAGES_DIR}/${m.id}.json`] = JSON.stringify(signMessageFor(JSON.parse(m.body), sharedForBox(db, project.id), activeKeys(db, project.id)), null, 2) + '\n';
         exchange(dir, remote.url, extra);
         markMessagesPosted(db, more.map((m) => m.id));
         notifyPhone(more);

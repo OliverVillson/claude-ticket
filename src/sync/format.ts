@@ -209,21 +209,66 @@ function canonical(v: unknown): string {
   if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`;
   if (v && typeof v === 'object') {
     const o = v as Record<string, unknown>;
-    return `{${Object.keys(o).filter((k) => k !== 'sig' && o[k] !== undefined).sort().map((k) => `${JSON.stringify(k)}:${canonical(o[k])}`).join(',')}}`;
+    return `{${Object.keys(o).filter((k) => k !== 'sig' && k !== 'sigs' && o[k] !== undefined).sort().map((k) => `${JSON.stringify(k)}:${canonical(o[k])}`).join(',')}}`;
   }
   return JSON.stringify(v);
 }
 
-export function signFile<T extends object>(o: T, key = remoteKey()): T & { sig?: string } {
-  return key ? { ...o, sig: createHmac('sha256', key).update(canonical(o)).digest('hex') } : o;
+/**
+ * Per-person keys. A member's key is a token `<kid>.<secret>` (kid: 8 hex, the public name of the key; secret: 64 hex).
+ * A client holding one signs every file with `kid` inside the signed JSON, so the box finds the right secret and
+ * knows who sent it; one key can then be revoked without touching anyone else. A plain string (the shared key of
+ * v1) works as before, without `kid`. The box signs its messages with the shared key (`sig`) and once more per
+ * member (`sigs[kid]`), so a client that only holds its own key can still read them.
+ */
+const TOKEN_RE = /^([0-9a-f]{8})\.([0-9a-f]{64})$/;
+export function parseToken(key: string | null | undefined): { kid: string; secret: string } | null {
+  const m = key ? TOKEN_RE.exec(key.trim()) : null;
+  return m ? { kid: m[1]!, secret: m[2]! } : null;
+}
+export function newMemberToken(): { kid: string; secret: string; token: string } {
+  const kid = randomBytes(4).toString('hex');
+  const secret = randomBytes(32).toString('hex');
+  return { kid, secret, token: `${kid}.${secret}` };
 }
 
+const mac = (secret: string, o: unknown) => createHmac('sha256', secret).update(canonical(o)).digest();
+const hexEq = (a: Buffer, hex: unknown) => typeof hex === 'string' && /^[0-9a-f]{64}$/.test(hex) && timingSafeEqual(a, Buffer.from(hex, 'hex'));
+
+export function signFile<T extends object>(o: T, key = remoteKey()): T & { sig?: string; kid?: string } {
+  if (!key) return o;
+  const t = parseToken(key);
+  if (t) {
+    const withKid = { ...o, kid: t.kid };
+    return { ...withKid, sig: mac(t.secret, withKid).toString('hex') };
+  }
+  return { ...o, sig: mac(key, o).toString('hex') };
+}
+
+/** Box: sign a message for the shared key (unless it is retired) and for each member's key. */
+export function signMessageFor<T extends object>(o: T, shared: string | null, members: Array<{ kid: string; secret: string }>): T & { sig?: string; sigs?: Record<string, string> } {
+  const base: T & { sig?: string } = shared && !parseToken(shared) ? signFile(o, shared) : o;
+  if (!members.length) return base;
+  return { ...base, sigs: Object.fromEntries(members.map((m) => [m.kid, mac(m.secret, o).toString('hex')])) };
+}
+
+/**
+ * Does `o` carry a valid signature for `key`? With a member token (a client reading the box's messages) that is
+ * the box's `sigs[kid]`; with the shared key it is `sig`; with no key anything goes (unsigned mode).
+ */
 export function signatureOk(o: any, key = remoteKey()): boolean {
   if (!key) return true;
-  if (typeof o?.sig !== 'string' || !/^[0-9a-f]{64}$/.test(o.sig)) return false;
-  const want = createHmac('sha256', key).update(canonical(o)).digest();
-  return timingSafeEqual(want, Buffer.from(o.sig, 'hex'));
+  const t = parseToken(key);
+  if (t) return hexEq(mac(t.secret, o), o?.sigs?.[t.kid]);
+  return hexEq(mac(key, o), o?.sig);
 }
+
+/** A file signed by a member: `sig` over its JSON (including `kid`) under that member's secret. */
+export const memberSigOk = (o: any, secret: string): boolean => hexEq(mac(secret, o), o?.sig);
+
+/** Who verifies a file and, when its key belongs to one person, who that is. */
+export type Verifier = (o: any) => { ok: boolean; by?: string };
+export const sharedVerifier: Verifier = (o) => ({ ok: signatureOk(o) });
 
 /** A person's name from the remote: short, printable, no control characters. Null when it is not usable. */
 export function personName(v: unknown): string | null {
@@ -243,7 +288,7 @@ export function whoAmI(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /** Validate untrusted JSON from the remote. Returns null for anything that does not fit. */
-export function parseTicketFile(text: string): TicketFile | null {
+export function parseTicketFile(text: string, verify: Verifier = sharedVerifier): TicketFile | null {
   if (text.length > MAX_FILE_BYTES) return null;
   let o: any;
   try {
@@ -251,7 +296,9 @@ export function parseTicketFile(text: string): TicketFile | null {
   } catch {
     return null;
   }
-  if (!o || typeof o !== 'object' || o.v !== FORMAT_VERSION || !isId(o.id) || !signatureOk(o)) return null;
+  if (!o || typeof o !== 'object' || o.v !== FORMAT_VERSION || !isId(o.id)) return null;
+  const who = verify(o);
+  if (!who.ok) return null;
   const name = str(o.name, 200);
   const query = str(o.query, 20000);
   if (!name?.trim() || query === null) return null;
@@ -259,11 +306,11 @@ export function parseTicketFile(text: string): TicketFile | null {
   if (o.tags && typeof o.tags === 'object') for (const [k, v] of Object.entries(o.tags)) if (typeof v === 'string' && k.length <= 64 && v.length <= 2000) tags[stripControl(k)] = stripControl(v);
   const labels = Array.isArray(o.labels) ? o.labels.filter((l: unknown): l is string => typeof l === 'string' && l.length <= 64).slice(0, 50).map(stripControl) : [];
   const priority = Number.isInteger(o.priority) && o.priority >= 1 && o.priority <= 5 ? o.priority : 3;
-  const by = personName(o.by);
+  const by = who.by ?? personName(o.by); // a member's key decides who sent it, whatever the file says
   return { v: 1, id: o.id, project: str(o.project, 200) ?? '', name: name.trim(), query, tags, labels, priority, queue: o.queue !== false, ...(by ? { by } : {}), at: Number.isFinite(o.at) ? o.at : 0 };
 }
 
-export function parseReplyFile(text: string): ReplyFile | null {
+export function parseReplyFile(text: string, verify: Verifier = sharedVerifier): ReplyFile | null {
   if (text.length > MAX_FILE_BYTES) return null;
   let o: any;
   try {
@@ -271,7 +318,9 @@ export function parseReplyFile(text: string): ReplyFile | null {
   } catch {
     return null;
   }
-  if (!o || typeof o !== 'object' || o.v !== FORMAT_VERSION || !isId(o.id) || !signatureOk(o)) return null;
+  if (!o || typeof o !== 'object' || o.v !== FORMAT_VERSION || !isId(o.id)) return null;
+  const who = verify(o);
+  if (!who.ok) return null;
   const body = str(o.body, 20000);
   if (!body?.trim()) return null;
   const t = ticketRef(o);
@@ -298,7 +347,7 @@ function ticketRef(o: any): { ref?: string; ticketId?: number; name?: string } |
   return { ...(ref ? { ref } : {}), ...(ticketId ? { ticketId } : {}), ...(name ? { name } : {}) };
 }
 
-export function parseActionFile(text: string): ActionFile | null {
+export function parseActionFile(text: string, verify: Verifier = sharedVerifier): ActionFile | null {
   if (text.length > MAX_FILE_BYTES) return null;
   let o: any;
   try {
@@ -306,14 +355,16 @@ export function parseActionFile(text: string): ActionFile | null {
   } catch {
     return null;
   }
-  if (!o || typeof o !== 'object' || o.v !== FORMAT_VERSION || !isId(o.id) || !signatureOk(o)) return null;
+  if (!o || typeof o !== 'object' || o.v !== FORMAT_VERSION || !isId(o.id)) return null;
+  const who = verify(o);
+  if (!who.ok) return null;
   if (o.action !== 'resolve' && o.action !== 'reopen') return null;
   const t = ticketRef(o);
   if (!t) return null;
   return { v: 1, id: o.id, project: str(o.project, 200) ?? '', ...t, action: o.action, at: Number.isFinite(o.at) ? o.at : 0 };
 }
 
-export function parseMessageFile(text: string): MessageFile | null {
+export function parseMessageFile(text: string, verify: Verifier = sharedVerifier): MessageFile | null {
   if (text.length > MAX_FILE_BYTES) return null;
   let o: any;
   try {
@@ -321,7 +372,9 @@ export function parseMessageFile(text: string): MessageFile | null {
   } catch {
     return null;
   }
-  if (!o || typeof o !== 'object' || o.v !== FORMAT_VERSION || !isId(o.id) || !signatureOk(o)) return null;
+  if (!o || typeof o !== 'object' || o.v !== FORMAT_VERSION || !isId(o.id)) return null;
+  const who = verify(o);
+  if (!who.ok) return null;
   const title = str(o.title, 500);
   if (!title || !MESSAGE_TYPES.includes(o.type)) return null;
   const m: MessageFile = {

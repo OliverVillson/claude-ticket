@@ -6,6 +6,7 @@ import { dispatch } from '../src/cli/dispatch.ts';
 import { closeDb, openDb } from '../src/db/db.ts';
 import { createProject, createTicket } from '../src/db/queries.ts';
 import { addMember, addSeat, setTicketSeat } from '../src/team/store.ts';
+import { listKeys } from '../src/team/keys.ts';
 import { inviteBlock, loadTeam, meterText, ticketWho } from '../src/team/view.ts';
 import { parseUsage, seatUsage } from '../src/usage/index.ts';
 import { stripAnsi } from '../src/core/ansi.ts';
@@ -90,19 +91,19 @@ describe('team views', () => {
     expect(text).toMatch(/alice-team\s+Alice\s+team\s+.*62% left/);
   });
 
-  test('salu team invite prints a join block and keeps the key out unless asked', async () => {
+  test('salu team invite adds the person, prints a join block and mints a personal key only when asked', async () => {
     const { db, p } = await setup();
     db.query('INSERT INTO remotes (project_id, url, role, name) VALUES (?, ?, ?, ?)').run(p.id, 'https://github.com/o/web', 'client', '');
-    process.env.SALU_REMOTE_KEY = 'k'.repeat(24);
     await dispatch(['team', 'invite', 'Cy']);
     const plain = out.join('\n');
     expect(plain).toContain('export SALU_USER="Cy"');
-    expect(plain).toContain('salu remote add "web" https://github.com/o/web --key <ask the admin');
-    expect(plain).not.toContain('k'.repeat(24));
+    expect(plain).toContain('salu remote add "web" https://github.com/o/web --key <your key:');
+    expect(listKeys(db, p.id).map((k) => k.member)).toEqual([]);
+    expect(loadTeam(db, p.id).members.map((m) => m.name)).toContain('Cy');
     out.length = 0;
     await dispatch(['team', 'invite', 'Cy', '--with-key']);
-    expect(out.join('\n')).toContain('--key ' + 'k'.repeat(24));
-    delete process.env.SALU_REMOTE_KEY;
+    expect(listKeys(db, p.id).map((k) => k.member)).toEqual(['Cy']);
+    expect(out.join('\n')).toMatch(/--key \S{16,}/);
     expect(inviteBlock({ project: 'p', name: 'n', url: null, key: null })).toContain('<the project git url>');
   });
 

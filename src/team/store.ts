@@ -64,6 +64,16 @@ export function ensureTeamTables(db: Database): void {
       created_at INTEGER NOT NULL,
       UNIQUE (project_id, label)
     );
+    CREATE TABLE IF NOT EXISTS member_keys (
+      member_id INTEGER PRIMARY KEY REFERENCES members(id) ON DELETE CASCADE,
+      kid TEXT NOT NULL UNIQUE,
+      secret TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS team_settings (
+      project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+      shared_retired INTEGER NOT NULL DEFAULT 0
+    );
   `);
   // Which seat ran a ticket (null = the machine's own login, as in v1).
   if (!db.query<{ name: string }, []>('PRAGMA table_info(tickets)').all().some((c) => c.name === 'seat_id')) db.exec('ALTER TABLE tickets ADD COLUMN seat_id INTEGER REFERENCES seats(id) ON DELETE SET NULL;');
@@ -110,6 +120,7 @@ export function removeMember(db: Database, projectId: number, name: string): Mem
   if (!m) throw new CliError(`${name} is not on this project`);
   if (m.role === 'admin' && admins(db, projectId) <= 1) throw new CliError('that is the only admin: make someone else admin first');
   db.query('UPDATE seats SET disabled = 1, lend = 0 WHERE owner_id = ?').run(m.id);
+  db.query('DELETE FROM member_keys WHERE member_id = ?').run(m.id); // their key stops working at once
   db.query('DELETE FROM members WHERE id = ?').run(m.id);
   return m;
 }

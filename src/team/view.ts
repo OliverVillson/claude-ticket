@@ -87,7 +87,7 @@ export function ticketWho(t: Pick<Ticket, 'labels' | 'seat_id'>, team: TeamView)
 /** A line a friend can paste to join: install, who they are, and the project's remote. The key is only included when asked for. */
 export function inviteBlock(o: { project: string; name: string; url: string | null; key: string | null; installUrl?: string }): string {
   const url = o.url ?? '<the project git url>';
-  const key = o.key ?? '<ask the admin for the signing key>';
+  const key = o.key ?? `<your key: the admin runs salu team key ${JSON.stringify(o.name)}>`;
   return [
     `# Join ${o.project} on salu (as ${o.name})`,
     `curl -fsSL ${o.installUrl ?? 'https://olivervillson.github.io/salu/i'} | bash`,
