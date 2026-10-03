@@ -4,9 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { dispatch } from '../src/cli/dispatch.ts';
 import { closeDb, openDb } from '../src/db/db.ts';
-import { createProject, createTicket, setState } from '../src/db/queries.ts';
+import { createProject, createTicket } from '../src/db/queries.ts';
 import { addMember, addSeat, setTicketSeat } from '../src/team/store.ts';
-import { inviteBlock, loadTeam, meterText, seatUsageKey, ticketWho } from '../src/team/view.ts';
+import { inviteBlock, loadTeam, meterText, ticketWho } from '../src/team/view.ts';
+import { parseUsage, seatUsage } from '../src/usage/index.ts';
 import { stripAnsi } from '../src/core/ansi.ts';
 import { renderPlain } from '../src/tui/plain.ts';
 import { loadSnapshot } from '../src/tui/store.ts';
@@ -28,21 +29,29 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-function setup() {
+const H = 3_600_000;
+export const rawUsage = (five: number) => ({ subscription_type: 'team', rate_limits_available: true, rate_limits: { five_hour: { utilization: five, resets_at: new Date(Date.now() + 2 * H).toISOString() }, seven_day: { utilization: 10, resets_at: new Date(Date.now() + 70 * H).toISOString() } } });
+/** Give a seat a cached 5-hour reading, the way `salu usage` does. */
+export async function feed(db: ReturnType<typeof openDb>, projectId: number, label: string, five: number) {
+  const seat = loadTeam(db, projectId).seats.find((s) => s.label === label)!;
+  await seatUsage(db, seat, { fetcher: async () => parseUsage(rawUsage(five)), force: true });
+}
+
+async function setup() {
   const db = openDb();
   const p = createProject(db, { name: 'web', path: join(root, 'web') });
   addMember(db, p.id, 'Alice');
   addMember(db, p.id, 'Bob');
   const seat = addSeat(db, p.id, 'alice-team', { owner: 'Alice' });
-  setState(db, seatUsageKey(seat.id), JSON.stringify({ percentUsed: 38, resetsAt: null }));
+  await feed(db, p.id, 'alice-team', 38);
   const t = createTicket(db, { project_id: p.id, name: 'fix-login', query: 'x', labels: ['by-bob'] });
   setTicketSeat(db, t.id, seat.id);
   return { db, p, t };
 }
 
 describe('team views', () => {
-  test('author, seat and meter for a ticket (borrowed seat names its owner)', () => {
-    const { db, p, t } = setup();
+  test('author, seat and meter for a ticket (borrowed seat names its owner)', async () => {
+    const { db, p, t } = await setup();
     const w = ticketWho({ ...t, seat_id: loadTeam(db, p.id).seats[0]!.id }, loadTeam(db, p.id));
     expect(w).toMatchObject({ author: 'Bob', seat: 'alice-team', seatOwner: 'Alice' });
     expect(meterText(w.meter!)).toContain('62% left');
@@ -59,7 +68,7 @@ describe('team views', () => {
   });
 
   test('salu list shows by and seat; --json carries who', async () => {
-    setup();
+    await setup();
     expect(await dispatch(['list', '--plain'])).toBe(0);
     const text = stripAnsi(out.join('\n'));
     expect(text).toMatch(/by\s+seat/);
@@ -72,7 +81,7 @@ describe('team views', () => {
   });
 
   test('salu team and salu seat show the meter', async () => {
-    setup();
+    await setup();
     await dispatch(['team']);
     await dispatch(['seat']);
     const text = stripAnsi(out.join('\n'));
@@ -82,7 +91,7 @@ describe('team views', () => {
   });
 
   test('salu team invite prints a join block and keeps the key out unless asked', async () => {
-    const { db, p } = setup();
+    const { db, p } = await setup();
     db.query('INSERT INTO remotes (project_id, url, role, name) VALUES (?, ?, ?, ?)').run(p.id, 'https://github.com/o/web', 'client', '');
     process.env.SALU_REMOTE_KEY = 'k'.repeat(24);
     await dispatch(['team', 'invite', 'Cy']);
@@ -97,8 +106,8 @@ describe('team views', () => {
     expect(inviteBlock({ project: 'p', name: 'n', url: null, key: null })).toContain('<the project git url>');
   });
 
-  test('the TUI list has a by column and the pane title carries the seat meters', () => {
-    const { db } = setup();
+  test('the TUI list has a by column and the pane title carries the seat meters', async () => {
+    const { db } = await setup();
     const snap = loadSnapshot(db);
     const text = stripAnsi(renderPlain(snap, { width: 100 }));
     expect(text).toMatch(/by/);
@@ -113,8 +122,8 @@ import { recordRemoteEvent } from '../src/sync/events.ts';
 import { setRemote } from '../src/sync/store.ts';
 
 describe('phone wire', () => {
-  test('ticket.started carries the seat; the parser keeps it and clamps junk', () => {
-    const { db, p, t } = setup();
+  test('ticket.started carries the seat; the parser keeps it and clamps junk', async () => {
+    const { db, p, t } = await setup();
     setRemote(db, { project_id: p.id, url: 'x', role: 'box', name: '' });
     recordRemoteEvent(db, { type: 'dispatch', ticket: { ...t, seat_id: loadTeam(db, p.id).seats[0]!.id }, resumed: false } as any);
     const row = db.query<{ body: string }, []>("SELECT body FROM remote_messages WHERE body LIKE '%ticket.started%'").get()!;

@@ -5,9 +5,9 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { App } from '../../src/tui/app.tsx';
 import { defaultActions } from '../../src/tui/actions.ts';
-import { createProject, createTicket, setState, updateTicket } from '../../src/db/queries.ts';
+import { createProject, createTicket, updateTicket } from '../../src/db/queries.ts';
 import { addMember, addSeat, setTicketSeat } from '../../src/team/store.ts';
-import { seatUsageKey } from '../../src/team/view.ts';
+import { feed } from '../team-views.test.ts';
 import { KEY, fakeTerminal, seedDb } from './harness.ts';
 
 const open: Array<ReturnType<typeof render>> = [];
@@ -29,8 +29,8 @@ describe('team views in the TUI', () => {
     addMember(db, p.id, 'Bob');
     const a = addSeat(db, p.id, 'alice-team', { owner: 'Alice' });
     const b = addSeat(db, p.id, 'bob-team', { owner: 'Bob' });
-    setState(db, seatUsageKey(a.id), JSON.stringify({ percentUsed: 38, resetsAt: null }));
-    setState(db, seatUsageKey(b.id), JSON.stringify({ percentUsed: 81, resetsAt: null }));
+    await feed(db, p.id, 'alice-team', 38);
+    await feed(db, p.id, 'bob-team', 81);
     const mk = (name: string, by: string, seat: typeof a, status: 'running' | 'todo' | 'done') => {
       const t = createTicket(db, { project_id: p.id, name, query: name, labels: [`by-${by}`] });
       updateTicket(db, t.id, { status });

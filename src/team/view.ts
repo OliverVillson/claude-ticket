@@ -1,7 +1,8 @@
 import type { Database } from 'bun:sqlite';
 import type { Ticket } from '../db/types.ts';
 import { ticketLabels } from '../db/types.ts';
-import { getState } from '../db/queries.ts';
+import { STALE_AFTER_MS, buildSnapshot } from '../usage/snapshot.ts';
+import { seatScope } from '../usage/seats.ts';
 import { GLYPHS } from '../ui/glyphs.ts';
 import { listMembers, listSeats, type Member, type SeatView } from './store.ts';
 
@@ -17,14 +18,11 @@ export interface SeatMeter {
   resetsAt: number | null;
 }
 
-/** Where per-seat usage is kept until the usage package owns it: state key `seat_usage:<seat id>`, JSON `{percentUsed, resetsAt}`. */
-export const seatUsageKey = (seatId: number) => `seat_usage:${seatId}`;
-
+/** The seat's 5-hour window as last read (usage/seats.ts keeps one cached snapshot per seat); never makes a network call. */
 export function seatMeter(db: Database, seatId: number): SeatMeter {
   try {
-    const v = JSON.parse(getState(db, seatUsageKey(seatId)) ?? 'null');
-    const used = typeof v?.percentUsed === 'number' ? Math.max(0, Math.min(100, Math.round(v.percentUsed))) : null;
-    return { percentUsed: used, resetsAt: typeof v?.resetsAt === 'number' ? v.resetsAt : null };
+    const w = buildSnapshot(db, Date.now(), null, STALE_AFTER_MS, seatScope(seatId)).windows.find((x) => x.id === 'session');
+    return { percentUsed: w?.percentUsed ?? null, resetsAt: w?.resetsAt ?? null };
   } catch {
     return { percentUsed: null, resetsAt: null };
   }
