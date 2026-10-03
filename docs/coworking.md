@@ -60,9 +60,9 @@ A teammate can lend a capped slice of their seat:
   can switch it off. A person who leaves the project stops lending.
 - `--cap N` is the most percent of the 5-hour window borrowed tickets may use in total (counted over the last 5
   hours, by each ticket's expected use). `--from/--to` are hours of the day on the box (22 to 7 wraps midnight).
-- A ticket tries its requester's own seat first (and seats nobody owns). Only when none has room does it try a
-  lender's seat. Who the requester is comes from the ticket's signed `by-` label. A ticket with none (made on the
-  box, or sent with the shared key, which proves nobody) owns no seat: it may use seats nobody owns, and a
-  member's seat only while that member is lending it, logged as borrowed like any other.
+- A ticket first uses seats it is entitled to (the project's seats, its author's own, or an admin's for a ticket
+  with no author). Only when none has room does it try a lender's seat. The author comes from the ticket's signed
+  `by-` label. A ticket with none (made on the box, or sent with the shared key, which proves nobody) never
+  borrows: a borrow must name a lender and a borrower, so it can be attributed and revoked per person.
 - A ticket that started on a lender's seat stays there; if lending stops it waits.
 - `salu seat lent` lists every borrowed ticket: lender, borrower, expected use and the cost so far.

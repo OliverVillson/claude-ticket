@@ -1,13 +1,15 @@
 import type { Database } from 'bun:sqlite';
 import type { TicketView } from '../db/types.ts';
 import type { SeatView } from '../team/store.ts';
-import { listSeats } from '../team/store.ts';
+import { listMembers, listSeats } from '../team/store.ts';
+import { byLabel } from '../sync/format.ts';
+import { ticketLabels } from '../db/types.ts';
 import { buildSnapshot, STALE_AFTER_MS, type UsageSnapshot } from '../usage/snapshot.ts';
 import { formatSeatMeter, seatHasLogin, seatScope, type SeatUsage } from '../usage/seats.ts';
 import { fits, MAX_SKIPS, plan, SELF_SEAT, type Decision, type Planned } from './policy.ts';
 import { readStats, SCHED_STATE } from './stats.ts';
 import { getState } from '../db/queries.ts';
-import { useOf } from '../team/lend.ts';
+import { borrowUse } from '../team/lend.ts';
 
 /**
  * Seat-aware placement: a ticket starts on the seat that has room. For a project with seats, each queued
@@ -68,6 +70,24 @@ function judged(v: SeatView2): UsageSnapshot {
   return { ...v.usage.snapshot, windows: v.usage.snapshot.windows.map((w) => (w.id === 'session' && w.percentUsed != null ? { ...w, percentUsed: Math.min(100, w.percentUsed + v.promised) } : w)) };
 }
 
+/**
+ * Whose seats a ticket may use. Borrowing is separate (team/lend.ts, off unless the owner lends), so a seat is usable only when it is the project's (no owner),
+ * the ticket author's own, or, for a ticket with no author (added on this machine), an admin's. The author is the
+ * member named by the ticket's `by-<name>` label; a `by-` label that names nobody on the team gets the project's
+ * ownerless seats only. A seat already on the ticket is checked the same way: a pinned seat is never a way round it.
+ * Returns why a seat is closed to the ticket, or null when it is open.
+ */
+export function seatClosedTo(db: Database, t: TicketView, seat: SeatView): string | null {
+  if (seat.owner_id == null) return null;
+  const labels = ticketLabels(t).map((l) => l.toLowerCase());
+  const members = listMembers(db, t.project_id);
+  const named = labels.some((l) => l.startsWith('by-'));
+  const authors = members.filter((m) => labels.includes(byLabel(m.name)));
+  const mine = authors.length ? authors.every((m) => m.id === seat.owner_id) : !named && members.some((m) => m.id === seat.owner_id && m.role === 'admin');
+  const lentNote = `${seat.owner ?? 'its owner'} has not lent it`;
+  return mine ? null : authors.length ? `it is ${seat.owner}'s seat and ${lentNote}` : `it is ${seat.owner}'s seat, not the ticket author's (${lentNote})`;
+}
+
 export interface Placement {
   /** The seat that takes the ticket, or null when none does. */
   seat: SeatView2 | null;
@@ -90,6 +110,7 @@ export function place(db: Database, t: TicketView, seats: SeatView2[], now: numb
   for (const v of pool) {
     const label = v.seat.label;
     const u = v.usage;
+    const closed = seatClosedTo(db, t, v.seat);
     if (u.state === 'off' || u.state === 'no-login' || u.state === 'dead') {
       others.push({ seat: label, why: u.state === 'dead' ? 'its login is refused (DEAD)' : u.state === 'off' ? 'it is switched off' : 'it has no login here', until: null });
       continue;
@@ -100,9 +121,10 @@ export function place(db: Database, t: TicketView, seats: SeatView2[], now: numb
       continue;
     }
     const p = plan(db, t, stats, v.seat.id);
-    const use = useOf(db, t, v.seat, now, p.est.pct);
-    if (use.kind === 'no') {
-      others.push({ seat: label, why: use.why, until: null });
+    // A seat that is closed to the ticket can still be borrowed, if its owner lends it (team/lend.ts, off by default).
+    const lent = closed ? borrowUse(db, t, v.seat, now, p.est.pct) : null;
+    if (lent && !lent.ok) {
+      others.push({ seat: label, why: v.seat.lend ? lent.why : closed!, until: null });
       continue;
     }
     const f = fits(db, p, judged(v), now);
@@ -112,7 +134,7 @@ export function place(db: Database, t: TicketView, seats: SeatView2[], now: numb
     }
     const session = u.snapshot.windows.find((w) => w.id === 'session')?.percentUsed;
     const room = 100 - ((session ?? 50) + v.promised);
-    if (use.kind === 'borrow') {
+    if (lent) {
       if (!bestBorrow || room > bestBorrow.room) bestBorrow = { v, room, p };
     } else if (!best || room > best.room) best = { v, room, p };
   }

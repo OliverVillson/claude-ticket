@@ -14,11 +14,8 @@ import { getSeat, listMembers, type Member, type SeatView } from './store.ts';
  *
  * Who the requester is: the `by-<name>` label a signed ticket carries (set from the signature, so a member cannot
  * claim another's, see sync.ts and team/perms.ts). A ticket without one (made on the box, before the roster, or
- * sent with the shared key, which proves nobody) has no requester. It owns no seat, so it is treated like any
- * borrower: seats nobody owns are free to it, a member's seat only when that member is lending it.
+ * sent with the shared key, which proves nobody) has no requester and never borrows.
  */
-
-export const NO_ONE = '(no named requester)';
 
 export const TERMS_WARNING =
   "Whether your Claude plan's terms allow your seat to serve a teammate's ticket has NOT been checked at the source.\nLending is your choice and your responsibility: read the plan's terms yourself before you switch it on.";
@@ -46,31 +43,34 @@ export function borrowedPct(db: Database, seatId: number, now: number): number {
   return db.query<{ n: number | null }, [number, number]>('SELECT SUM(est_pct) AS n FROM lend_log WHERE seat_id = ? AND at > ?').get(seatId, now - LEND_WINDOW_MS)?.n ?? 0;
 }
 
-export type Use = { kind: 'own' } | { kind: 'borrow' } | { kind: 'no'; why: string };
+export type Borrow = { ok: true } | { ok: false; why: string };
 
 /**
- * May this ticket start on this seat, and as what? `estPct` is what the ticket is expected to use of the window.
- * A seat nobody owns, or the requester's own: `own`. Someone else's seat (also for a ticket with no requester,
- * such as one sent with the shared key): only when they are lending, the window is open and the cap has room for this ticket.
+ * A seat the scheduler found closed to this ticket (not the project's, not its author's: sched/seats.ts
+ * `seatClosedTo`) may still be borrowed, but only when its owner is lending it, the window is open and the cap
+ * has room for this ticket. `estPct` is what the ticket is expected to use of the window. This is the one way a
+ * ticket runs on someone else's seat, and it is decided here in the scheduler, never from a ticket file or tag.
  */
-export function useOf(db: Database, t: TicketView, seat: SeatView, now: number, estPct: number | null): Use {
-  const who = requesterOf(db, t);
-  if (seat.owner_id == null || seat.owner_id === who?.id) return { kind: 'own' };
-  if (!seat.lend) return { kind: 'no', why: `${seat.owner ?? 'its owner'} is not lending it` };
-  if (!windowOpen(seat, now)) return { kind: 'no', why: `${seat.owner}'s lending is closed now (open ${seat.lend_from}:00-${seat.lend_to}:00)` };
+export function borrowUse(db: Database, t: Pick<TicketView, 'project_id' | 'labels'>, seat: SeatView, now: number, estPct: number | null): Borrow {
+  // A borrow always names a lender and a borrower, so it can be attributed and revoked per person. A ticket with no
+  // named requester (made on the box, or sent with the shared key, which proves nobody) never borrows.
+  if (!requesterOf(db, t)) return { ok: false, why: 'the ticket has no named requester, so it cannot borrow' };
+  if (seat.owner_id == null) return { ok: false, why: 'it has no owner to lend it' };
+  if (!seat.lend) return { ok: false, why: `${seat.owner} is not lending it` };
+  if (!windowOpen(seat, now)) return { ok: false, why: `${seat.owner}'s lending is closed now (open ${seat.lend_from}:00-${seat.lend_to}:00)` };
   const cap = seat.lend_cap_pct ?? 50;
   const used = borrowedPct(db, seat.id, now);
   // A ticket with no estimate yet is counted as a quarter of the cap, so it cannot slip past it.
   const need = estPct ?? cap / 4;
-  if (used + need > cap) return { kind: 'no', why: `${seat.owner}'s lending cap is used (${Math.round(used)}% of ${cap}% in the last 5 hours)` };
-  return { kind: 'borrow' };
+  if (used + need > cap) return { ok: false, why: `${seat.owner}'s lending cap is used (${Math.round(used)}% of ${cap}% in the last 5 hours)` };
+  return { ok: true };
 }
 
-/** Log a ticket that started on a borrowed seat: who lent, who borrowed, what it should cost. Cost is read from the ticket later. */
+/** Log a ticket the scheduler placed on a borrowed seat: who lent, who borrowed, what it should cost. Cost is read from the ticket later. */
 export function logBorrow(db: Database, t: TicketView, seat: SeatView, est: { pct: number | null; usd: number }, now = Date.now()): boolean {
   const who = requesterOf(db, t);
-  if (seat.owner_id == null || seat.owner_id === who?.id) return false;
-  db.query('INSERT INTO lend_log (project_id, ticket_id, ticket_name, seat_id, lender, borrower, est_pct, est_usd, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(t.project_id, t.id, t.name, seat.id, seat.owner, who?.name ?? NO_ONE, est.pct ?? 0, est.usd, now);
+  if (!who || seat.owner_id == null) return false;
+  db.query('INSERT INTO lend_log (project_id, ticket_id, ticket_name, seat_id, lender, borrower, est_pct, est_usd, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(t.project_id, t.id, t.name, seat.id, seat.owner, who.name, est.pct ?? 0, est.usd, now);
   return true;
 }
 

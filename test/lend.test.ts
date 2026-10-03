@@ -57,6 +57,7 @@ function setup() {
   const t = (name: string, by = 'alice') => createTicket(db, { status: 'todo', project_id: p.id, name, query: 'FAKE:done', labels: [`by-${by}`] });
   return { db, p, t };
 }
+const t2 = (db: ReturnType<typeof openDb>, projectId: number, by: string) => createTicket(db, { status: 'todo', project_id: projectId, name: `by-${by}`, query: 'FAKE:done', labels: [`by-${by}`] });
 const run = (db: ReturnType<typeof openDb>, ms = 0) => {
   const o = new Orchestrator({ db, concurrency: 1, exitWhenEmpty: ms === 0, heartbeatMs: 100, runner: fakeRunner });
   const started = o.start();
@@ -71,7 +72,7 @@ describe('borrowing spare seat time', () => {
     await dispatch(['sched']);
     await run(db, 400);
     expect(getTicketById(db, x.id)!.status).toBe('todo');
-    expect(readLast(db)!.hold?.reason).toMatch(/bob is not lending it/);
+    expect(readLast(db)!.hold?.reason).toMatch(/bob's seat and bob has not lent it/);
     expect(lendLog(db, 1)).toEqual([]);
   });
 
@@ -128,6 +129,23 @@ describe('borrowing spare seat time', () => {
     await run(db, 400);
     expect(getTicketById(db, x.id)!.status).toBe('todo');
     expect(readLast(db)!.hold?.reason).toMatch(/lending is closed now/);
+  });
+
+  test('a ticket with no named requester (shared key) never borrows, even from a seat that is lent', async () => {
+    const { db, p } = setup();
+    setLend(db, p.id, 'bob-team', true);
+    // alice is the admin, so her seat is open to an author-less ticket, but it is full; bob's is lent but is not for the shared key
+    const x = createTicket(db, { status: 'todo', project_id: p.id, name: 'anon', query: 'FAKE:done' });
+    await dispatch(['sched']);
+    await run(db, 400);
+    expect(getTicketById(db, x.id)!.status).toBe('todo');
+    expect(readLast(db)!.hold?.reason).toMatch(/no named requester/);
+    expect(lendLog(db, p.id)).toEqual([]);
+    // a by- label that names nobody on the team is no requester either
+    const y = t2(db, p.id, 'ghost');
+    await run(db, 400);
+    expect(getTicketById(db, y.id)!.status).toBe('todo');
+    expect(lendLog(db, p.id)).toEqual([]);
   });
 
   test('windowOpen wraps past midnight', () => {

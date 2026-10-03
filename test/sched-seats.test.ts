@@ -9,7 +9,7 @@ import { fakeRunner } from '../src/orchestrator/fake.ts';
 import { Orchestrator } from '../src/orchestrator/scheduler.ts';
 import { readLast } from '../src/sched/policy.ts';
 import { recordRunStats, setSchedMode } from '../src/sched/stats.ts';
-import { addMember, addSeat, listSeats, setLend, setSeatDisabled, setTicketSeat } from '../src/team/store.ts';
+import { addMember, addSeat, listSeats, setSeatDisabled, setTicketSeat } from '../src/team/store.ts';
 
 const H = 3_600_000;
 const raw = (five: number, week = 10) => ({
@@ -48,11 +48,9 @@ function setup() {
   const p = createProject(db, { name: 'web', path: join(home, 'web') });
   addMember(db, p.id, 'alice');
   addMember(db, p.id, 'bob');
-  const a = addSeat(db, p.id, 'alice-team', { owner: 'alice' });
-  const b = addSeat(db, p.id, 'bob-team', { owner: 'bob' });
-  // The tickets below name no requester, so a member's seat is theirs to offer: both lend (see lend.test.ts).
-  setLend(db, p.id, 'alice-team', true, { cap: 100 });
-  setLend(db, p.id, 'bob-team', true, { cap: 100 });
+  // The project's own seats (no owner): any ticket may use them. Seats owned by a member are tested below.
+  const a = addSeat(db, p.id, 'alice-team');
+  const b = addSeat(db, p.id, 'bob-team');
   // finished runs taught the estimator: an Opus ticket costs about 30% of a window
   for (let i = 0; i < 5; i++) recordRunStats(db, 'claude-opus-5-5', 'medium', { usd: 1.5, pct: 30, at: Date.now() });
   setSchedMode(db, 'on');
@@ -61,6 +59,62 @@ function setup() {
 }
 const run = (db: ReturnType<typeof openDb>) => new Orchestrator({ db, concurrency: 1, exitWhenEmpty: true, heartbeatMs: 100, runner: fakeRunner }).start();
 const plain = () => logs.join('\n').replace(/\x1b\[[0-9;]*m/g, '');
+
+describe('whose seat a ticket may use', () => {
+  function owned() {
+    const s = setup();
+    const aliceOwn = addSeat(s.db, s.p.id, 'alice-own', { owner: 'alice' }); // alice is the admin (first member)
+    const bobOwn = addSeat(s.db, s.p.id, 'bob-own', { owner: 'bob' });
+    return { ...s, aliceOwn, bobOwn };
+  }
+  const tk = (db: ReturnType<typeof openDb>, projectId: number, name: string, labels: string[] = []) => createTicket(db, { status: 'todo', project_id: projectId, name, query: 'FAKE:done', labels });
+
+  test("a member's ticket never lands on a teammate's seat, even when it is the emptiest", async () => {
+    const { db, p, a, b, bobOwn } = owned();
+    process.env.SALU_FAKE_SEAT_USAGE = JSON.stringify({ 'alice-team': raw(90), 'bob-team': raw(90), 'alice-own': raw(0), 'bob-own': raw(50) });
+    const x = tk(db, p.id, 'bobs', ['by-bob']);
+    await dispatch(['sched']);
+    await run(db);
+    expect(getTicketById(db, x.id)!.seat_id).toBe(bobOwn.id); // alice-own is emptier but is alice's
+    expect([a.id, b.id]).not.toContain(getTicketById(db, x.id)!.seat_id);
+    expect(readLast(db)!.placed!.others.map((o) => o.seat)).toContain('alice-own');
+  });
+
+  test('a ticket with no author may use the project seats and an admin seat, not a member seat', async () => {
+    const { db, p, bobOwn, t } = owned();
+    process.env.SALU_FAKE_SEAT_USAGE = JSON.stringify({ 'alice-team': raw(90), 'bob-team': raw(90), 'alice-own': raw(60), 'bob-own': raw(0) });
+    const x = t('local');
+    await dispatch(['sched']);
+    await run(db);
+    const seat = getTicketById(db, x.id)!.seat_id;
+    expect(seat).not.toBe(bobOwn.id);
+    expect(listSeats(db, p.id).find((s) => s.id === seat)!.label).toBe('alice-own');
+  });
+
+  test('a seat already on the ticket does not open someone else\'s seat', async () => {
+    const { db, p, aliceOwn, tk: _ } = owned() as any;
+    process.env.SALU_FAKE_SEAT_USAGE = JSON.stringify({ 'alice-own': raw(0), 'bob-own': raw(0) });
+    const x = tk(db, p.id, 'sneaky', ['by-bob']);
+    setTicketSeat(db, x.id, aliceOwn.id); // whoever set this, it is not bob's seat
+    await dispatch(['sched']);
+    const orch = new Orchestrator({ db, concurrency: 1, exitWhenEmpty: true, heartbeatMs: 100, runner: fakeRunner });
+    void orch.start();
+    await Bun.sleep(400);
+    expect(getTicketById(db, x.id)!.status).toBe('todo');
+    expect(readLast(db)!.hold!.reason).toMatch(/alice-own: it is alice's seat and alice has not lent it/);
+    orch.stop?.();
+  });
+
+  test('a by- label that names nobody on the team gets the project seats only', async () => {
+    const { db, p, t } = owned();
+    process.env.SALU_FAKE_SEAT_USAGE = JSON.stringify({ 'alice-team': raw(50), 'bob-team': raw(90), 'alice-own': raw(0), 'bob-own': raw(0) });
+    const x = tk(db, p.id, 'stranger', ['by-mallory']);
+    await dispatch(['sched']);
+    await run(db);
+    expect(listSeats(db, p.id).find((s) => s.id === getTicketById(db, x.id)!.seat_id)!.label).toBe('alice-team');
+    void t;
+  });
+});
 
 describe('seat-aware scheduler', () => {
   test('a ticket that does not fit seat A starts on seat B, and `salu sched` says why', async () => {
@@ -79,8 +133,8 @@ describe('seat-aware scheduler', () => {
     expect(last.placed?.others.map((o) => o.seat)).toEqual(['alice-team']);
     await dispatch(['sched']);
     const out = plain();
-    expect(out).toContain('alice-team (alice)');
-    expect(out).toContain('bob-team (bob)');
+    expect(out).toContain('alice-team');
+    expect(out).toContain('bob-team');
     expect(out).toMatch(/started big on seat bob-team/);
     expect(out).toMatch(/not on alice-team: needs about 30% of the 5-hour window, 80% is used/);
   });
