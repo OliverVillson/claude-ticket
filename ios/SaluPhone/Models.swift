@@ -88,7 +88,6 @@ struct SaluDecision: Codable, Hashable, Identifiable {
     }
 }
 
-/// Something the worker attached to its thread. `kind`: branch, pr, file or link.
 /// The Claude seat a ticket runs on (MessageFile.seat in format.ts). `owner` differs from the author on a borrowed seat.
 struct SaluSeat: Codable, Hashable {
     var label: String
@@ -96,6 +95,7 @@ struct SaluSeat: Codable, Hashable {
     var left: Int?  // percent of the seat's 5-hour window still free
 }
 
+/// Something the worker attached to its thread. `kind`: branch, pr, file or link.
 struct SaluOutput: Codable, Hashable {
     var kind: String
     var ref: String
