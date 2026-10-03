@@ -9,7 +9,7 @@ import { fakeRunner } from '../src/orchestrator/fake.ts';
 import { Orchestrator } from '../src/orchestrator/scheduler.ts';
 import { readLast } from '../src/sched/policy.ts';
 import { recordRunStats, setSchedMode } from '../src/sched/stats.ts';
-import { lendLog, windowOpen } from '../src/team/lend.ts';
+import { lendLog, NO_ONE, windowOpen } from '../src/team/lend.ts';
 import { addMember, addSeat, getSeat, setLend } from '../src/team/store.ts';
 
 const H = 3_600_000;
@@ -71,7 +71,7 @@ describe('borrowing spare seat time', () => {
     await dispatch(['sched']);
     await run(db, 400);
     expect(getTicketById(db, x.id)!.status).toBe('todo');
-    expect(readLast(db)!.hold?.reason).toMatch(/bob is not lending it/);
+    expect(readLast(db)!.hold?.reason).toMatch(/bob's seat and bob has not lent it/);
     expect(lendLog(db, 1)).toEqual([]);
   });
 
@@ -128,6 +128,19 @@ describe('borrowing spare seat time', () => {
     await run(db, 400);
     expect(getTicketById(db, x.id)!.status).toBe('todo');
     expect(readLast(db)!.hold?.reason).toMatch(/lending is closed now/);
+  });
+
+  test('a ticket with no named requester (shared key) borrows only a seat that is lent, and is logged as unnamed', async () => {
+    const { db, p } = setup();
+    process.env.SALU_FAKE_SEAT_USAGE = JSON.stringify({ 'alice-team': raw(80), 'bob-team': raw(10) });
+    const x = createTicket(db, { status: 'todo', project_id: p.id, name: 'anon', query: 'FAKE:done' }); // alice is the admin: her seat is its own, but it is full
+    await dispatch(['sched']);
+    await run(db, 400);
+    expect(getTicketById(db, x.id)!.status).toBe('todo');
+    setLend(db, p.id, 'bob-team', true);
+    await run(db);
+    expect(getTicketById(db, x.id)!.seat_id).toBe(getSeat(db, p.id, 'bob-team')!.id);
+    expect(lendLog(db, p.id)[0]).toMatchObject({ ticket: 'anon', lender: 'bob', borrower: NO_ONE });
   });
 
   test('windowOpen wraps past midnight', () => {
