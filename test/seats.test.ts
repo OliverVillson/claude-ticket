@@ -44,6 +44,11 @@ describe('seat logins', () => {
     expect(new Set([containerName('web'), a, b]).size).toBe(3);
     expect(a.startsWith('salu-ks-')).toBe(true);
     expect(containerName('web', 'ann')).toBe(a);
+    for (const bad of ['../x', 'a/b', 'A']) {
+      expect(() => seatKey('web', bad)).toThrow();
+      expect(() => containerName('web', bad)).toThrow();
+      expect(() => projectSocketDir('web', bad)).toThrow();
+    }
     expect(seatKey('a-b', 'c')).not.toBe(seatKey('a', 'b-c'));
     expect(dirname(projectSocketDir('web', 'ann'))).toBe(dirname(projectSocketDir('web', 'bob')));
     expect(projectSocketDir('web', 'ann')).not.toBe(projectSocketDir('web', 'bob'));

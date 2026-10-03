@@ -91,6 +91,7 @@ export function requireSeatAuth(seat: string, env: NodeJS.ProcessEnv = process.e
  * that spell alike ("a-b"+seat "c" vs "a"+seat "b-c") apart, so a seat's container is never another project's.
  */
 export function seatKey(project: string, seat: string): string {
+  requireSeatId(seat); // callers name containers and paths with this, so it checks for itself
   const h = createHash('sha256').update(`${project}\0${seat}`).digest('hex').slice(0, 10);
   return `${h}-${folderSlug(project).slice(0, 40)}-${seat}`;
 }
