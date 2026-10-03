@@ -4,13 +4,21 @@ import { openDb } from '../../db/db.ts';
 import { resolveProject } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
 import { bold, dim, green } from '../../core/ansi.ts';
-import { SEAT_PLANS, addMember, addSeat, listMembers, listSeats, removeMember, removeSeat, setLend, setRole, setSeatDisabled, type Role, type SeatPlan } from '../../team/store.ts';
+import { SEAT_PLANS, addMember, addSeat, getMember, listMembers, removeMember, removeSeat, setLend, setRole, setSeatDisabled, type Role, type SeatPlan } from '../../team/store.ts';
+import { issueKey, listKeys, revokeKey, setSharedRetired, sharedKeyRetired } from '../../team/keys.ts';
+import { listTickets } from '../../db/queries.ts';
+import { inviteBlock, loadTeam, meterText, ticketAuthor } from '../../team/view.ts';
+import { getRemote } from '../../sync/store.ts';
 import { confirm, helpIf } from './_shared.ts';
 
 const TEAM_HELP = `salu team [list] [--project P] [--json]       who is on the project and who owns it
 salu team add <name> [--admin]                 add a person (the first person added owns the project)
 salu team role <name> admin|member             change someone's role (a project always keeps one admin)
-salu team rm <name> [--yes]                    take someone off; their seats are switched off
+salu team rm <name> [--yes]                    take someone off; their seats are switched off and their key stops working
+salu team key <name> [--revoke]                make a personal signing key for them (shown once; replaces the old one)
+salu team key --list                           who has a key
+salu team key --retire-shared [--undo]         stop accepting the old shared key for this project
+salu team invite <name> [--with-key]           print the block a friend pastes to join; --with-key makes their personal key and puts it in
 
 The admin owns the project and the box. Members add tickets and reply. This is the roster only: it does
 not yet sign, restrict or schedule anything, so a project without a team runs exactly as before.`;
@@ -54,13 +62,35 @@ export async function team(p: Parsed): Promise<number> {
         return 0;
       }
       console.log(bold(`${proj.name} team`));
-      console.log(table(members.map((m) => [m.name, m.role])));
+      const t = loadTeam(db, proj.id);
+      const mine = listTickets(db, { projectId: proj.id });
+      console.log(
+        table([
+          ['who', 'role', 'seat', 'window', 'tickets'],
+          ...members.map((m) => {
+            const seats = t.seats.filter((s) => s.owner_id === m.id);
+            const n = mine.filter((x) => ticketAuthor(x, members) === m.name);
+            const live = n.filter((x) => x.status === 'running').length;
+            return [m.name, m.role, seats.map((s) => s.label).join(', ') || '-', seats.map((s) => meterText(s.meter)).join(', ') || '-', `${n.length}${live ? `, ${live} running` : ''}`];
+          }),
+        ]),
+      );
       return 0;
     }
     case 'add': {
       if (!a) throw new CliError('usage: salu team add <name> [--admin]');
       const m = addMember(db, proj.id, a, flagBool(p, 'admin') ? 'admin' : 'member');
       console.log(`${green('✓')} ${m.name} is ${m.role === 'admin' ? 'an admin' : 'a member'} of ${proj.name}`);
+      return 0;
+    }
+    case 'invite': {
+      if (!a) throw new CliError('usage: salu team invite <name> [--with-key]');
+      const r = getRemote(db, proj.id);
+      if (!getMember(db, proj.id, a)) addMember(db, proj.id, a, 'member');
+      const key = flagBool(p, 'with-key') ? issueKey(db, proj.id, a).token : null;
+      console.log(inviteBlock({ project: proj.name, name: a, url: r?.url ?? null, key }));
+      if (!r) console.error(dim('\n(this project has no remote yet: salu remote add)'));
+      else if (!key) console.error(dim(`\n(no key in it: add --with-key to make ${a}'s personal key and include it, shown only now)`));
       return 0;
     }
     case 'role': {
@@ -77,6 +107,29 @@ export async function team(p: Parsed): Promise<number> {
       console.log(`${green('✓')} ${m.name} is off ${proj.name}`);
       return 0;
     }
+    case 'key': {
+      if (flagBool(p, 'list') || (!a && !flagBool(p, 'retire-shared'))) {
+        const keys = listKeys(db, proj.id);
+        console.log(bold(`${proj.name} keys`));
+        console.log(keys.length ? table(keys.map((k) => [k.member, k.kid])) : 'no personal keys yet: salu team key <name>');
+        console.log(dim(sharedKeyRetired(db, proj.id) ? 'the shared key is retired: only personal keys are accepted' : 'the shared key is still accepted (salu team key --retire-shared stops that)'));
+        return 0;
+      }
+      if (flagBool(p, 'retire-shared')) {
+        const undo = flagBool(p, 'undo');
+        if (!undo && !listKeys(db, proj.id).length) throw new CliError('nobody has a personal key yet, so retiring the shared key would lock everyone out: salu team key <name> first');
+        setSharedRetired(db, proj.id, !undo);
+        console.log(`${green('✓')} the shared key is ${undo ? 'accepted again' : 'retired'} for ${proj.name}`);
+        return 0;
+      }
+      if (flagBool(p, 'revoke')) {
+        console.log(revokeKey(db, proj.id, a!) ? `${green('✓')} ${a}'s key no longer works` : `${a} had no key`);
+        return 0;
+      }
+      const k = issueKey(db, proj.id, a!);
+      console.log(`${green('✓')} key for ${k.member} ${dim(`(id ${k.kid}; any earlier key of theirs stopped working)`)}\n  ${k.token}\n${dim('  Give it to them privately. On their computer: salu remote key --set <key>. It is shown only now.')}`);
+      return 0;
+    }
     default:
       throw new CliError(`unknown: salu team ${sub}\n\n${TEAM_HELP}`);
   }
@@ -90,7 +143,7 @@ export async function seat(p: Parsed): Promise<number> {
   switch (sub) {
     case 'list':
     case 'ls': {
-      const seats = listSeats(db, proj.id);
+      const seats = loadTeam(db, proj.id).seats;
       if (flagBool(p, 'json')) {
         console.log(JSON.stringify(seats, null, 2));
         return 0;
@@ -100,7 +153,7 @@ export async function seat(p: Parsed): Promise<number> {
         return 0;
       }
       console.log(bold(`${proj.name} seats`));
-      console.log(table([['seat', 'owner', 'plan', 'lending'], ...seats.map((s) => [s.label, s.owner ?? dim('(left)'), s.plan, s.disabled ? 'off' : s.lend ? `yes, up to ${s.lend_cap_pct ?? 50}%` : 'no'])]));
+      console.log(table([['seat', 'owner', 'plan', 'window', 'lending'], ...seats.map((s) => [s.label, s.owner ?? '(left)', s.plan, meterText(s.meter), s.disabled ? 'off' : s.lend ? `yes, up to ${s.lend_cap_pct ?? 50}%` : 'no'])]));
       return 0;
     }
     case 'add': {

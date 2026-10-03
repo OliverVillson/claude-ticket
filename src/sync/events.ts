@@ -2,6 +2,7 @@ import type { Database } from 'bun:sqlite';
 import type { OrchestratorEvent } from '../orchestrator/types.ts';
 import { getProjectById, getTicketById, listTurns } from '../db/queries.ts';
 import { boxName } from './sync.ts';
+import { loadTeam } from '../team/view.ts';
 import { REPLY_MAX, newId } from './format.ts';
 import { addRemoteTicket, enqueueMessage, type NewMessage, getRemote, remoteTicketForLocal } from './store.ts';
 
@@ -37,7 +38,7 @@ export function recordRemoteEvent(db: Database, e: OrchestratorEvent): void {
       const ticket = { ...(ref ? { ref } : {}), name: t.name, id: t.id };
       const send = (m: Parameters<typeof enqueueMessage>[4]) => enqueueMessage(db, project.id, project.name, boxName(), m);
       if (e.type === 'dispatch') {
-        if (!e.resumed) send({ type: 'ticket.started', level: 'info', title: `Started "${t.name}"`, ticket });
+        if (!e.resumed) send({ type: 'ticket.started', level: 'info', title: `Started "${t.name}"`, ticket, ...seatOf(db, t) });
         return;
       }
       if (e.status === 'done') send({ type: 'ticket.done', level: 'success', title: `Done: "${t.name}"`, body: clip(t.error, 2000) || undefined, reply, ticket });
@@ -106,4 +107,12 @@ export function announceSpawned(db: Database, ticketId: number): void {
 export function announceAllSpawned(db: Database, projectId: number): void {
   const rows = db.query<{ id: number }, [number]>("SELECT id FROM tickets WHERE project_id = ? AND parent_id IS NOT NULL AND id NOT IN (SELECT ticket_id FROM remote_tickets WHERE ticket_id IS NOT NULL AND direction = 'in') ORDER BY id").all(projectId);
   for (const r of rows) announceSpawned(db, r.id);
+}
+
+/** The seat a ticket runs on, for the phone's thread view (nothing until the scheduler assigns one). */
+function seatOf(db: Database, t: { project_id: number; seat_id?: number | null }): Pick<NewMessage, 'seat'> {
+  if (t.seat_id == null) return {};
+  const s = loadTeam(db, t.project_id).seats.find((x) => x.id === t.seat_id);
+  if (!s) return {};
+  return { seat: { label: s.label, ...(s.owner ? { owner: s.owner } : {}), ...(s.meter.percentUsed != null ? { left: 100 - s.meter.percentUsed } : {}) } };
 }
