@@ -33,6 +33,9 @@ export interface Seat {
   lend: number; // 0 | 1
   /** Most of the seat's 5-hour window, in percent, others may use while lending. */
   lend_cap_pct: number | null;
+  /** Hours of the day (0-23, box local time) the lending is open: from (inclusive) to (exclusive), wrapping past midnight. Both null = any hour. */
+  lend_from: number | null;
+  lend_to: number | null;
   disabled: number; // 0 | 1
   created_at: number;
 }
@@ -64,6 +67,26 @@ export function ensureTeamTables(db: Database): void {
       created_at INTEGER NOT NULL,
       UNIQUE (project_id, label)
     );
+  `);
+  const seatCols = db.query<{ name: string }, []>('PRAGMA table_info(seats)').all().map((c) => c.name);
+  if (!seatCols.includes('lend_from')) db.exec('ALTER TABLE seats ADD COLUMN lend_from INTEGER;');
+  if (!seatCols.includes('lend_to')) db.exec('ALTER TABLE seats ADD COLUMN lend_to INTEGER;');
+  // One row per ticket that started on a seat that is not its requester's: who lent, who borrowed, what it was expected to cost.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS lend_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL,
+      ticket_id INTEGER NOT NULL,
+      ticket_name TEXT NOT NULL,
+      seat_id INTEGER NOT NULL,
+      lender TEXT,
+      borrower TEXT NOT NULL,
+      est_pct REAL NOT NULL DEFAULT 0,
+      est_usd REAL NOT NULL DEFAULT 0,
+      at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS lend_log_seat ON lend_log(seat_id, at);
+    CREATE UNIQUE INDEX IF NOT EXISTS lend_log_ticket ON lend_log(ticket_id, seat_id);
   `);
   // Which seat ran a ticket (null = the machine's own login, as in v1).
   if (!db.query<{ name: string }, []>('PRAGMA table_info(tickets)').all().some((c) => c.name === 'seat_id')) db.exec('ALTER TABLE tickets ADD COLUMN seat_id INTEGER REFERENCES seats(id) ON DELETE SET NULL;');
@@ -146,13 +169,23 @@ export function removeSeat(db: Database, projectId: number, label: string): Seat
   return s;
 }
 
-/** Turn lending on or off. Lending is the owner's choice and is off by default. */
-export function setLend(db: Database, projectId: number, label: string, on: boolean, capPct?: number | null): SeatView {
+/** Turn lending on or off. Lending is the owner's choice and is off by default; the window and cap rules live in team/lend.ts. */
+export function setLend(db: Database, projectId: number, label: string, on: boolean, o: { cap?: number | null; from?: number | null; to?: number | null } = {}): SeatView {
   const s = getSeat(db, projectId, label);
   if (!s) throw new CliError(`no seat called "${label}"`);
   if (on && s.disabled) throw new CliError(`seat "${s.label}" is switched off`);
-  if (capPct != null && (!Number.isInteger(capPct) || capPct < 1 || capPct > 100)) throw new CliError('the cap is a whole number of percent, 1 to 100');
-  db.query('UPDATE seats SET lend = ?, lend_cap_pct = ? WHERE id = ?').run(on ? 1 : 0, on ? (capPct ?? s.lend_cap_pct ?? 50) : null, s.id);
+  if (o.cap != null && (!Number.isInteger(o.cap) || o.cap < 1 || o.cap > 100)) throw new CliError('the cap is a whole number of percent, 1 to 100');
+  const hour = (h: number | null | undefined) => h == null || (Number.isInteger(h) && h >= 0 && h <= 23);
+  if (!hour(o.from) || !hour(o.to) || (o.from == null) !== (o.to == null)) throw new CliError('the window is two hours, 0 to 23: --from 22 --to 7');
+  if (on && o.from != null && o.from === o.to) throw new CliError('the window needs two different hours (leave both out for any hour)');
+  const keep = o.from === undefined && o.to === undefined;
+  db.query('UPDATE seats SET lend = ?, lend_cap_pct = ?, lend_from = ?, lend_to = ? WHERE id = ?').run(
+    on ? 1 : 0,
+    on ? (o.cap ?? s.lend_cap_pct ?? 50) : null,
+    on ? (keep ? s.lend_from : (o.from ?? null)) : null,
+    on ? (keep ? s.lend_to : (o.to ?? null)) : null,
+    s.id,
+  );
   return getSeat(db, projectId, label)!;
 }
 

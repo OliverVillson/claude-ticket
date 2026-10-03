@@ -5,6 +5,7 @@ import { resolveProject } from '../../core/resolve.ts';
 import { CliError } from '../../core/errors.ts';
 import { bold, dim, green } from '../../core/ansi.ts';
 import { SEAT_PLANS, addMember, addSeat, listMembers, listSeats, removeMember, removeSeat, setLend, setRole, setSeatDisabled, type Role, type SeatPlan } from '../../team/store.ts';
+import { TERMS_WARNING, lendLog, requireLender } from '../../team/lend.ts';
 import { confirm, helpIf } from './_shared.ts';
 
 const TEAM_HELP = `salu team [list] [--project P] [--json]       who is on the project and who owns it
@@ -20,11 +21,16 @@ salu seat add <label> [--owner <name>] [--plan team|enterprise|pro|max|api|other
                                                  register a seat (one Team or Enterprise seat per person)
 salu seat rm <label> [--yes]                     forget a seat
 salu seat off|on <label>                         switch a seat off or back on
-salu seat lend <label> on|off [--cap N]          let teammates' tickets use this seat's spare time (off until the
-                                                 owner turns it on; N = most percent of the window they may use)
+salu seat lend <label> on|off [--cap N] [--from H --to H]
+                                                 let teammates' tickets use this seat's spare time. Off until the
+                                                 seat's owner turns it on (it checks SALU_USER against the owner's
+                                                 name, a guard against slips, not a lock). N = most percent of the
+                                                 5-hour window others may use; H = hours 0-23 the lending is open
+salu seat lent [--project P] [--json]            every borrowed ticket: lender, borrower, expected and actual cost
 
-A seat is a name for a login; it holds no secret. Whether a subscription seat may serve a teammate's ticket
-has not been checked at the source: read the plan's terms before turning lending on.`;
+A seat is a name for a login; it holds no secret. TERMS NOT CHECKED: whether a subscription seat may serve a
+teammate's ticket has not been checked at the source. Lending is the lender's choice and responsibility: read
+the plan's terms before turning it on.`;
 
 
 function project(p: Parsed) {
@@ -100,7 +106,7 @@ export async function seat(p: Parsed): Promise<number> {
         return 0;
       }
       console.log(bold(`${proj.name} seats`));
-      console.log(table([['seat', 'owner', 'plan', 'lending'], ...seats.map((s) => [s.label, s.owner ?? dim('(left)'), s.plan, s.disabled ? 'off' : s.lend ? `yes, up to ${s.lend_cap_pct ?? 50}%` : 'no'])]));
+      console.log(table([['seat', 'owner', 'plan', 'lending'], ...seats.map((s) => [s.label, s.owner ?? dim('(left)'), s.plan, s.disabled ? 'off' : s.lend ? `yes, up to ${s.lend_cap_pct ?? 50}%${s.lend_from != null ? `, ${s.lend_from}-${s.lend_to}h` : ''}` : 'no'])]));
       return 0;
     }
     case 'add': {
@@ -126,10 +132,28 @@ export async function seat(p: Parsed): Promise<number> {
       return 0;
     }
     case 'lend': {
-      if (!a || (b !== 'on' && b !== 'off')) throw new CliError('usage: salu seat lend <label> on|off [--cap N]');
-      const cap = flagStr(p, 'cap');
-      const s = setLend(db, proj.id, a, b === 'on', cap ? Number(cap) : undefined);
-      console.log(`${green('✓')} seat "${s.label}" ${s.lend ? `lends up to ${s.lend_cap_pct}% of its window` : 'no longer lends'}`);
+      if (!a || (b !== 'on' && b !== 'off')) throw new CliError('usage: salu seat lend <label> on|off [--cap N] [--from H --to H]');
+      requireLender(db, proj.id, a, b === 'on');
+      const num = (k: string) => (flagStr(p, k) != null ? Number(flagStr(p, k)) : undefined);
+      const s = setLend(db, proj.id, a, b === 'on', { cap: num('cap'), from: num('from'), to: num('to') });
+      if (s.lend) {
+        console.log(`${green('✓')} seat "${s.label}" lends up to ${s.lend_cap_pct}% of its 5-hour window${s.lend_from != null ? `, ${s.lend_from}:00 to ${s.lend_to}:00` : ', any hour'}`);
+        console.log(`\n${TERMS_WARNING}`);
+      } else console.log(`${green('✓')} seat "${s.label}" no longer lends`);
+      return 0;
+    }
+    case 'lent': {
+      const rows = lendLog(db, proj.id);
+      if (flagBool(p, 'json')) {
+        console.log(JSON.stringify(rows, null, 2));
+        return 0;
+      }
+      if (!rows.length) {
+        console.log('No ticket has borrowed a teammate\'s seat on this project.');
+        return 0;
+      }
+      const usd = (n: number) => `$${n.toFixed(2)}`;
+      console.log(table([['when', 'ticket', 'lender', 'borrower', 'seat', 'expected', 'cost so far'], ...rows.map((r) => [new Date(r.at).toISOString().slice(0, 16).replace('T', ' '), r.ticket, r.lender ?? '(left)', r.borrower, r.seat, `${Math.round(r.est_pct)}% / ${usd(r.est_usd)}`, usd(r.cost_usd)])]));
       return 0;
     }
     default:

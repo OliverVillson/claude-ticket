@@ -9,12 +9,14 @@ import { formatSeatMeter, seatHasLogin, seatScope, type SeatUsage } from '../usa
 import { fits, MAX_SKIPS, plan, SELF_SEAT, type Decision, type Planned } from './policy.ts';
 import { readStats, SCHED_STATE } from './stats.ts';
 import { getState } from '../db/queries.ts';
+import { borrowUse } from '../team/lend.ts';
 
 /**
  * Seat-aware placement: a ticket starts on the seat that has room. For a project with seats, each queued
  * ticket is tried against every seat it may use (its own seat when it has one, because a session resumes
  * where it started; otherwise any enabled seat of the project), with that seat's own windows and its own
- * percent-per-dollar. Never another member's lent seat: borrowing is a separate, off-by-default step.
+ * percent-per-dollar. A ticket with a known requester (its `by-` label) uses their own seats and seats nobody
+ * owns first, and another member's seat only when that member is lending it (team/lend.ts, off by default).
  * A project without seats goes through the machine's own meter exactly as before.
  */
 
@@ -69,7 +71,7 @@ function judged(v: SeatView2): UsageSnapshot {
 }
 
 /**
- * Whose seats a ticket may use. Borrowing is off (W6), so a seat is usable only when it is the project's (no owner),
+ * Whose seats a ticket may use. Borrowing is separate (team/lend.ts, off unless the owner lends), so a seat is usable only when it is the project's (no owner),
  * the ticket author's own, or, for a ticket with no author (added on this machine), an admin's. The author is the
  * member named by the ticket's `by-<name>` label; a `by-` label that names nobody on the team gets the project's
  * ownerless seats only. A seat already on the ticket is checked the same way: a pinned seat is never a way round it.
@@ -90,6 +92,8 @@ export interface Placement {
   /** The seat that takes the ticket, or null when none does. */
   seat: SeatView2 | null;
   planned: Planned | null;
+  /** The seat belongs to someone else, who lends it (logged by the scheduler when the ticket starts). */
+  borrowed?: boolean;
   /** Every seat that was looked at and did not take it, with the reason. */
   others: { seat: string; why: string; until: number | null }[];
 }
@@ -98,17 +102,15 @@ export interface Placement {
 export function place(db: Database, t: TicketView, seats: SeatView2[], now: number, stats = readStats(db)): Placement {
   const others: Placement['others'] = [];
   const pinned = t.seat_id != null;
-  let best: { v: SeatView2; room: number; p: Planned } | null = null;
+  type Pick = { v: SeatView2; room: number; p: Planned } | null;
+  let best = null as Pick;
+  let bestBorrow = null as Pick;
   const pool = pinned ? seats.filter((v) => v.seat.id === t.seat_id) : seats;
   if (pinned && !pool.length) return { seat: null, planned: null, others: [{ seat: `#${t.seat_id}`, why: 'its seat is no longer on this project', until: null }] };
   for (const v of pool) {
     const label = v.seat.label;
     const u = v.usage;
     const closed = seatClosedTo(db, t, v.seat);
-    if (closed) {
-      others.push({ seat: label, why: closed, until: null });
-      continue;
-    }
     if (u.state === 'off' || u.state === 'no-login' || u.state === 'dead') {
       others.push({ seat: label, why: u.state === 'dead' ? 'its login is refused (DEAD)' : u.state === 'off' ? 'it is switched off' : 'it has no login here', until: null });
       continue;
@@ -119,6 +121,12 @@ export function place(db: Database, t: TicketView, seats: SeatView2[], now: numb
       continue;
     }
     const p = plan(db, t, stats, v.seat.id);
+    // A seat that is closed to the ticket can still be borrowed, if its owner lends it (team/lend.ts, off by default).
+    const lent = closed ? borrowUse(db, t, v.seat, now, p.est.pct) : null;
+    if (lent && !lent.ok) {
+      others.push({ seat: label, why: v.seat.lend ? lent.why : closed!, until: null });
+      continue;
+    }
     const f = fits(db, p, judged(v), now);
     if (!f.ok) {
       others.push({ seat: label, why: f.why, until: f.until });
@@ -126,8 +134,12 @@ export function place(db: Database, t: TicketView, seats: SeatView2[], now: numb
     }
     const session = u.snapshot.windows.find((w) => w.id === 'session')?.percentUsed;
     const room = 100 - ((session ?? 50) + v.promised);
-    if (!best || room > best.room) best = { v, room, p };
+    if (lent) {
+      if (!bestBorrow || room > bestBorrow.room) bestBorrow = { v, room, p };
+    } else if (!best || room > best.room) best = { v, room, p };
   }
+  // Their own seat (or an unowned one) first; a lender's spare time only when nothing of their own has room.
+  if (!best && bestBorrow) return { seat: bestBorrow.v, planned: bestBorrow.p, borrowed: true, others };
   if (!best) return { seat: null, planned: null, others };
   // Seats that would also have fit are not "why not"; only the ones that did not are explained.
   return { seat: best.v, planned: best.p, others };
@@ -169,7 +181,7 @@ export function decideSeats(
       if (f.until != null && (earliest == null || f.until < earliest)) earliest = f.until;
     } else {
       const pl = place(db, c, mine, now, stats);
-      if (pl.seat) return { seat: pl.seat.seat.label, seatId: pl.seat.seat.id, pick: c, hold: null, skipped, placed: { name: c.name, seat: pl.seat.seat.label, others: pl.others.map(({ seat, why }) => ({ seat, why })) } };
+      if (pl.seat) return { seat: pl.seat.seat.label, seatId: pl.seat.seat.id, pick: c, hold: null, skipped, borrowed: pl.borrowed, placed: { name: c.name, seat: pl.seat.seat.label, others: pl.others.map(({ seat, why }) => ({ seat, why })) } };
       skipped.push({ id: c.id, name: c.name, why: `fits no seat (${joined(pl.others)})` });
       for (const o of pl.others) if (o.until != null && (earliest == null || o.until < earliest)) earliest = o.until;
     }

@@ -42,7 +42,7 @@ Usage   (salu ?  |  salu help  |  salu --help  shows this list; quote the ? in z
   salu status [--json]
   salu sched [off|advise|on]                 what the queue costs, and whether it fits your plan's windows
   salu team [list|add|role|rm] ...           who is on the project and who owns it (salu team --help)
-  salu seat [list|add|rm|on|off|lend] ...    the Claude seats the project can run tickets on (salu seat --help)
+  salu seat [list|add|rm|on|off|lend|lent] ...    the Claude seats the project can run tickets on (salu seat --help)
   salu usage [--json] [--refresh]            how much of your Claude plan's 5-hour and weekly usage is left
   salu log "name" [--follow] [--raw]
   salu plan "name"                           split a ticket into sub-tickets with Claude

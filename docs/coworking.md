@@ -39,14 +39,34 @@ status, results and replies follow the same way they do for your own tickets.
     salu team add alice          # the first person added owns the project
     salu team add bob
     salu seat add bob-team --owner bob --plan team
-    salu seat lend bob-team on --cap 25   # off until the owner turns it on
+    salu seat lend bob-team on --cap 25 --from 22 --to 7   # off until the owner turns it on
 
 `salu team` and `salu seat` keep the roster and the list of Claude seats. They only record who is on
 the project and which seats exist (a seat is a name, never a login); signing, permissions, the
 scheduler and the seat logins read them in later steps. Whether a subscription seat may serve a
 teammate's ticket has not been checked at the source: check the plan's terms before turning lending on.
 
+## Borrowing spare seat time (v2, off by default)
+
+> **Terms not checked.** Whether a Claude plan's terms allow your seat to serve a teammate's ticket was never
+> checked at the source. Lending is the lender's choice and the lender's responsibility.
+
+A teammate can lend a capped slice of their seat:
+
+    SALU_USER=bob salu seat lend bob-team on --cap 25 --from 22 --to 7
+
+- Lending is the seat owner's to switch **on**: the command checks `SALU_USER` against the owner's name. That is a
+  guard against slips, not a lock; whoever has a shell on the box can change it. Anyone can switch it off. A person who leaves the project stops lending.
+- `--cap N` is the most percent of the 5-hour window borrowed tickets may use in total (counted over the last 5
+  hours, by each ticket's expected use). `--from/--to` are hours of the day on the box (22 to 7 wraps midnight).
+- A ticket first uses seats it is entitled to (the project's seats, its author's own, or an admin's for a ticket
+  with no author). Only when none has room does it try a lender's seat. The author comes from the ticket's signed
+  `by-` label. A ticket with none (made on the box, or sent with the shared key, which proves nobody) never
+  borrows: a borrow must name a lender and a borrower, so it can be attributed and revoked per person.
+- A ticket that started on a lender's seat stays there; if lending stops it waits.
+- `salu seat lent` lists every borrowed ticket: lender, borrower, expected use and the cost so far.
+
 ## Not built yet
 
 Per-person keys and roles (admin owns the project), one Team/Enterprise seat per person,
-the scheduler spreading tickets across seats, borrowing a teammate's spare seat time.
+the scheduler spreading tickets across seats.
