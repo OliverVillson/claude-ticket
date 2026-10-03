@@ -9,6 +9,7 @@ import { addMember, addSeat, listSeats, setSeatDisabled } from '../src/team/stor
 import { saveSeatToken } from '../src/core/seats.ts';
 import { formatSeatUsageLines, seatTokenLogin, parseUsage, seatUsage, setSeatLoginResolver, teamUsage } from '../src/usage/index.ts';
 import type { UsageFetcher } from '../src/usage/index.ts';
+import { recordRateLimitEvent } from '../src/usage/index.ts';
 import { estimateTicket, percentPerUsd } from '../src/sched/stats.ts';
 
 const H = 3_600_000;
@@ -130,6 +131,42 @@ describe('per-seat usage', () => {
       delete process.env.SALU_WORKER;
     }
     expect(logs.join('\n')).toContain('Session (5 hours)');
+  });
+});
+
+const noSub: UsageFetcher = async () => ({ ok: false, at: Date.now(), plan: null, windows: [], reasonKind: 'no-subscription', reason: 'Plan usage cannot be read with this login' });
+
+describe('a login that cannot read plan usage', () => {
+  test('shows "no reading yet", never 0%', async () => {
+    const { db, p } = team();
+    const u = await seatUsage(db, listSeats(db, p.id)[0]!, { fetcher: noSub });
+    expect(u.state).toBe('no-reading');
+    const line = formatSeatUsageLines([u])[0]!;
+    expect(line).toContain('no reading yet');
+    expect(line).not.toContain('0%');
+  });
+
+  test("limits seen on the seat's own runs fill the meter, and stay that seat's", async () => {
+    const { db, p } = team();
+    const [a, b] = listSeats(db, p.id);
+    recordRateLimitEvent(db, { type: 'rate_limit_event', rate_limit_info: { status: 'allowed_warning', rateLimitType: 'five_hour', utilization: 0.83, resetsAt: Math.floor((Date.now() + 2 * H) / 1000) } }, Date.now(), `seat:${a!.id}`);
+    const ua = await seatUsage(db, a!, { fetcher: noSub });
+    expect(ua.state).toBe('ok');
+    expect(ua.snapshot.stale).toBe(false);
+    const line = formatSeatUsageLines([ua])[0]!;
+    expect(line).toContain('83%');
+    expect(line).toContain('from runs');
+    expect((await seatUsage(db, b!, { fetcher: noSub })).state).toBe('no-reading');
+  });
+
+  test('a rejected event marks the seat full; an event without a percent says so', async () => {
+    const { db, p } = team();
+    const [a, b] = listSeats(db, p.id);
+    recordRateLimitEvent(db, { status: 'rejected', rateLimitType: 'five_hour', resetsAt: Math.floor((Date.now() + H) / 1000) }, Date.now(), `seat:${a!.id}`);
+    expect((await seatUsage(db, a!, { fetcher: noSub })).state).toBe('full');
+    recordRateLimitEvent(db, { status: 'allowed', rateLimitType: 'five_hour' }, Date.now(), `seat:${b!.id}`);
+    const ub = await seatUsage(db, b!, { fetcher: noSub });
+    expect(formatSeatUsageLines([ub])[0]).toContain('no % reported');
   });
 });
 
